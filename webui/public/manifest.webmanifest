@@ -1,0 +1,12 @@
+{
+  "name": "Stalwart Mail & Calendar",
+  "short_name": "Stalwart",
+  "description": "A private, standalone mail and calendar client for Stalwart",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f1eb",
+  "theme_color": "#162a3a",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

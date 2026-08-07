@@ -1,0 +1,160 @@
+export const CAPABILITIES = {
+  core: "urn:ietf:params:jmap:core",
+  mail: "urn:ietf:params:jmap:mail",
+  submission: "urn:ietf:params:jmap:submission",
+  calendars: "urn:ietf:params:jmap:calendars",
+  calendarsParse: "urn:ietf:params:jmap:calendars:parse",
+} as const;
+
+export interface RuntimeConfig {
+  appName: string;
+  defaultServerUrl: string;
+  allowCustomServers: boolean;
+  allowBasicAuth: boolean;
+  allowOAuth: boolean;
+  pollIntervalSeconds: number;
+}
+
+export interface JmapAccount {
+  name: string;
+  isPersonal: boolean;
+  isReadOnly: boolean;
+  accountCapabilities: Record<string, unknown>;
+}
+
+export interface JmapSession {
+  capabilities: Record<string, unknown>;
+  accounts: Record<string, JmapAccount>;
+  primaryAccounts: Record<string, string>;
+  username: string;
+  apiUrl: string;
+  downloadUrl: string;
+  uploadUrl: string;
+  eventSourceUrl?: string;
+  state: string;
+}
+
+export type JmapMethodCall = [string, Record<string, unknown>, string];
+export type JmapMethodResponse = [string, Record<string, unknown>, string];
+
+export interface JmapResponse {
+  methodResponses: JmapMethodResponse[];
+  sessionState?: string;
+}
+
+export interface Mailbox {
+  id: string;
+  name: string;
+  parentId?: string | null;
+  role?: "inbox" | "drafts" | "sent" | "trash" | "junk" | "archive" | null;
+  sortOrder?: number;
+  totalEmails?: number;
+  unreadEmails?: number;
+  myRights?: Record<string, boolean>;
+}
+
+export interface EmailAddress {
+  name?: string;
+  email?: string;
+}
+
+export interface EmailBodyPart {
+  partId?: string;
+  blobId?: string;
+  type?: string;
+  name?: string;
+  charset?: string;
+  size?: number;
+  cid?: string;
+}
+
+export interface Email {
+  id: string;
+  blobId?: string;
+  threadId?: string;
+  mailboxIds: Record<string, boolean>;
+  keywords: Record<string, boolean>;
+  receivedAt: string;
+  sentAt?: string;
+  from?: EmailAddress[];
+  to?: EmailAddress[];
+  cc?: EmailAddress[];
+  subject?: string;
+  preview?: string;
+  hasAttachment?: boolean;
+  textBody?: EmailBodyPart[];
+  htmlBody?: EmailBodyPart[];
+  attachments?: EmailBodyPart[];
+  bodyValues?: Record<string, { value: string; isTruncated?: boolean }>;
+}
+
+export interface Identity {
+  id: string;
+  name: string;
+  email: string;
+  mayDelete?: boolean;
+}
+
+export interface Calendar {
+  id: string;
+  name: string;
+  color?: string;
+  sortOrder?: number;
+  isVisible?: boolean;
+  isSubscribed?: boolean;
+  myRights?: Record<string, boolean>;
+}
+
+export type ParticipationStatus = "needs-action" | "accepted" | "tentative" | "declined";
+
+export interface EventParticipant {
+  "@type"?: string;
+  name?: string;
+  email?: string;
+  calendarAddress?: string;
+  kind?: string;
+  roles?: Record<string, boolean>;
+  participationStatus?: ParticipationStatus;
+  expectReply?: boolean;
+}
+
+export interface CalendarEvent {
+  id: string;
+  uid?: string;
+  title?: string;
+  description?: string;
+  start: string;
+  duration?: string;
+  timeZone?: string;
+  showWithoutTime?: boolean;
+  calendarIds: Record<string, boolean>;
+  participants?: Record<string, EventParticipant>;
+  organizerCalendarAddress?: string;
+  locations?: Record<string, { name?: string; description?: string }>;
+  recurrenceRules?: Array<Record<string, unknown>>;
+  status?: string;
+  freeBusyStatus?: string;
+  color?: string;
+  updated?: string;
+}
+
+export interface ParticipantIdentity {
+  id: string;
+  name: string;
+  calendarAddress: string;
+  isDefault?: boolean;
+}
+
+export interface DraftInput {
+  to: string;
+  cc?: string;
+  bcc?: string;
+  subject: string;
+  body: string;
+}
+
+export interface ToastMessage {
+  id: number;
+  tone: "success" | "error" | "info";
+  text: string;
+}

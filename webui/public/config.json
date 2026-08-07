@@ -1,0 +1,8 @@
+{
+  "appName": "Stalwart Mail",
+  "defaultServerUrl": "",
+  "allowCustomServers": true,
+  "allowBasicAuth": true,
+  "allowOAuth": true,
+  "pollIntervalSeconds": 30
+}
