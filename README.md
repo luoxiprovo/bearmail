@@ -130,51 +130,95 @@ Key features:
 
 **Want a deeper dive?** Need to explain to your boss why Stalwart is the perfect fit? Whether you're evaluating options, making a case to your team, or simply curious about how it all works under the hood, these slides walk you through the key features, architecture, and benefits of Stalwart. Browse the [slides](https://stalw.art/slides) to see what makes it stand out.
 
-## Install This Version
+## Build and Run This Version
 
-Copy the `install.sh` file included with this version to the Linux, macOS or FreeBSD server where Stalwart will run. Open an interactive terminal in the directory containing the file, then run:
+This revision is not available from the upstream Stalwart download site. Do not run `install.sh` yet: it currently downloads the latest upstream release, which does not contain the command-line setup changes in this source tree.
 
-```sh
-sudo sh install.sh
-```
+Use one of the following two methods to obtain the correct binary.
 
-The installer downloads the Stalwart binary, creates the service account and installation directories, and immediately starts the command-line setup wizard. The service is not installed or started until the wizard finishes successfully.
+### Option 1: Build from this source tree
 
-The wizard asks for:
-
-- the public hostname of the Stalwart server, such as `mail.example.com`;
-- the primary mail domain, such as `example.com`;
-- the server's public IPv4 address, if it has one;
-- the server's public IPv6 address, if it has one;
-- whether Stalwart should request a Let's Encrypt TLS certificate;
-- whether Stalwart should generate DKIM signing keys;
-- confirmation before the configuration is written.
-
-The normal installation uses RocksDB. To use FoundationDB, add `--fdb`:
+Install the Rust toolchain and the native build tools required by Stalwart, check out this revision, and build a new release binary:
 
 ```sh
-sudo sh install.sh --fdb
+cargo build --release -p stalwart
+STALWART_BINARY="$PWD/target/release/stalwart"
 ```
 
-To install everything under a custom directory, add that directory after the command:
+Always run the build command after checking out this revision. An older file already present at `target/release/stalwart` may not contain these changes. Do not distribute `target/debug/stalwart`; it is a large development binary with debug information.
+
+### Option 2: Use a binary built from this revision
+
+A supplied binary must have been built from the same source revision and must match the target server's operating system, CPU architecture and runtime libraries. Copy it to the target server, open a terminal in the directory containing it, and run:
 
 ```sh
-sudo sh install.sh /opt/stalwart
+chmod 0755 ./stalwart
+STALWART_BINARY="$PWD/stalwart"
 ```
 
-Both options can be combined:
+Do not use a Linux binary on macOS or FreeBSD, an x86-64 binary on ARM, or a binary built for a newer system runtime than the target server provides.
+
+### Run command-line setup
+
+The following commands keep this unreleased installation under a `stalwart-run` directory in the current user's working directory:
 
 ```sh
-sudo sh install.sh --fdb /opt/stalwart
+STALWART_RUN="$PWD/stalwart-run"
+mkdir -p \
+  "$STALWART_RUN/etc" \
+  "$STALWART_RUN/data" \
+  "$STALWART_RUN/logs"
+
+env \
+  STALWART_SETUP_DATA_PATH="$STALWART_RUN/data" \
+  STALWART_SETUP_LOG_PATH="$STALWART_RUN/logs" \
+  STALWART_SETUP_STORE=rocksdb \
+  "$STALWART_BINARY" \
+  --config="$STALWART_RUN/etc/config.json" \
+  --setup
 ```
 
-At the end of setup, the wizard prints the permanent administrator username and password. Save them immediately because the password is shown only once. Setup is already complete at this point; there is no web-based setup step.
+The wizard asks for the server hostname, primary mail domain, optional public IPv4 and IPv6 addresses, TLS certificate creation, DKIM key generation and final confirmation.
 
-The wizard then prints the DNS records that must be added for the mail domain. Add the listed A, AAAA, MX, SPF, DKIM, DMARC, SRV, MTA-STS, TLS reporting, CAA and client-configuration records at the DNS provider. Configure each PTR record through the provider that owns the server's public IP address. Replace every placeholder before publishing it.
+When setup finishes:
 
-All DNS work is manual. The installer never asks for DNS-provider credentials and never changes DNS automatically.
+1. Save the permanent administrator username and password immediately. The password is shown only once.
+2. Add the printed DNS records manually at the DNS provider.
+3. Configure the printed PTR records through the provider that owns each public IP address.
+4. Replace every DNS placeholder before publishing it.
 
-If setup fails or is cancelled, fix the reported problem and run the same command again. The service is not created or started after a failed setup. When `config.json` already exists, the installer preserves the existing configuration and skips the setup wizard.
+There is no web-based setup step, and Stalwart never asks for DNS-provider credentials or changes DNS automatically.
+
+### Start the server
+
+Stalwart uses standard mail and HTTPS ports, so starting all listeners normally requires elevated privileges. Start the exact binary used during setup and tell it to drop privileges back to the current user after binding its listeners:
+
+```sh
+STALWART_RUN_USER="$(id -un)"
+STALWART_RUN_GROUP="$(id -gn)"
+
+sudo env \
+  RUN_AS_USER="$STALWART_RUN_USER" \
+  RUN_AS_GROUP="$STALWART_RUN_GROUP" \
+  "$STALWART_BINARY" \
+  --config="$STALWART_RUN/etc/config.json"
+```
+
+This runs the server in the foreground; press `Ctrl+C` to stop it. These commands are intended for testing this unreleased revision. Before a production rollout, build and publish release binaries for every supported platform and update `install.sh` to download those matching artifacts instead of the upstream release.
+
+If setup is cancelled, run the setup command again. If setup reports that the selected store is already initialized, reuse the original `config.json`; do not point a second configuration file at the same data directory.
+
+### FoundationDB build
+
+FoundationDB requires its client libraries and a separate feature build:
+
+```sh
+cargo build --release -p stalwart \
+  --no-default-features \
+  --features "foundationdb s3 redis nats enterprise"
+```
+
+Use `STALWART_SETUP_STORE=foundationdb` instead of `rocksdb` in the setup command. The wizard then asks for the FoundationDB cluster file.
 
 ## Support
 
