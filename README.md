@@ -130,58 +130,51 @@ Key features:
 
 **Want a deeper dive?** Need to explain to your boss why Stalwart is the perfect fit? Whether you're evaluating options, making a case to your team, or simply curious about how it all works under the hood, these slides walk you through the key features, architecture, and benefits of Stalwart. Browse the [slides](https://stalw.art/slides) to see what makes it stand out.
 
-## Get Started
+## Install This Version
 
-### Linux, macOS and FreeBSD
-
-The installer downloads the latest Stalwart release, creates a dedicated service account, and runs the initial setup in your terminal before installing and starting the service. Root access and outbound HTTPS connectivity are required.
-
-Download the installer, then run it from an interactive terminal:
+Copy the `install.sh` file included with this version to the Linux, macOS or FreeBSD server where Stalwart will run. Open an interactive terminal in the directory containing the file, then run:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://get.stalw.art/install.sh -o install.sh
 sudo sh install.sh
 ```
 
-For a fresh installation, the command-line setup wizard asks for:
+The installer downloads the Stalwart binary, creates the service account and installation directories, and immediately starts the command-line setup wizard. The service is not installed or started until the wizard finishes successfully.
 
-- the public server hostname and primary mail domain;
-- optional public IPv4 and IPv6 addresses;
-- whether to request a Let's Encrypt TLS certificate;
-- whether to generate DKIM signing keys;
-- final confirmation before the configuration is written.
+The wizard asks for:
 
-The bundled installation uses RocksDB and the internal account directory. To install the FoundationDB build instead, pass `--fdb`; the wizard also asks for an optional FoundationDB cluster-file path:
+- the public hostname of the Stalwart server, such as `mail.example.com`;
+- the primary mail domain, such as `example.com`;
+- the server's public IPv4 address, if it has one;
+- the server's public IPv6 address, if it has one;
+- whether Stalwart should request a Let's Encrypt TLS certificate;
+- whether Stalwart should generate DKIM signing keys;
+- confirmation before the configuration is written.
+
+The normal installation uses RocksDB. To use FoundationDB, add `--fdb`:
 
 ```sh
 sudo sh install.sh --fdb
 ```
 
-To place the binary, configuration, logs and data under a custom directory, pass the directory as the prefix:
+To install everything under a custom directory, add that directory after the command:
 
 ```sh
 sudo sh install.sh /opt/stalwart
 ```
 
-You can combine both options when needed:
+Both options can be combined:
 
 ```sh
 sudo sh install.sh --fdb /opt/stalwart
 ```
 
-When setup succeeds, save the permanent administrator username and password printed by the wizard. The password is shown once. The wizard then prints the DNS records for the domain, including A/AAAA and PTR guidance plus the applicable MX, SPF, DKIM, DMARC, SRV, MTA-STS, TLS reporting, CAA and client auto-configuration records.
+At the end of setup, the wizard prints the permanent administrator username and password. Save them immediately because the password is shown only once. Setup is already complete at this point; there is no web-based setup step.
 
-DNS changes are manual: the installer does not ask for DNS-provider credentials and does not modify DNS. Replace any address placeholders, publish the listed records with your DNS provider, and configure PTR records with your IP provider. The service is installed and started only after setup completes successfully.
+The wizard then prints the DNS records that must be added for the mail domain. Add the listed A, AAAA, MX, SPF, DKIM, DMARC, SRV, MTA-STS, TLS reporting, CAA and client-configuration records at the DNS provider. Configure each PTR record through the provider that owns the server's public IP address. Replace every placeholder before publishing it.
 
-If setup fails or is cancelled, correct the reported issue and run the same installer command again. Service creation is not attempted after a setup failure. On a reinstall, an existing `config.json` is preserved and the setup wizard is skipped.
+All DNS work is manual. The installer never asks for DNS-provider credentials and never changes DNS automatically.
 
-For platform-specific paths and service-management details, see the installation guides:
-
-- [Linux / macOS / FreeBSD](https://stalw.art/docs/install/platform/linux)
-- [Windows](https://stalw.art/docs/install/platform/windows)
-- [Docker](https://stalw.art/docs/install/platform/docker)
-
-All documentation is available at [stalw.art/docs](https://stalw.art/docs/install/get-started).
+If setup fails or is cancelled, fix the reported problem and run the same command again. The service is not created or started after a failed setup. When `config.json` already exists, the installer preserves the existing configuration and skips the setup wizard.
 
 ## Support
 
