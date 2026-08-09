@@ -24,6 +24,7 @@ main() {
     need_cmd rm
     need_cmd tar
     need_cmd cp
+    need_cmd env
     need_cmd hostname
 
     # Require root
@@ -122,33 +123,48 @@ main() {
         write_env_file "$_env_file"
     fi
 
+    # Complete initial setup before installing or starting the service.
+    if [ ! -e "$_config_file" ]; then
+        local _setup_store="rocksdb"
+        if [ "$_component" = "stalwart-foundationdb" ]; then
+            _setup_store="foundationdb"
+        fi
+        say "🧭 Starting interactive command-line setup..."
+        say "   DNS changes are manual; no DNS provider credentials will be requested."
+        if ! env \
+            STALWART_SETUP_DATA_PATH="$_data_dir" \
+            STALWART_SETUP_LOG_PATH="$_log_dir" \
+            STALWART_SETUP_STORE="$_setup_store" \
+            "$_bin_file" --config="$_config_file" --setup < /dev/tty
+        then
+            err "❌ Command-line setup failed. Correct the error, then rerun this installer with the same arguments. The service was not installed or started."
+        fi
+    else
+        say "ℹ️  Preserving existing configuration at ${_config_file}; setup skipped."
+    fi
+
     # Ownership and permissions
     say "🔐 Setting permissions..."
-    ensure chown "${_account}:${_account}" "$_conf_dir" "$_log_dir" "$_data_dir"
+    ensure chown -R "${_account}:${_account}" "$_conf_dir" "$_log_dir" "$_data_dir"
     ensure chmod 0750 "$_conf_dir" "$_log_dir" "$_data_dir"
     ensure chown "root:${_account}" "$_env_file"
     ensure chmod 0640 "$_env_file"
 
     # Install and start the service
     say "🚀 Starting service..."
-    local _service_type=""
     case "$_os" in
         linux)
             if check_cmd systemctl; then
                 create_service_linux_systemd "$_bin_file" "$_config_file" "$_env_file" "$_account"
-                _service_type="systemd"
             else
                 create_service_linux_initd "$_bin_file" "$_config_file" "$_env_file" "$_account"
-                _service_type="initd"
             fi
             ;;
         macos)
             create_service_macos "$_bin_file" "$_config_file" "$_env_file" "$_account"
-            _service_type="launchd"
             ;;
         freebsd)
             create_service_freebsd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
-            _service_type="rcd"
             ;;
     esac
 
@@ -158,30 +174,9 @@ main() {
     say ""
     say "🎉 Installation complete!"
     say ""
-    say "Stalwart is running in bootstrap mode. A temporary administrator"
-    say "password was generated at startup and printed to the service logs."
-    say ""
-    say "👉 To find the password, inspect the service logs:"
-    case "$_service_type" in
-        systemd)
-            say "     journalctl -u stalwart -n 200 | grep -A8 'bootstrap mode'"
-            ;;
-        initd)
-            say "     grep -A8 'bootstrap mode' /var/log/syslog 2>/dev/null \\"
-            say "       || grep -A8 'bootstrap mode' /var/log/messages"
-            ;;
-        launchd)
-            say "     sudo log show --predicate 'process == \"stalwart\"' --last 5m"
-            ;;
-        rcd)
-            say "     grep -A8 'bootstrap mode' ${_log_dir}/stalwart.log"
-            ;;
-    esac
-    say ""
-    say "   Or set STALWART_RECOVERY_ADMIN=admin:<password> in"
-    say "   ${_env_file} and restart the service to pin a credential."
-    say ""
-    say "   Finish setup at: http://${_host}:8080/admin"
+    say "Stalwart is configured and running on ${_host}."
+    say "Use the permanent administrator credential printed by the setup wizard."
+    say "Add the DNS records from the wizard manually at your DNS provider."
     say ""
 
     return 0
@@ -192,6 +187,10 @@ print_usage() {
 Usage: install.sh [--fdb] [PREFIX]
 
 Install Stalwart into standard FHS paths or under a custom prefix.
+
+Fresh installations run an interactive command-line setup before starting the
+service. DNS records are printed for manual publication. Existing config.json
+files are preserved and skip setup.
 
 Options:
   --fdb       Install the FoundationDB build.

@@ -178,150 +178,15 @@ impl Network {
             has_acme_tls_challenge = true;
         }
 
-        const SPLIT_HERE: &str = "$$__SPLIT_HERE__$$";
-        let mut pacc = Configuration {
-            protocols: Protocols::default(),
-            authentication: Some(Authentication {
-                oauth_public: Some(OAuthPublic {
-                    issuer: SPLIT_HERE.to_string(),
-                }),
-                password: true,
-            }),
-            info: Info {
-                provider: Provider {
-                    name: "Stalwart".into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        };
-
         let default_hostname = if !system.default_hostname.is_empty() {
-            system.default_hostname.as_str()
+            system.default_hostname.clone()
         } else {
-            bp.registry.local_hostname()
+            bp.registry.local_hostname().to_string()
         };
-        let mut http_host = default_hostname.to_string();
-        for (service, details) in &system.services {
-            let hostname = details.hostname.as_deref().unwrap_or(default_hostname);
-
-            match service {
-                ServiceProtocol::Jmap => {
-                    if hostname != http_host {
-                        http_host = hostname.to_string();
-                    }
-                    pacc.protocols.jmap = HttpServer {
-                        url: format!("https://{hostname}/jmap/session",),
-                    }
-                    .into();
-                }
-                ServiceProtocol::Caldav => {
-                    pacc.protocols.caldav = HttpServer {
-                        url: format!("https://{hostname}/dav/cal/",),
-                    }
-                    .into();
-                }
-                ServiceProtocol::Carddav => {
-                    pacc.protocols.carddav = HttpServer {
-                        url: format!("https://{hostname}/dav/card/",),
-                    }
-                    .into();
-                }
-                ServiceProtocol::Webdav => {
-                    pacc.protocols.webdav = HttpServer {
-                        url: format!("https://{hostname}/dav/file/",),
-                    }
-                    .into();
-                }
-                ServiceProtocol::Imap => {
-                    pacc.protocols.imap = TextServer {
-                        host: hostname.to_string(),
-                    }
-                    .into();
-                }
-                ServiceProtocol::Pop3 => {
-                    pacc.protocols.pop3 = TextServer {
-                        host: hostname.to_string(),
-                    }
-                    .into();
-                }
-                ServiceProtocol::Smtp => {
-                    pacc.protocols.smtp = TextServer {
-                        host: hostname.to_string(),
-                    }
-                    .into();
-                }
-                ServiceProtocol::Managesieve => {
-                    pacc.protocols.managesieve = TextServer {
-                        host: hostname.to_string(),
-                    }
-                    .into();
-                }
-            }
-        }
-
-        for (tag, text) in system.provider_info {
-            match tag {
-                ProviderInfo::ProviderName => pacc.info.provider.name = text,
-                ProviderInfo::ProviderShortName => pacc.info.provider.short_name = Some(text),
-                ProviderInfo::UserDocumentation => {
-                    pacc.info.help.get_or_insert_default().documentation = Some(text)
-                }
-                ProviderInfo::DeveloperDocumentation => {
-                    pacc.info.help.get_or_insert_default().developer = Some(text)
-                }
-                ProviderInfo::ContactUri => {
-                    pacc.info
-                        .help
-                        .get_or_insert_default()
-                        .contact
-                        .get_or_insert_default()
-                        .push(text);
-                }
-                ProviderInfo::LogoUrl => {
-                    let logo = pacc.info.provider.logo.get_or_insert_default();
-                    if logo.is_empty() {
-                        logo.push(Logo {
-                            url: text,
-                            ..Default::default()
-                        });
-                    } else {
-                        logo[0].url = text;
-                    }
-                }
-                ProviderInfo::LogoWidth => {
-                    let logo = pacc.info.provider.logo.get_or_insert_default();
-                    if logo.is_empty() {
-                        logo.push(Logo {
-                            width: text.parse().ok(),
-                            ..Default::default()
-                        });
-                    } else {
-                        logo[0].width = text.parse().ok();
-                    }
-                }
-                ProviderInfo::LogoHeight => {
-                    let logo = pacc.info.provider.logo.get_or_insert_default();
-                    if logo.is_empty() {
-                        logo.push(Logo {
-                            height: text.parse().ok(),
-                            ..Default::default()
-                        });
-                    } else {
-                        logo[0].height = text.parse().ok();
-                    }
-                }
-            }
-        }
-
-        let (prefix, suffix) = serde_json::to_string(&pacc)
-            .unwrap_or_default()
-            .rsplit_once(SPLIT_HERE)
-            .map(|(prefix, suffix)| (prefix.to_string(), suffix.to_string()))
-            .unwrap();
+        let (pacc, http_host) = build_pacc(&system, &default_hostname);
         let mut network = Network {
             node_id: bp.node_id() as u64,
-            server_name: default_hostname.to_string(),
+            server_name: default_hostname,
             security: Security::parse(bp).await,
             contact_form: ContactForm::parse(bp).await,
             asn_geo_lookup: AsnGeoLookupConfig::parse(bp).await.unwrap_or_default(),
@@ -333,7 +198,7 @@ impl Network {
             info: NetworkInfo {
                 mxs: system.mail_exchangers.into_iter().collect(),
                 services: system.services,
-                pacc: Pacc { prefix, suffix },
+                pacc,
             },
         };
 
@@ -363,6 +228,145 @@ impl Network {
 
         network
     }
+}
+
+pub(crate) fn build_pacc(system: &SystemSettings, default_hostname: &str) -> (Pacc, String) {
+    const SPLIT_HERE: &str = "$$__SPLIT_HERE__$$";
+    let mut pacc = Configuration {
+        protocols: Protocols::default(),
+        authentication: Some(Authentication {
+            oauth_public: Some(OAuthPublic {
+                issuer: SPLIT_HERE.to_string(),
+            }),
+            password: true,
+        }),
+        info: Info {
+            provider: Provider {
+                name: "Stalwart".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    };
+    let mut http_host = default_hostname.to_string();
+    for (service, details) in &system.services {
+        let hostname = details.hostname.as_deref().unwrap_or(default_hostname);
+
+        match service {
+            ServiceProtocol::Jmap => {
+                if hostname != http_host {
+                    http_host = hostname.to_string();
+                }
+                pacc.protocols.jmap = HttpServer {
+                    url: format!("https://{hostname}/jmap/session"),
+                }
+                .into();
+            }
+            ServiceProtocol::Caldav => {
+                pacc.protocols.caldav = HttpServer {
+                    url: format!("https://{hostname}/dav/cal/"),
+                }
+                .into();
+            }
+            ServiceProtocol::Carddav => {
+                pacc.protocols.carddav = HttpServer {
+                    url: format!("https://{hostname}/dav/card/"),
+                }
+                .into();
+            }
+            ServiceProtocol::Webdav => {
+                pacc.protocols.webdav = HttpServer {
+                    url: format!("https://{hostname}/dav/file/"),
+                }
+                .into();
+            }
+            ServiceProtocol::Imap => {
+                pacc.protocols.imap = TextServer {
+                    host: hostname.to_string(),
+                }
+                .into();
+            }
+            ServiceProtocol::Pop3 => {
+                pacc.protocols.pop3 = TextServer {
+                    host: hostname.to_string(),
+                }
+                .into();
+            }
+            ServiceProtocol::Smtp => {
+                pacc.protocols.smtp = TextServer {
+                    host: hostname.to_string(),
+                }
+                .into();
+            }
+            ServiceProtocol::Managesieve => {
+                pacc.protocols.managesieve = TextServer {
+                    host: hostname.to_string(),
+                }
+                .into();
+            }
+        }
+    }
+
+    for (tag, text) in &system.provider_info {
+        match tag {
+            ProviderInfo::ProviderName => pacc.info.provider.name = text.clone(),
+            ProviderInfo::ProviderShortName => pacc.info.provider.short_name = Some(text.clone()),
+            ProviderInfo::UserDocumentation => {
+                pacc.info.help.get_or_insert_default().documentation = Some(text.clone())
+            }
+            ProviderInfo::DeveloperDocumentation => {
+                pacc.info.help.get_or_insert_default().developer = Some(text.clone())
+            }
+            ProviderInfo::ContactUri => {
+                pacc.info
+                    .help
+                    .get_or_insert_default()
+                    .contact
+                    .get_or_insert_default()
+                    .push(text.clone());
+            }
+            ProviderInfo::LogoUrl => {
+                let logo = pacc.info.provider.logo.get_or_insert_default();
+                if logo.is_empty() {
+                    logo.push(Logo {
+                        url: text.clone(),
+                        ..Default::default()
+                    });
+                } else {
+                    logo[0].url = text.clone();
+                }
+            }
+            ProviderInfo::LogoWidth => {
+                let logo = pacc.info.provider.logo.get_or_insert_default();
+                if logo.is_empty() {
+                    logo.push(Logo {
+                        width: text.parse().ok(),
+                        ..Default::default()
+                    });
+                } else {
+                    logo[0].width = text.parse().ok();
+                }
+            }
+            ProviderInfo::LogoHeight => {
+                let logo = pacc.info.provider.logo.get_or_insert_default();
+                if logo.is_empty() {
+                    logo.push(Logo {
+                        height: text.parse().ok(),
+                        ..Default::default()
+                    });
+                } else {
+                    logo[0].height = text.parse().ok();
+                }
+            }
+        }
+    }
+
+    let (prefix, suffix) = serde_json::to_string(&pacc)
+        .unwrap_or_default()
+        .rsplit_once(SPLIT_HERE)
+        .map(|(prefix, suffix)| (prefix.to_string(), suffix.to_string()))
+        .unwrap();
+    (Pacc { prefix, suffix }, http_host)
 }
 
 impl Http {

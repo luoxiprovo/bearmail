@@ -20,6 +20,8 @@ use std::time::Duration;
 use trc::Collector;
 use utils::wait_for_shutdown;
 
+mod setup;
+
 #[cfg(feature = "dev_mode")]
 pub mod test_data;
 
@@ -36,6 +38,12 @@ async fn main() -> std::io::Result<()> {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .expect("failed to install aws-lc-rs as the default rustls crypto provider");
+
+    if setup::is_requested() {
+        return setup::run()
+            .await
+            .map_err(|err| std::io::Error::other(format!("Setup failed: {err}")));
+    }
 
     // Load config and apply macros
     let mut init = Box::pin(BootManager::init()).await;

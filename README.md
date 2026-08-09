@@ -132,9 +132,52 @@ Key features:
 
 ## Get Started
 
-Install Stalwart on your server by following the instructions for your platform:
+### Linux, macOS and FreeBSD
 
-- [Linux / MacOS / FreeBSD](https://stalw.art/docs/install/platform/linux)
+The installer downloads the latest Stalwart release, creates a dedicated service account, and runs the initial setup in your terminal before installing and starting the service. Root access and outbound HTTPS connectivity are required.
+
+Download the installer, then run it from an interactive terminal:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://get.stalw.art/install.sh -o install.sh
+sudo sh install.sh
+```
+
+For a fresh installation, the command-line setup wizard asks for:
+
+- the public server hostname and primary mail domain;
+- optional public IPv4 and IPv6 addresses;
+- whether to request a Let's Encrypt TLS certificate;
+- whether to generate DKIM signing keys;
+- final confirmation before the configuration is written.
+
+The bundled installation uses RocksDB and the internal account directory. To install the FoundationDB build instead, pass `--fdb`; the wizard also asks for an optional FoundationDB cluster-file path:
+
+```sh
+sudo sh install.sh --fdb
+```
+
+To place the binary, configuration, logs and data under a custom directory, pass the directory as the prefix:
+
+```sh
+sudo sh install.sh /opt/stalwart
+```
+
+You can combine both options when needed:
+
+```sh
+sudo sh install.sh --fdb /opt/stalwart
+```
+
+When setup succeeds, save the permanent administrator username and password printed by the wizard. The password is shown once. The wizard then prints the DNS records for the domain, including A/AAAA and PTR guidance plus the applicable MX, SPF, DKIM, DMARC, SRV, MTA-STS, TLS reporting, CAA and client auto-configuration records.
+
+DNS changes are manual: the installer does not ask for DNS-provider credentials and does not modify DNS. Replace any address placeholders, publish the listed records with your DNS provider, and configure PTR records with your IP provider. The service is installed and started only after setup completes successfully.
+
+If setup fails or is cancelled, correct the reported issue and run the same installer command again. Service creation is not attempted after a setup failure. On a reinstall, an existing `config.json` is preserved and the setup wizard is skipped.
+
+For platform-specific paths and service-management details, see the installation guides:
+
+- [Linux / macOS / FreeBSD](https://stalw.art/docs/install/platform/linux)
 - [Windows](https://stalw.art/docs/install/platform/windows)
 - [Docker](https://stalw.art/docs/install/platform/docker)
 

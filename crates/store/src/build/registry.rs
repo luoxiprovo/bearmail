@@ -28,6 +28,16 @@ const DEAD_NODE_TIMEOUT: u64 = 60 * 60 * 24; // 24 hours
 
 impl RegistryStore {
     pub async fn init(local: PathBuf) -> Result<Self, String> {
+        Self::init_local(local, true).await
+    }
+
+    /// Opens the registry for the interactive setup command without emitting
+    /// temporary web-bootstrap credentials.
+    pub async fn init_for_setup(local: PathBuf) -> Result<Self, String> {
+        Self::init_local(local, false).await
+    }
+
+    async fn init_local(local: PathBuf, announce_bootstrap: bool) -> Result<Self, String> {
         // Create inner store
         let mut inner = RegistryStoreInner::new(local);
 
@@ -38,7 +48,7 @@ impl RegistryStore {
             RegistryInit::Bootstrap => {
                 inner.env_recovery_mode = true;
 
-                if inner.env_recovery_admin.is_none() {
+                if announce_bootstrap && inner.env_recovery_admin.is_none() {
                     let password = rng()
                         .sample_iter(Alphanumeric)
                         .take(16)

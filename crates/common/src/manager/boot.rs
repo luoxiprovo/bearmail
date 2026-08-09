@@ -46,6 +46,7 @@ Usage: stalwart [OPTIONS]
 
 Options:
   -c, --config <PATH>              Start server with the specified configuration file
+      --setup                      Run interactive initial setup, then exit
   -e, --export <PATH>              Export all store data to a specific path
   -i, --import <PATH>              Import store data from a specific path
   -o, --console                    Open the store console

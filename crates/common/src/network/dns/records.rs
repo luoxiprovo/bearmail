@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use crate::{Server, config::network::Pacc, network::dkim::generate_dkim_dns_record};
+use crate::{
+    Server,
+    config::network::{Pacc, build_pacc},
+    network::dkim::generate_dkim_dns_record,
+};
 use ahash::{AHashMap, AHashSet};
 use base64::{Engine, engine::general_purpose};
 use dns_update::{
@@ -14,7 +18,9 @@ use dns_update::{
 use registry::schema::{
     enums::{DnsRecordType, ServiceProtocol},
     prelude::{ObjectType, Property},
-    structs::{AcmeProvider, CertificateManagement, DkimSignature, DnsManagement, Domain},
+    structs::{
+        AcmeProvider, CertificateManagement, DkimSignature, DnsManagement, Domain, SystemSettings,
+    },
 };
 use reqwest::Url;
 use sha2::{Digest, Sha256};
@@ -399,6 +405,114 @@ impl Server {
                     })
             })
     }
+}
+
+/// Builds the DNS zone shown by the offline setup wizard. These records use
+/// the same DNS record types and BIND serializer as runtime DNS management,
+/// but never create or invoke a DNS updater.
+pub async fn build_setup_dns_records(
+    server_hostname: &str,
+    domain_name: &str,
+    dkim_signatures: &[DkimSignature],
+    request_tls_certificate: bool,
+) -> trc::Result<String> {
+    let hostname = format!("{}.", server_hostname.trim_end_matches('.'));
+    let domain = format!("{}.", domain_name.trim_end_matches('.'));
+    let (pacc, _) = build_pacc(
+        &SystemSettings::default(),
+        server_hostname.trim_end_matches('.'),
+    );
+    let pacc_digest = general_purpose::STANDARD.encode(Sha256::digest(pacc.build(&format!(
+        "https://{}",
+        server_hostname.trim_end_matches('.')
+    ))));
+    let mut records = vec![
+        NamedDnsRecord {
+            name: domain.clone(),
+            record: DnsRecord::MX(MXRecord {
+                exchange: hostname.trim_end_matches('.').to_string(),
+                priority: 10,
+            }),
+        },
+        NamedDnsRecord {
+            name: hostname.clone(),
+            record: DnsRecord::TXT("v=spf1 a -all".to_string()),
+        },
+        NamedDnsRecord {
+            name: domain.clone(),
+            record: DnsRecord::TXT("v=spf1 mx -all".to_string()),
+        },
+        NamedDnsRecord {
+            name: format!("_dmarc.{domain}"),
+            record: DnsRecord::TXT(format!(
+                "v=DMARC1; p=reject; rua=mailto:postmaster@{domain_name}"
+            )),
+        },
+        NamedDnsRecord {
+            name: format!("_smtp._tls.{domain}"),
+            record: DnsRecord::TXT(format!("v=TLSRPTv1; rua=mailto:postmaster@{domain_name}")),
+        },
+        NamedDnsRecord {
+            name: format!("mta-sts.{domain}"),
+            record: DnsRecord::CNAME(hostname.clone()),
+        },
+        NamedDnsRecord {
+            name: format!("_mta-sts.{domain}"),
+            record: DnsRecord::TXT("v=STSv1; id=1".to_string()),
+        },
+        NamedDnsRecord {
+            name: format!("ua-auto-config.{domain}"),
+            record: DnsRecord::CNAME(hostname.clone()),
+        },
+        NamedDnsRecord {
+            name: format!("_ua-auto-config.{domain}"),
+            record: DnsRecord::TXT(format!("v=UAAC1; a=sha256; d={pacc_digest}")),
+        },
+        NamedDnsRecord {
+            name: format!("autoconfig.{domain}"),
+            record: DnsRecord::CNAME(hostname.clone()),
+        },
+        NamedDnsRecord {
+            name: format!("autodiscover.{domain}"),
+            record: DnsRecord::CNAME(hostname.clone()),
+        },
+    ];
+
+    for (service, port) in [
+        ("jmap", 443),
+        ("caldavs", 443),
+        ("carddavs", 443),
+        ("imaps", 993),
+        ("pop3s", 995),
+        ("submissions", 465),
+    ] {
+        records.push(NamedDnsRecord {
+            name: format!("_{service}._tcp.{domain}"),
+            record: DnsRecord::SRV(SRVRecord {
+                target: hostname.clone(),
+                priority: 0,
+                weight: 1,
+                port,
+            }),
+        });
+    }
+
+    if request_tls_certificate {
+        records.push(NamedDnsRecord {
+            name: domain,
+            record: DnsRecord::CAA(CAARecord::Issue {
+                issuer_critical: false,
+                name: "letsencrypt.org".to_string().into(),
+                options: Vec::new(),
+            }),
+        });
+    }
+
+    for signature in dkim_signatures {
+        records.push(generate_dkim_dns_record(signature, domain_name).await?);
+    }
+
+    Ok(BindSerializer::serialize(&records))
 }
 
 impl Pacc {
