@@ -1,113 +1,147 @@
-# Stalwart CLI Setup Specification
+# Stalwart Interactive Installer and CLI Setup Specification
 
-## Summary
+## Goal
 
-Replace the fresh-install web bootstrap handoff with an interactive command-line setup. After `install.sh` downloads the Stalwart binary, it must run the native setup wizard before the service is installed and started. A successful install must leave Stalwart fully bootstrapped and must finish by printing the DNS records the operator needs to publish manually.
+A user runs `install.sh` without supplying installation or setup answers as command-line parameters. The installer obtains this repository's source (or accepts a locally built binary), installs it, and immediately starts a native terminal wizard. The wizard exposes the same identity, storage, directory, logging, and DNS-management fields as the webpage bootstrap form.
 
-## Goals
+The webpage is no longer part of first-run setup.
 
-- Complete a new Stalwart installation from the terminal without opening `/admin`.
-- Reuse the same validated bootstrap path as the existing JMAP bootstrap API so CLI and API setup produce equivalent registry data.
-- Keep the initial CLI flow suitable for the bundled local store and for the FoundationDB build selected by `install.sh --fdb`.
-- Configure DNS management as manual in every CLI setup; never request DNS-provider credentials or attempt DNS changes.
-- Generate initial DKIM keys before the wizard exits so the final DNS output includes DKIM records.
-- Preserve the current reinstall behavior: an existing `config.json` and registry are not overwritten or bootstrapped again.
+## Installer interaction
 
-## Non-goals
+`install.sh` accepts only `-h` and `--help`. A prefix, `--fdb`, store choice, hostname, domain, and all other installation/setup answers must not be accepted as command-line arguments.
 
-- Remove the bootstrap JMAP API or the administrative web application.
-- Expose every advanced storage, directory, tracing, clustering, or DNS-provider setting in the initial wizard.
-- Discover or modify authoritative DNS automatically.
-- Verify DNS propagation during installation.
+The installer uses `/dev/tty` for its questions and for the Rust setup wizard. This makes the normal download-and-pipe form work:
 
-## User flow
+```sh
+curl --proto '=https' --tlsv1.2 -sSfL \
+  https://raw.githubusercontent.com/valuerouterDev/stalwart/main/install.sh | sudo sh
+```
 
-For a new install, `install.sh` performs these operations in order:
+When `/dev/tty` cannot be opened, installation stops before making changes and explains that an interactive terminal is required.
 
-1. Detect the platform and create the service account and installation directories.
-2. Download and install the selected Stalwart binary.
-3. Create the service environment file when it does not exist.
-4. Run `stalwart --config=<path> --setup` in the terminal, passing the selected data/log paths and store kind through setup-scoped environment variables.
-5. Apply ownership and permissions to all setup-created data.
-6. Install and start the platform service.
-7. Print the normal installation-success message. The setup wizard's immediately preceding output contains the permanent administrator credential and the manual DNS checklist.
+The installer asks for:
 
-If `config.json` already exists, step 4 is skipped and the installer reports that the existing configuration was preserved.
+1. standard FHS paths or a custom installation prefix;
+2. whether to build this revision from source or install an existing compatible binary;
+3. for a source build, the source checkout/repository and build profile (all standard bootstrap backends, or FoundationDB-enabled);
+4. confirmation before installing the binary and running setup.
 
-The native wizard asks for:
+The default source repository is `https://github.com/valuerouterDev/stalwart.git`, not the upstream Stalwart release download. A checkout containing the current `install.sh` is preferred when available. The standard source build enables every community, non-FoundationDB backend reachable from the webpage bootstrap form and omits the `enterprise` Cargo feature. FoundationDB support is a separate community build choice because its client library is an external prerequisite.
 
-- server hostname, with the detected FQDN as the default;
-- primary mail domain, with the registrable part of the hostname as the default;
-- public IPv4 address (optional, used only in the DNS checklist);
-- public IPv6 address (optional, used only in the DNS checklist);
-- whether to request a TLS certificate;
-- whether to generate DKIM keys;
-- for the FoundationDB build, an optional cluster-file path;
-- final confirmation before applying irreversible bootstrap writes.
+The installer verifies that the selected binary supports CLI setup, creates the service account and filesystem layout, installs the binary, detects the server's public IPv4/IPv6 addresses over HTTPS, then invokes:
 
-The bundled build uses RocksDB at the installer's data path. The FoundationDB build uses FoundationDB and the supplied cluster file, or the FoundationDB system default when left blank. The internal directory, default blob/search/in-memory stores, and file logging at the installer's log path are used in both cases.
+```text
+stalwart --config=<selected config path> --setup
+```
 
-## CLI contract
+The config path and `--setup` select the operation; setup answers are never encoded in command arguments. Data, log, and detected public-IP values may be supplied internally as defaults, but advanced setup lets the user review and change them. IP detection is best-effort and never substitutes a private interface address for a public address.
 
-`stalwart --config=<path> --setup` is an interactive one-shot command.
+## Wizard stages and field parity
 
-- `--config` is required, as it is for normal server startup.
-- Setup is allowed only when the configuration file does not exist and the registry is in bootstrap mode.
-- The selected persistent store must contain neither a schema marker nor any registry objects. A different missing config path must not permit re-bootstrap of a store initialized by an earlier CLI setup, including before the first normal server startup.
-- The command does not bind network listeners or start the mail services.
-- `STALWART_SETUP_DATA_PATH` selects the RocksDB data path.
-- `STALWART_SETUP_LOG_PATH` selects the log path.
-- `STALWART_SETUP_STORE` accepts `rocksdb` (default) or `foundationdb`.
-- EOF, an invalid required value, failed confirmation, validation failure, or storage initialization failure returns a non-zero exit code without starting the service.
-- Hostnames/domains are trimmed and normalized through the existing bootstrap validator. IP input must parse as the corresponding IP family.
+The canonical webpage schema embedded in `resources/schema/schema.json.gz` drives nested CLI questions. This prevents a second handwritten list of backend fields from drifting away from the webpage.
 
-The setup command returns success only after:
+The CLI first offers two modes:
 
-- the persistent data store and registry are initialized;
-- the default domain and permanent administrator account exist;
-- manual DNS management is recorded for the domain;
-- requested DKIM keys have been generated;
-- the final DNS checklist has been generated.
+- quick setup (default) asks only for the server hostname and default email domain, retains every other WebUI bootstrap default, uses detected public IPs, and proceeds directly to final review;
+- advanced setup presents all stages below.
 
-## DNS behavior and output
+The advanced CLI presents the following stages in order.
 
-The CLI setup always uses `DnsServerBootstrap::Manual`. There is no automatic-DNS choice and no provider prompt.
+### 1. Server identity
 
-At the end, the wizard prints:
+- server hostname;
+- default email domain;
+- public IPv4 address (optional, used only for the DNS checklist);
+- public IPv6 address (optional, used only for the DNS checklist);
+- automatically obtain a TLS certificate;
+- generate DKIM signing keys.
 
-- an `A` record for the server hostname when IPv4 was provided, otherwise an explicit IPv4 placeholder;
-- an `AAAA` record when IPv6 was provided, otherwise an optional IPv6 placeholder;
-- `PTR` guidance for each supplied public IP, noting that reverse DNS is normally configured with the IP provider;
-- the generated BIND-style zone records for the primary domain, including applicable MX, SPF, DKIM, DMARC, SRV, MTA-STS, TLS reporting, CAA, autoconfig, and autodiscover records;
-- a reminder that all records must be added manually and that placeholders must be replaced before publishing.
+Hostname and domain answers are normalized and validated before continuing. IP inputs must match their requested address family.
 
-No DNS updater object or DNS-management task may be created by CLI setup.
+### 2. Storage
 
-## Security and failure handling
+The user independently selects and configures every storage role offered by the webpage:
 
-- The existing bootstrap implementation continues to generate the permanent administrator password. The wizard displays it once and labels it accordingly.
-- No temporary recovery password is written to the environment file or passed through a web request.
-- Setup-created registry, key, and log files are owned by the service account before startup.
-- Secrets are not included in DNS output, logs, command arguments, or the environment.
-- If setup fails, `install.sh` exits before installing/starting the service and prints how to rerun the installer.
-- A declined final confirmation exits cleanly without creating `config.json`.
-- The persistent-store emptiness check runs before any registry object is written, so retries against an already initialized or partially initialized store cannot add duplicate configuration objects.
+- main data storage: RocksDB, SQLite, FoundationDB, PostgreSQL, or MySQL;
+- attachment/file storage: data store, sharded, S3-compatible, Azure, filesystem, FoundationDB, PostgreSQL, or MySQL;
+- full-text search: data store, Elasticsearch, Meilisearch, FoundationDB, PostgreSQL, or MySQL;
+- cache/temporary storage: data store, sharded, Redis/Valkey, Redis Cluster, or Redis Sentinel.
 
-## Compatibility
+After a variant is selected, every field in that variant's webpage form is prompted with the same default from the embedded schema, except server-generated output fields. Nested choices such as secret sources, SQL stores, authentication modes, and regions are also interactive. Collection values use JSON syntax where the webpage uses a list, map, or set editor.
 
-- Linux systemd/init.d, macOS launchd, and FreeBSD rc.d service creation remain unchanged except for happening after CLI bootstrap.
-- Custom installation prefixes continue to use `<prefix>/data`, `<prefix>/logs`, and `<prefix>/etc/config.json`.
-- `install.sh --fdb` selects the FoundationDB bootstrap store.
-- `install.sh --help` documents the interactive setup and reinstall skip behavior.
+A variant that is present in the webpage schema but not compiled into the installed binary remains visible with an unavailable annotation. Selecting it gives an actionable build-feature message and does not advance.
+
+### 3. Account directory
+
+- internal directory;
+- LDAP;
+- SQL;
+- OpenID Connect.
+
+Every field reachable in the chosen webpage directory form is prompted. The completion screen only prints a newly generated administrator credential when bootstrap created one; external directories follow the existing promotion behavior.
+
+### 4. Logging
+
+- rotating log file;
+- console/stdout;
+- systemd journal;
+- OpenTelemetry over HTTP;
+- OpenTelemetry over gRPC.
+
+Every field reachable in the chosen webpage tracer form is prompted.
+
+### 5. DNS management
+
+The CLI lists every DNS-management variant in `x:DnsServerBootstrap`, including manual DNS, RFC 2136/TSIG, Cloudflare, Route53, and the other providers offered by the webpage. Selecting a provider prompts every nested setting and secret-source choice from that provider's webpage form. Manual mode remains the default.
+
+## Validation, review, and persistence
+
+- Empty input accepts the displayed default.
+- Boolean input accepts case-insensitive `y`, `yes`, `n`, and `no`.
+- Menus accept only enabled numeric choices.
+- Scalar values are type checked; list/map/set values are parsed as JSON.
+- The fully constructed `Bootstrap` object is validated with the same registry validator used by webpage setup.
+- Validation failures are printed and the operator can revisit the questionnaire.
+- A final summary shows identity plus the selected stores, directory, tracer, TLS, DKIM, and DNS mode.
+- Declining final application may return to editing or cancel without creating `config.json` or initializing the persistent store.
+- Existing `config.json` files are preserved and skip setup during reinstall.
+- Empty or non-regular config paths are not considered initialized and produce an actionable error.
+- A fresh install cannot proceed to service creation unless setup returned successfully and produced a non-empty regular `config.json`.
+- The persistent-store emptiness check occurs before any registry write, preventing a second config file from partially reinitializing an existing store.
+
+## Completion output
+
+After successful bootstrap the CLI prints:
+
+- the permanent administrator username and one-time password when the internal directory created them;
+- one aligned table with `TYPE`, `HOST`, `ANSWER`, `TTL`, and `PRIO` columns;
+- an `A` row containing the detected or supplied IPv4 address, or an explicit detection-failure placeholder;
+- an `AAAA` row when public IPv6 is available;
+- a `PTR` row for each public IP, plus a note that reverse DNS belongs at the IP provider;
+- the complete primary-domain records, including applicable MX, SPF, DKIM, DMARC, SRV, MTA-STS, TLS reporting, CAA, autoconfig, and autodiscover rows;
+- for manual DNS, a reminder that Stalwart did not contact a provider;
+- for automatic DNS, the selected provider and a reminder to verify its first update after startup.
+
+## Failure and security behavior
+
+- Secrets are never placed in command arguments, DNS output, or installer environment variables.
+- Secret values already present while revisiting a form are masked in prompt defaults.
+- Setup failure prevents service installation/startup and returns a non-zero status.
+- Source-build prerequisites are checked before filesystem/service changes.
+- A locally supplied binary must be an executable regular file; the README explains platform and revision compatibility.
+- Service files and platform behavior for systemd, init.d, launchd, and FreeBSD rc.d remain unchanged after successful setup.
 
 ## Acceptance criteria
 
-1. A fresh interactive `install.sh` run never instructs the operator to visit `/admin` to finish setup.
-2. The service starts from a persistent, bootstrapped registry after the wizard succeeds.
-3. The permanent administrator username and one-time password are printed.
-4. The domain is configured for manual DNS management, with no configured DNS provider.
-5. When DKIM generation is selected, the final DNS output contains at least one DKIM TXT record.
-6. The final output includes A/AAAA/PTR guidance and the complete generated domain zone records.
-7. Existing configurations are preserved and do not trigger the wizard.
-8. The normal and FoundationDB installer variants select supported data stores.
-9. Setup failure prevents service startup and returns a non-zero status.
+1. `install.sh --fdb`, `install.sh /prefix`, and any other setup/install answer passed as an argument are rejected; the same choices exist interactively.
+2. `curl ... | sudo sh` reads questions from `/dev/tty` and never consumes the script stream as answers.
+3. The default install builds or uses this repository's revised binary and never downloads an upstream release artifact.
+4. All five top-level webpage bootstrap sections are represented; every form field reachable from a selected variant is prompted from the embedded schema.
+5. Every DNS-management provider and nested setting offered by the webpage is offered by the CLI; manual DNS remains the default.
+6. A fresh successful install starts only after bootstrap persisted a valid registry and config file.
+7. The permanent administrator credential, when created, is shown once.
+8. The final DNS checklist includes address/PTR guidance and the complete generated zone.
+9. Existing deployments are preserved during reinstall.
+10. Any source acquisition, build, setup, or validation error prevents service startup and returns non-zero.
+11. Quick setup asks only for hostname and domain before final review and preserves every other Bootstrap default.
+12. Public-IP detection populates the A/AAAA/PTR table rows when the clean server has the corresponding public address family.

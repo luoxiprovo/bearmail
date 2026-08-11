@@ -407,6 +407,18 @@ impl Server {
     }
 }
 
+pub const SETUP_DNS_TTL: u32 = 3600;
+
+/// A provider-neutral DNS record shown by the offline setup wizard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupDnsRecord {
+    pub record_type: String,
+    pub host: String,
+    pub answer: String,
+    pub ttl: u32,
+    pub priority: Option<u16>,
+}
+
 /// Builds the DNS zone shown by the offline setup wizard. These records use
 /// the same DNS record types and BIND serializer as runtime DNS management,
 /// but never create or invoke a DNS updater.
@@ -416,6 +428,39 @@ pub async fn build_setup_dns_records(
     dkim_signatures: &[DkimSignature],
     request_tls_certificate: bool,
 ) -> trc::Result<String> {
+    build_setup_named_dns_records(
+        server_hostname,
+        domain_name,
+        dkim_signatures,
+        request_tls_certificate,
+    )
+    .await
+    .map(|records| BindSerializer::serialize(&records))
+}
+
+/// Builds provider-neutral rows for the setup wizard's DNS table.
+pub async fn build_setup_dns_table_records(
+    server_hostname: &str,
+    domain_name: &str,
+    dkim_signatures: &[DkimSignature],
+    request_tls_certificate: bool,
+) -> trc::Result<Vec<SetupDnsRecord>> {
+    build_setup_named_dns_records(
+        server_hostname,
+        domain_name,
+        dkim_signatures,
+        request_tls_certificate,
+    )
+    .await
+    .map(|records| records.into_iter().map(SetupDnsRecord::from).collect())
+}
+
+async fn build_setup_named_dns_records(
+    server_hostname: &str,
+    domain_name: &str,
+    dkim_signatures: &[DkimSignature],
+    request_tls_certificate: bool,
+) -> trc::Result<Vec<NamedDnsRecord>> {
     let hostname = format!("{}.", server_hostname.trim_end_matches('.'));
     let domain = format!("{}.", domain_name.trim_end_matches('.'));
     let (pacc, _) = build_pacc(
@@ -512,7 +557,38 @@ pub async fn build_setup_dns_records(
         records.push(generate_dkim_dns_record(signature, domain_name).await?);
     }
 
-    Ok(BindSerializer::serialize(&records))
+    Ok(records)
+}
+
+impl From<NamedDnsRecord> for SetupDnsRecord {
+    fn from(named: NamedDnsRecord) -> Self {
+        let (record_type, answer, priority) = match named.record {
+            DnsRecord::A(address) => ("A", address.to_string(), None),
+            DnsRecord::AAAA(address) => ("AAAA", address.to_string(), None),
+            DnsRecord::CNAME(target) => ("CNAME", trim_fqdn(target), None),
+            DnsRecord::NS(target) => ("NS", trim_fqdn(target), None),
+            DnsRecord::MX(mx) => ("MX", trim_fqdn(mx.exchange), Some(mx.priority)),
+            DnsRecord::TXT(text) => ("TXT", text, None),
+            DnsRecord::SRV(srv) => (
+                "SRV",
+                format!("{} {} {}", srv.weight, srv.port, trim_fqdn(srv.target)),
+                Some(srv.priority),
+            ),
+            DnsRecord::TLSA(tlsa) => ("TLSA", tlsa.to_string(), None),
+            DnsRecord::CAA(caa) => ("CAA", caa.to_string(), None),
+        };
+        Self {
+            record_type: record_type.to_string(),
+            host: trim_fqdn(named.name),
+            answer,
+            ttl: SETUP_DNS_TTL,
+            priority,
+        }
+    }
+}
+
+fn trim_fqdn(value: String) -> String {
+    value.trim_end_matches('.').to_string()
 }
 
 impl Pacc {

@@ -4,33 +4,45 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use common::{network::dns::records::build_setup_dns_records, psl};
+use common::{
+    network::dns::records::{SETUP_DNS_TTL, SetupDnsRecord, build_setup_dns_table_records},
+    psl,
+};
 use jmap::registry::mapping::bootstrap::apply_bootstrap;
 use registry::schema::{
     enums::PasswordHashAlgorithm,
-    structs::{
-        Bootstrap, CertificateManagement, DataStore, DnsServerBootstrap, FoundationDbStore,
-        RocksDbStore, Tracer, TracerLog,
-    },
+    prelude::ObjectImpl,
+    structs::{Bootstrap, CertificateManagement},
 };
+use serde_json::Value;
 use std::{
     env,
     ffi::OsString,
     io::{self, BufRead, Write},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{Ipv4Addr, Ipv6Addr},
     path::PathBuf,
 };
 use store::RegistryStore;
-use utils::{DomainPart, is_valid_domain};
+
+#[cfg(test)]
+use registry::schema::structs::{DataStore, DnsServerBootstrap, RocksDbStore, Tracer, TracerLog};
+
+mod wizard;
+
+use wizard::{WebSetupWizard, prompt_yes_no, read_line};
 
 const SETUP_HELP: &str = r#"Usage: stalwart --config <PATH> --setup
 
 Run the interactive initial setup without starting network services.
 
-Setup environment variables:
-  STALWART_SETUP_DATA_PATH  Data directory for the bundled RocksDB store
-  STALWART_SETUP_LOG_PATH   Directory for Stalwart log files
-  STALWART_SETUP_STORE      rocksdb (default) or foundationdb
+Quick setup asks only for the server hostname and mail domain. Advanced setup
+exposes the same bootstrap fields and nested choices as the WebUI.
+
+Installer-provided defaults:
+  STALWART_SETUP_DATA_PATH  Initial path shown for a local data store
+  STALWART_SETUP_LOG_PATH   Initial path shown for file logging
+  STALWART_SETUP_PUBLIC_IPV4  Detected public IPv4 address
+  STALWART_SETUP_PUBLIC_IPV6  Detected public IPv6 address
 "#;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -41,13 +53,9 @@ struct SetupOptions {
 
 #[derive(Debug)]
 struct SetupAnswers {
-    server_hostname: String,
-    default_domain: String,
+    bootstrap: Bootstrap,
     ipv4: Option<Ipv4Addr>,
     ipv6: Option<Ipv6Addr>,
-    request_tls_certificate: bool,
-    generate_dkim_keys: bool,
-    foundationdb_cluster_file: Option<String>,
 }
 
 pub fn is_requested() -> bool {
@@ -84,14 +92,6 @@ pub async fn run() -> Result<(), String> {
     let default_domain = psl::domain_str(&default_hostname)
         .unwrap_or("example.org")
         .to_string();
-    let store_kind = env::var("STALWART_SETUP_STORE")
-        .unwrap_or_else(|_| "rocksdb".to_string())
-        .to_ascii_lowercase();
-    if store_kind != "rocksdb" && store_kind != "foundationdb" {
-        return Err(format!(
-            "Invalid STALWART_SETUP_STORE value '{store_kind}'; expected rocksdb or foundationdb"
-        ));
-    }
 
     let mut stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
@@ -100,56 +100,26 @@ pub async fn run() -> Result<(), String> {
         .map_err(io_error)?;
     writeln!(
         stdout,
-        "This wizard initializes Stalwart and prints DNS records for you to add manually.\n"
+        concat!(
+            "This wizard initializes Stalwart without starting network services.\n",
+            "Every bootstrap choice available in the WebUI is available here.\n"
+        )
     )
     .map_err(io_error)?;
-    let answers = prompt_for_answers(
-        &mut stdin,
-        &mut stdout,
-        &default_hostname,
-        &default_domain,
-        store_kind == "foundationdb",
-    )?;
+    let answers = prompt_for_answers(&mut stdin, &mut stdout, &default_hostname, &default_domain)?;
     drop(stdin);
     drop(stdout);
 
-    let data_path = normalized_directory(
-        env::var("STALWART_SETUP_DATA_PATH").unwrap_or_else(|_| default_data_path().to_string()),
-    );
-    let log_path = normalized_directory(
-        env::var("STALWART_SETUP_LOG_PATH").unwrap_or_else(|_| "/var/log/stalwart/".to_string()),
-    );
-    let data_store = if store_kind == "foundationdb" {
-        DataStore::FoundationDb(FoundationDbStore {
-            cluster_file: answers.foundationdb_cluster_file.clone(),
-            ..Default::default()
-        })
-    } else {
-        DataStore::RocksDb(RocksDbStore {
-            path: data_path,
-            ..Default::default()
-        })
-    };
-    let bootstrap = Bootstrap {
-        server_hostname: answers.server_hostname.clone(),
-        default_domain: answers.default_domain.clone(),
-        request_tls_certificate: answers.request_tls_certificate,
-        generate_dkim_keys: answers.generate_dkim_keys,
-        data_store,
-        tracer: Tracer::Log(TracerLog {
-            path: log_path,
-            prefix: "stalwart".to_string(),
-            ansi: true,
-            enable: true,
-            ..Default::default()
-        }),
-        dns_server: DnsServerBootstrap::Manual,
-        ..Default::default()
-    };
+    let server_hostname = answers.bootstrap.server_hostname.clone();
+    let default_domain = answers.bootstrap.default_domain.clone();
+    let request_tls_certificate = answers.bootstrap.request_tls_certificate;
+    let dns_mode = object_variant(&answers.bootstrap.dns_server);
+    let ipv4 = answers.ipv4;
+    let ipv6 = answers.ipv6;
 
     let result = apply_bootstrap(
         &bootstrap_registry,
-        bootstrap,
+        answers.bootstrap,
         PasswordHashAlgorithm::Argon2id,
         true,
     )
@@ -159,9 +129,9 @@ pub async fn run() -> Result<(), String> {
         &result.domain.certificate_management,
         CertificateManagement::Automatic(_)
     );
-    let zone = build_setup_dns_records(
-        &answers.server_hostname,
-        &answers.default_domain,
+    let dns_records = build_setup_dns_table_records(
+        &server_hostname,
+        &default_domain,
         &result.dkim_signatures,
         tls_configured,
     )
@@ -169,10 +139,14 @@ pub async fn run() -> Result<(), String> {
     .map_err(|err| format!("Failed to generate DNS records: {err}"))?;
 
     print_setup_result(
-        &answers,
+        ipv4,
+        ipv6,
+        &server_hostname,
+        request_tls_certificate,
+        &dns_mode,
         result.username.as_deref(),
         result.secret.as_deref(),
-        &zone,
+        &dns_records,
         tls_configured,
     )
     .map_err(io_error)
@@ -238,73 +212,113 @@ fn prompt_for_answers<R: BufRead, W: Write>(
     output: &mut W,
     default_hostname: &str,
     default_domain: &str,
-    foundationdb: bool,
 ) -> Result<SetupAnswers, String> {
-    let server_hostname = prompt_domain(input, output, "Server hostname", Some(default_hostname))?;
-    let default_domain = prompt_domain(input, output, "Primary mail domain", Some(default_domain))?;
-    let ipv4 = prompt_ip::<R, W, Ipv4Addr>(input, output, "Public IPv4 address", "optional")?;
-    let ipv6 = prompt_ip::<R, W, Ipv6Addr>(input, output, "Public IPv6 address", "optional")?;
-    let request_tls_certificate = prompt_yes_no(
-        input,
-        output,
-        "Request a TLS certificate from Let's Encrypt",
-        true,
-    )?;
-    let generate_dkim_keys = prompt_yes_no(input, output, "Generate DKIM signing keys now", true)?;
-    let foundationdb_cluster_file = if foundationdb {
-        let value = prompt_text(
-            input,
-            output,
-            "FoundationDB cluster file",
-            Some(""),
-            Some("system default"),
-        )?;
-        (!value.is_empty()).then_some(value)
-    } else {
-        None
+    let mut defaults = Bootstrap {
+        server_hostname: default_hostname.to_string(),
+        default_domain: default_domain.to_string(),
+        ..Default::default()
     };
-
-    writeln!(output, "\nSetup summary:").map_err(io_error)?;
-    writeln!(output, "  Hostname: {server_hostname}").map_err(io_error)?;
-    writeln!(output, "  Mail domain: {default_domain}").map_err(io_error)?;
-    writeln!(
-        output,
-        "  DNS management: manual (this wizard will not modify DNS)"
-    )
-    .map_err(io_error)?;
-    if !prompt_yes_no(input, output, "Apply this configuration", false)? {
-        return Err("Setup cancelled; no configuration was written".to_string());
+    if let Ok(path) = env::var("STALWART_SETUP_DATA_PATH")
+        && let registry::schema::structs::DataStore::RocksDb(store) = &mut defaults.data_store
+    {
+        store.path = normalized_directory(path);
+    }
+    if let Ok(path) = env::var("STALWART_SETUP_LOG_PATH")
+        && let registry::schema::structs::Tracer::Log(tracer) = &mut defaults.tracer
+    {
+        tracer.path = normalized_directory(path);
     }
 
-    Ok(SetupAnswers {
-        server_hostname,
-        default_domain,
-        ipv4,
-        ipv6,
-        request_tls_certificate,
-        generate_dkim_keys,
-        foundationdb_cluster_file,
-    })
+    let mut current = serde_json::to_value(defaults)
+        .map_err(|err| format!("Failed to prepare setup defaults: {err}"))?;
+    let quick_setup = prompt_setup_mode(input, output)?;
+    let mut ipv4 = env::var("STALWART_SETUP_PUBLIC_IPV4")
+        .ok()
+        .and_then(|value| value.trim().parse().ok());
+    let mut ipv6 = env::var("STALWART_SETUP_PUBLIC_IPV6")
+        .ok()
+        .and_then(|value| value.trim().parse().ok());
+
+    loop {
+        current = {
+            let mut wizard = WebSetupWizard::new(input, output)?;
+            if quick_setup {
+                wizard.configure_bootstrap_identity(current)?
+            } else {
+                wizard.configure_object("x:Bootstrap", current)?
+            }
+        };
+
+        if !quick_setup {
+            writeln!(output, "\n  Public address records").map_err(io_error)?;
+            writeln!(
+                output,
+                "    Detected addresses are used only for the final A/AAAA/PTR checklist."
+            )
+            .map_err(io_error)?;
+            ipv4 = prompt_ip(input, output, "Public IPv4 address", ipv4)?;
+            ipv6 = prompt_ip(input, output, "Public IPv6 address", ipv6)?;
+        }
+
+        let bootstrap: Bootstrap = match serde_json::from_value(current.clone()) {
+            Ok(bootstrap) => bootstrap,
+            Err(err) => {
+                writeln!(
+                    output,
+                    "\nThe selected values could not be converted to a bootstrap configuration: {err}"
+                )
+                .map_err(io_error)?;
+                writeln!(output, "Please review the questionnaire again.").map_err(io_error)?;
+                continue;
+            }
+        };
+        let mut validation_errors = Vec::new();
+        if !bootstrap.validate(&mut validation_errors) {
+            writeln!(output, "\nThe configuration has validation errors:").map_err(io_error)?;
+            for error in validation_errors {
+                writeln!(output, "  - {error:?}").map_err(io_error)?;
+            }
+            writeln!(output, "Please review the questionnaire again.").map_err(io_error)?;
+            continue;
+        }
+
+        print_summary(output, &bootstrap, ipv4, ipv6)?;
+        if prompt_yes_no(input, output, "Apply this configuration", quick_setup)? {
+            return Ok(SetupAnswers {
+                bootstrap,
+                ipv4,
+                ipv6,
+            });
+        }
+        if !prompt_yes_no(input, output, "Edit the answers", true)? {
+            return Err("Setup cancelled; no configuration was written".to_string());
+        }
+        current = serde_json::to_value(bootstrap)
+            .map_err(|err| format!("Failed to retain setup answers: {err}"))?;
+    }
 }
 
-fn prompt_domain<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
-    label: &str,
-    default: Option<&str>,
-) -> Result<String, String> {
+fn prompt_setup_mode<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> Result<bool, String> {
     loop {
-        let value = prompt_text(input, output, label, default, None)?;
-        let normalized = value
-            .trim()
-            .to_lowercase()
-            .to_ascii_domain()
-            .map(|value| value.into_owned())
-            .unwrap_or_default();
-        if is_valid_domain(&normalized) {
-            return Ok(normalized);
+        writeln!(output, "Setup mode:").map_err(io_error)?;
+        writeln!(
+            output,
+            "  1) Quick setup - ask for hostname and mail domain; keep all other defaults (default)"
+        )
+        .map_err(io_error)?;
+        writeln!(
+            output,
+            "  2) Advanced setup - review every WebUI bootstrap option"
+        )
+        .map_err(io_error)?;
+        write!(output, "Select Setup mode [1]: ")
+            .and_then(|_| output.flush())
+            .map_err(io_error)?;
+        match read_line(input)?.trim() {
+            "" | "1" => return Ok(true),
+            "2" => return Ok(false),
+            _ => writeln!(output, "  Choose 1 or 2.").map_err(io_error)?,
         }
-        writeln!(output, "  Enter a valid fully-qualified domain name.").map_err(io_error)?;
     }
 }
 
@@ -312,16 +326,25 @@ fn prompt_ip<R, W, T>(
     input: &mut R,
     output: &mut W,
     label: &str,
-    hint: &str,
+    current: Option<T>,
 ) -> Result<Option<T>, String>
 where
     R: BufRead,
     W: Write,
-    T: std::str::FromStr,
+    T: std::str::FromStr + std::fmt::Display + Copy,
 {
     loop {
-        let value = prompt_text(input, output, label, Some(""), Some(hint))?;
+        match current {
+            Some(value) => write!(output, "{label} [{value}]: "),
+            None => write!(output, "{label} [optional]: "),
+        }
+        .and_then(|_| output.flush())
+        .map_err(io_error)?;
+        let value = read_line(input)?.trim().to_string();
         if value.is_empty() {
+            return Ok(current);
+        }
+        if value == "-" {
             return Ok(None);
         }
         match value.parse::<T>() {
@@ -333,70 +356,105 @@ where
     }
 }
 
-fn prompt_yes_no<R: BufRead, W: Write>(
-    input: &mut R,
+fn print_summary<W: Write>(
     output: &mut W,
-    label: &str,
-    default: bool,
-) -> Result<bool, String> {
-    loop {
-        write!(
-            output,
-            "{label} [{}]: ",
-            if default { "Y/n" } else { "y/N" }
-        )
-        .and_then(|_| output.flush())
-        .map_err(io_error)?;
-        let value = read_line(input)?;
-        match value.trim().to_ascii_lowercase().as_str() {
-            "" => return Ok(default),
-            "y" | "yes" => return Ok(true),
-            "n" | "no" => return Ok(false),
-            _ => writeln!(output, "  Answer yes or no.").map_err(io_error)?,
-        }
-    }
+    bootstrap: &Bootstrap,
+    ipv4: Option<Ipv4Addr>,
+    ipv6: Option<Ipv6Addr>,
+) -> Result<(), String> {
+    writeln!(output, "\nSetup summary:").map_err(io_error)?;
+    writeln!(output, "  Hostname: {}", bootstrap.server_hostname).map_err(io_error)?;
+    writeln!(output, "  Mail domain: {}", bootstrap.default_domain).map_err(io_error)?;
+    writeln!(
+        output,
+        "  Main data store: {}",
+        object_variant(&bootstrap.data_store)
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "  Blob store: {}",
+        object_variant(&bootstrap.blob_store)
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "  Search store: {}",
+        object_variant(&bootstrap.search_store)
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "  In-memory store: {}",
+        object_variant(&bootstrap.in_memory_store)
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "  Directory: {}",
+        object_variant(&bootstrap.directory)
+    )
+    .map_err(io_error)?;
+    writeln!(output, "  Logging: {}", object_variant(&bootstrap.tracer)).map_err(io_error)?;
+    writeln!(
+        output,
+        "  DNS management: {}",
+        object_variant(&bootstrap.dns_server)
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "  Automatic TLS: {}",
+        yes_no(bootstrap.request_tls_certificate)
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "  Generate DKIM keys: {}",
+        yes_no(bootstrap.generate_dkim_keys)
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "  Public IPv4: {}",
+        ipv4.map(|value| value.to_string())
+            .unwrap_or_else(|| "not set".to_string())
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "  Public IPv6: {}",
+        ipv6.map(|value| value.to_string())
+            .unwrap_or_else(|| "not set".to_string())
+    )
+    .map_err(io_error)
 }
 
-fn prompt_text<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
-    label: &str,
-    default: Option<&str>,
-    display_default: Option<&str>,
-) -> Result<String, String> {
-    loop {
-        let shown_default = display_default.or(default).unwrap_or_default();
-        if shown_default.is_empty() {
-            write!(output, "{label}: ").map_err(io_error)?;
-        } else {
-            write!(output, "{label} [{shown_default}]: ").map_err(io_error)?;
-        }
-        output.flush().map_err(io_error)?;
-        let value = read_line(input)?.trim().to_string();
-        if !value.is_empty() {
-            return Ok(value);
-        }
-        if let Some(default) = default {
-            return Ok(default.to_string());
-        }
-        writeln!(output, "  A value is required.").map_err(io_error)?;
-    }
+fn object_variant<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("@type")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "Unknown".to_string())
 }
 
-fn read_line<R: BufRead>(input: &mut R) -> Result<String, String> {
-    let mut value = String::new();
-    match input.read_line(&mut value) {
-        Ok(0) => Err("Setup input ended before the wizard completed".to_string()),
-        Ok(_) => Ok(value),
-        Err(err) => Err(format!("Failed to read setup input: {err}")),
-    }
+const fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
 }
 
 fn print_setup_result(
-    answers: &SetupAnswers,
+    ipv4: Option<Ipv4Addr>,
+    ipv6: Option<Ipv6Addr>,
+    server_hostname: &str,
+    request_tls_certificate: bool,
+    dns_mode: &str,
     username: Option<&str>,
     secret: Option<&str>,
-    zone: &str,
+    dns_records: &[SetupDnsRecord],
     tls_configured: bool,
 ) -> io::Result<()> {
     let mut output = io::stdout().lock();
@@ -410,7 +468,7 @@ fn print_setup_result(
         writeln!(output, "  username: {username}")?;
         writeln!(output, "  password: {secret}")?;
     }
-    if answers.request_tls_certificate && !tls_configured {
+    if request_tls_certificate && !tls_configured {
         writeln!(
             output,
             "\nWarning: the TLS certificate account could not be created during setup."
@@ -420,52 +478,85 @@ fn print_setup_result(
             "Configure certificate management after startup before enabling public TLS."
         )?;
     }
-    writeln!(output, "\nDNS records to add manually")?;
-    writeln!(output, "---------------------------")?;
-    writeln!(output, "; Replace every placeholder before publishing.")?;
+    if matches!(dns_mode, "Manual" | "Deprecated1") {
+        writeln!(output, "\nDNS records to add manually")?;
+        writeln!(output, "---------------------------")?;
+    } else {
+        writeln!(output, "\nDNS records and expected managed zone")?;
+        writeln!(output, "-------------------------------------")?;
+    }
+
+    let mut records = Vec::with_capacity(dns_records.len() + 4);
+    records.push(SetupDnsRecord {
+        record_type: "A".to_string(),
+        host: server_hostname.trim_end_matches('.').to_string(),
+        answer: ipv4
+            .map(|ip| ip.to_string())
+            .unwrap_or_else(|| "<PUBLIC_IPV4_NOT_DETECTED>".to_string()),
+        ttl: SETUP_DNS_TTL,
+        priority: None,
+    });
+    if let Some(ip) = ipv6 {
+        records.push(SetupDnsRecord {
+            record_type: "AAAA".to_string(),
+            host: server_hostname.trim_end_matches('.').to_string(),
+            answer: ip.to_string(),
+            ttl: SETUP_DNS_TTL,
+            priority: None,
+        });
+    }
+    if let Some(ip) = ipv4 {
+        records.push(SetupDnsRecord {
+            record_type: "PTR".to_string(),
+            host: ipv4_reverse_name(ip),
+            answer: server_hostname.trim_end_matches('.').to_string(),
+            ttl: SETUP_DNS_TTL,
+            priority: None,
+        });
+    }
+    if let Some(ip) = ipv6 {
+        records.push(SetupDnsRecord {
+            record_type: "PTR".to_string(),
+            host: ipv6_reverse_name(ip),
+            answer: server_hostname.trim_end_matches('.').to_string(),
+            ttl: SETUP_DNS_TTL,
+            priority: None,
+        });
+    }
+    records.extend_from_slice(dns_records);
+    print_dns_table(&mut output, &records)?;
+
     writeln!(
         output,
-        "{}. IN A {}",
-        answers.server_hostname,
-        answers
-            .ipv4
-            .map(|ip| ip.to_string())
-            .unwrap_or_else(|| "<YOUR_PUBLIC_IPV4>".to_string())
+        "\nTTL values are seconds. PRIO is used by MX and SRV records."
     )?;
     writeln!(
         output,
-        "{}. IN AAAA {}",
-        answers.server_hostname,
-        answers
-            .ipv6
-            .map(|ip| ip.to_string())
-            .unwrap_or_else(|| "<YOUR_PUBLIC_IPV6_OPTIONAL>".to_string())
+        "Wrapped HOST or ANSWER lines continue the cell above; concatenate them without spaces."
     )?;
-    if let Some(ip) = answers.ipv4.map(IpAddr::V4) {
+    if ipv4.is_none() {
         writeln!(
             output,
-            "; PTR: ask your IP provider to point {ip} to {}.",
-            answers.server_hostname
+            "Warning: public IPv4 detection failed. Replace <PUBLIC_IPV4_NOT_DETECTED> before publishing."
+        )?;
+    }
+    if ipv4.is_some() || ipv6.is_some() {
+        writeln!(
+            output,
+            "PTR records must be configured by the provider that owns each public IP address."
+        )?;
+    }
+    if matches!(dns_mode, "Manual" | "Deprecated1") {
+        writeln!(
+            output,
+            "DNS management is manual. Stalwart did not contact or modify your DNS provider."
         )?;
     } else {
         writeln!(
             output,
-            "; PTR: point your public IPv4 address to {} through your IP provider.",
-            answers.server_hostname
+            "Automatic DNS management is configured through {dns_mode}; verify its first update after startup."
         )?;
     }
-    if let Some(ip) = answers.ipv6.map(IpAddr::V6) {
-        writeln!(
-            output,
-            "; PTR: ask your IP provider to point {ip} to {}.",
-            answers.server_hostname
-        )?;
-    }
-    writeln!(output, "\n{zone}")?;
-    writeln!(
-        output,
-        "All DNS changes are manual. Stalwart did not contact or modify your DNS provider."
-    )?;
     writeln!(
         output,
         "════════════════════════════════════════════════════════════"
@@ -473,19 +564,126 @@ fn print_setup_result(
     Ok(())
 }
 
+fn print_dns_table<W: Write>(output: &mut W, records: &[SetupDnsRecord]) -> io::Result<()> {
+    let type_width = records
+        .iter()
+        .map(|record| record.record_type.chars().count())
+        .max()
+        .unwrap_or(4)
+        .max("TYPE".len());
+    let host_width = records
+        .iter()
+        .map(|record| record.host.chars().count())
+        .max()
+        .unwrap_or(4)
+        .max("HOST".len())
+        .min(38);
+    let answer_width = records
+        .iter()
+        .map(|record| record.answer.chars().count())
+        .max()
+        .unwrap_or(6)
+        .max("ANSWER".len())
+        .min(56);
+    let ttl_width = records
+        .iter()
+        .map(|record| record.ttl.to_string().len())
+        .max()
+        .unwrap_or(3)
+        .max("TTL".len());
+    let priority_width = records
+        .iter()
+        .filter_map(|record| record.priority)
+        .map(|priority| priority.to_string().len())
+        .max()
+        .unwrap_or(1)
+        .max("PRIO".len());
+
+    writeln!(
+        output,
+        "{:<type_width$} | {:<host_width$} | {:<answer_width$} | {:>ttl_width$} | {:>priority_width$}",
+        "TYPE", "HOST", "ANSWER", "TTL", "PRIO"
+    )?;
+    writeln!(
+        output,
+        "{}-+-{}-+-{}-+-{}-+-{}",
+        "-".repeat(type_width),
+        "-".repeat(host_width),
+        "-".repeat(answer_width),
+        "-".repeat(ttl_width),
+        "-".repeat(priority_width)
+    )?;
+
+    for record in records {
+        let hosts = wrap_cell(&record.host, host_width);
+        let answers = wrap_cell(&record.answer, answer_width);
+        let line_count = hosts.len().max(answers.len());
+        for index in 0..line_count {
+            let record_type = if index == 0 {
+                record.record_type.as_str()
+            } else {
+                ""
+            };
+            let host = hosts.get(index).map(String::as_str).unwrap_or("");
+            let answer = answers.get(index).map(String::as_str).unwrap_or("");
+            let ttl = if index == 0 {
+                record.ttl.to_string()
+            } else {
+                String::new()
+            };
+            let priority = if index == 0 {
+                record
+                    .priority
+                    .map(|priority| priority.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            } else {
+                String::new()
+            };
+            writeln!(
+                output,
+                "{record_type:<type_width$} | {host:<host_width$} | {answer:<answer_width$} | {ttl:>ttl_width$} | {priority:>priority_width$}"
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn wrap_cell(value: &str, width: usize) -> Vec<String> {
+    let chars = value.chars().collect::<Vec<_>>();
+    if chars.is_empty() {
+        return vec![String::new()];
+    }
+    chars
+        .chunks(width.max(1))
+        .map(|chunk| chunk.iter().collect())
+        .collect()
+}
+
+fn ipv4_reverse_name(ip: Ipv4Addr) -> String {
+    let octets = ip.octets();
+    format!(
+        "{}.{}.{}.{}.in-addr.arpa",
+        octets[3], octets[2], octets[1], octets[0]
+    )
+}
+
+fn ipv6_reverse_name(ip: Ipv6Addr) -> String {
+    let mut name = String::with_capacity(72);
+    for byte in ip.octets().iter().rev() {
+        name.push(char::from_digit((byte & 0x0f) as u32, 16).unwrap());
+        name.push('.');
+        name.push(char::from_digit((byte >> 4) as u32, 16).unwrap());
+        name.push('.');
+    }
+    name.push_str("ip6.arpa");
+    name
+}
+
 fn normalized_directory(mut path: String) -> String {
     if !path.ends_with(std::path::MAIN_SEPARATOR) {
         path.push(std::path::MAIN_SEPARATOR);
     }
     path
-}
-
-const fn default_data_path() -> &'static str {
-    if cfg!(target_os = "freebsd") {
-        "/var/db/stalwart/"
-    } else {
-        "/var/lib/stalwart/"
-    }
 }
 
 fn io_error(error: io::Error) -> String {
@@ -530,6 +728,21 @@ mod tests {
     }
 
     #[test]
+    fn setup_rejects_answers_as_arguments() {
+        let error = parse_args_with_config(
+            [
+                OsString::from("stalwart"),
+                OsString::from("--setup"),
+                OsString::from("--config=/tmp/config.json"),
+                OsString::from("--hostname=mail.example.test"),
+            ],
+            None,
+        )
+        .unwrap_err();
+        assert!(error.contains("Unrecognized setup argument"));
+    }
+
+    #[test]
     fn yes_no_accepts_defaults_and_case_insensitive_answers() {
         for (input, default, expected) in [
             ("\n", true, true),
@@ -547,18 +760,29 @@ mod tests {
     }
 
     #[test]
+    fn setup_mode_defaults_to_quick_and_allows_advanced() {
+        for (input, expected) in [("\n", true), ("1\n", true), ("2\n", false)] {
+            let mut input = Cursor::new(input.as_bytes());
+            let mut output = Vec::new();
+            assert_eq!(
+                prompt_setup_mode(&mut input, &mut output).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn ip_prompts_reject_wrong_families_and_accept_empty() {
         let mut input = Cursor::new(b"2001:db8::1\n192.0.2.1\n".as_slice());
         let mut output = Vec::new();
-        let value =
-            prompt_ip::<_, _, Ipv4Addr>(&mut input, &mut output, "IPv4", "optional").unwrap();
+        let value = prompt_ip::<_, _, Ipv4Addr>(&mut input, &mut output, "IPv4", None).unwrap();
         assert_eq!(value, Some(Ipv4Addr::new(192, 0, 2, 1)));
         assert!(String::from_utf8(output).unwrap().contains("valid address"));
 
         let mut input = Cursor::new(b"\n".as_slice());
         let mut output = Vec::new();
         assert_eq!(
-            prompt_ip::<_, _, Ipv6Addr>(&mut input, &mut output, "IPv6", "optional").unwrap(),
+            prompt_ip::<_, _, Ipv6Addr>(&mut input, &mut output, "IPv6", None).unwrap(),
             None
         );
     }
@@ -583,16 +807,82 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn manual_dns_zone_contains_core_mail_records() {
-        let zone = build_setup_dns_records("mail.example.test", "example.test", &[], false)
-            .await
-            .unwrap();
-        assert!(zone.contains("MX"));
-        assert!(zone.contains("v=spf1 mx -all"));
-        assert!(zone.contains("_dmarc.example.test."));
-        assert!(zone.contains("ua-auto-config.example.test."));
-        assert!(zone.contains("v=UAAC1; a=sha256; d="));
-        assert!(!zone.to_ascii_lowercase().contains("cloudflare"));
+    async fn manual_dns_rows_contain_core_mail_records() {
+        let records =
+            build_setup_dns_table_records("mail.example.test", "example.test", &[], false)
+                .await
+                .unwrap();
+        assert!(records.iter().any(|record| {
+            record.record_type == "MX"
+                && record.host == "example.test"
+                && record.answer == "mail.example.test"
+                && record.priority == Some(10)
+        }));
+        assert!(
+            records
+                .iter()
+                .any(|record| record.answer == "v=spf1 mx -all")
+        );
+        assert!(
+            records
+                .iter()
+                .any(|record| record.host == "_dmarc.example.test")
+        );
+        assert!(records.iter().any(|record| {
+            record.host == "_ua-auto-config.example.test"
+                && record.answer.starts_with("v=UAAC1; a=sha256; d=")
+        }));
+        assert!(records.iter().all(|record| record.ttl == SETUP_DNS_TTL));
+        assert!(records.iter().all(|record| {
+            !record.host.to_ascii_lowercase().contains("cloudflare")
+                && !record.answer.to_ascii_lowercase().contains("cloudflare")
+        }));
+    }
+
+    #[test]
+    fn dns_table_has_aligned_requested_columns_and_wraps_long_answers() {
+        let records = vec![SetupDnsRecord {
+            record_type: "TXT".to_string(),
+            host: "selector._domainkey.example.test".to_string(),
+            answer: "x".repeat(100),
+            ttl: 3600,
+            priority: None,
+        }];
+        let mut output = Vec::new();
+        print_dns_table(&mut output, &records).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        let lines = output.lines().collect::<Vec<_>>();
+
+        assert!(lines[0].contains("TYPE"));
+        assert!(lines[0].contains("HOST"));
+        assert!(lines[0].contains("ANSWER"));
+        assert!(lines[0].contains("TTL"));
+        assert!(lines[0].contains("PRIO"));
+        assert!(lines.len() > 3, "long TXT answer was not wrapped");
+        let separators = lines[0]
+            .match_indices('|')
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        for line in lines.iter().skip(2) {
+            assert_eq!(
+                line.match_indices('|')
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>(),
+                separators
+            );
+        }
+    }
+
+    #[test]
+    fn reverse_dns_names_are_correct() {
+        assert_eq!(
+            ipv4_reverse_name("192.0.2.4".parse().unwrap()),
+            "4.2.0.192.in-addr.arpa"
+        );
+        assert_eq!(
+            ipv6_reverse_name("2001:db8::1".parse().unwrap()),
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa"
+        );
     }
 
     #[tokio::test]

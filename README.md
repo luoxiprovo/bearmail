@@ -130,95 +130,27 @@ Key features:
 
 **Want a deeper dive?** Need to explain to your boss why Stalwart is the perfect fit? Whether you're evaluating options, making a case to your team, or simply curious about how it all works under the hood, these slides walk you through the key features, architecture, and benefits of Stalwart. Browse the [slides](https://stalw.art/slides) to see what makes it stand out.
 
-## Build and Run This Version
+## Install This Version
 
-This revision is not available from the upstream Stalwart download site. Do not run `install.sh` yet: it currently downloads the latest upstream release, which does not contain the command-line setup changes in this source tree.
-
-Use one of the following two methods to obtain the correct binary.
-
-### Option 1: Build from this source tree
-
-Install the Rust toolchain and the native build tools required by Stalwart, check out this revision, and build a new release binary:
+Run the interactive installer from a terminal:
 
 ```sh
-cargo build --release -p stalwart
-STALWART_BINARY="$PWD/target/release/stalwart"
+curl --proto '=https' --tlsv1.2 -sSfL \
+  https://raw.githubusercontent.com/valuerouterDev/stalwart/main/install.sh | sudo sh
 ```
 
-Always run the build command after checking out this revision. An older file already present at `target/release/stalwart` may not contain these changes. Do not distribute `target/debug/stalwart`; it is a large development binary with debug information.
+The installer does not accept setup answers as command-line parameters. It asks you to choose:
 
-### Option 2: Use a binary built from this revision
+1. standard system paths or a custom self-contained prefix;
+2. a source build or an existing compatible binary;
+3. the standard build or the FoundationDB-enabled build;
+4. quick setup (hostname and mail domain only) or advanced setup (every initial server setting).
 
-A supplied binary must have been built from the same source revision and must match the target server's operating system, CPU architecture and runtime libraries. Copy it to the target server, open a terminal in the directory containing it, and run:
+The source-build path produces a community binary and deliberately omits the `enterprise` Cargo feature, so enterprise-only Dashboard/Tenants controls are not compiled into it. It requires Cargo, a Rust toolchain, and Stalwart's native build prerequisites. The FoundationDB-enabled path additionally requires compatible FoundationDB client libraries. If you choose an existing binary, it must come from this revision and match the server's operating system, CPU architecture, and runtime libraries.
 
-```sh
-chmod 0755 ./stalwart
-STALWART_BINARY="$PWD/stalwart"
-```
+Quick setup is the default. It asks for the server hostname and mail domain, then keeps every other WebUI bootstrap default and proceeds to the final review. Advanced setup uses the same embedded schema as the webpage bootstrap form. It offers server identity and TLS/DKIM choices; every data, blob, search, and cache backend; internal, LDAP, SQL, and OpenID Connect directories; all logging destinations; and every manual or automatic DNS provider with its nested settings. Empty input accepts the displayed default, and unavailable backends are clearly marked when the selected binary lacks their build feature.
 
-Do not use a Linux binary on macOS or FreeBSD, an x86-64 binary on ARM, or a binary built for a newer system runtime than the target server provides.
-
-### Run command-line setup
-
-The following commands keep this unreleased installation under a `stalwart-run` directory in the current user's working directory:
-
-```sh
-STALWART_RUN="$PWD/stalwart-run"
-mkdir -p \
-  "$STALWART_RUN/etc" \
-  "$STALWART_RUN/data" \
-  "$STALWART_RUN/logs"
-
-env \
-  STALWART_SETUP_DATA_PATH="$STALWART_RUN/data" \
-  STALWART_SETUP_LOG_PATH="$STALWART_RUN/logs" \
-  STALWART_SETUP_STORE=rocksdb \
-  "$STALWART_BINARY" \
-  --config="$STALWART_RUN/etc/config.json" \
-  --setup
-```
-
-The wizard asks for the server hostname, primary mail domain, optional public IPv4 and IPv6 addresses, TLS certificate creation, DKIM key generation and final confirmation.
-
-When setup finishes:
-
-1. Save the permanent administrator username and password immediately. The password is shown only once.
-2. Add the printed DNS records manually at the DNS provider.
-3. Configure the printed PTR records through the provider that owns each public IP address.
-4. Replace every DNS placeholder before publishing it.
-
-There is no web-based setup step, and Stalwart never asks for DNS-provider credentials or changes DNS automatically.
-
-### Start the server
-
-Stalwart uses standard mail and HTTPS ports, so starting all listeners normally requires elevated privileges. Start the exact binary used during setup and tell it to drop privileges back to the current user after binding its listeners:
-
-```sh
-STALWART_RUN_USER="$(id -un)"
-STALWART_RUN_GROUP="$(id -gn)"
-
-sudo env \
-  RUN_AS_USER="$STALWART_RUN_USER" \
-  RUN_AS_GROUP="$STALWART_RUN_GROUP" \
-  "$STALWART_BINARY" \
-  --config="$STALWART_RUN/etc/config.json"
-```
-
-This runs the server in the foreground; press `Ctrl+C` to stop it. These commands are intended for testing this unreleased revision. Before a production rollout, build and publish release binaries for every supported platform and update `install.sh` to download those matching artifacts instead of the upstream release.
-
-If setup is cancelled, run the setup command again. If setup reports that the selected store is already initialized, reuse the original `config.json`; do not point a second configuration file at the same data directory.
-
-### FoundationDB build
-
-FoundationDB requires its client libraries and a separate feature build:
-
-```sh
-cargo build --release -p stalwart \
-  --no-default-features \
-  --features "foundationdb s3 redis nats enterprise"
-```
-
-Use `STALWART_SETUP_STORE=foundationdb` instead of `rocksdb` in the setup command. The wizard then asks for the FoundationDB cluster file.
+On a fresh install, the script detects the server's public IPv4 and IPv6 addresses over HTTPS and passes them to setup as editable defaults. After review, setup initializes the selected store, writes the configuration, prints the permanent administrator credential when the internal directory is used, and shows every DNS record in an aligned `TYPE`, `HOST`, `ANSWER`, `TTL`, `PRIO` table. Reverse DNS must be configured through the provider that owns the public IP. Existing non-empty `config.json` files are preserved on reinstall; the installer refuses to start a service unless fresh setup produced a non-empty config.
 
 ## Support
 

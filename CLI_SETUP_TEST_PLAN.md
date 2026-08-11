@@ -1,112 +1,156 @@
-# Stalwart CLI Setup Test Plan
+# Stalwart Interactive Installer and CLI Setup Test Plan
 
 ## Scope
 
-Verify the native `--setup` command, installer integration, manual-only DNS behavior, generated DNS checklist, error handling, and reinstall compatibility described in `CLI_SETUP_SPEC.md`.
+Verify `CLI_SETUP_SPEC.md`: argument-free installer choices, source/binary acquisition, `/dev/tty` behavior, complete webpage-schema field parity, interactive validation, persistence safety, and service ordering.
 
-## Automated tests
+## Automated Rust tests
 
-### CLI parsing and prompt helpers
+### CLI operation parsing
 
-- `--help` lists `--setup` and describes it as interactive initial setup.
-- `--setup` is recognized with `--config=<path>` and does not enter normal server mode.
-- yes/no input accepts empty input as the documented default and accepts case-insensitive `y`, `yes`, `n`, and `no`.
-- required prompts retry on an empty value when no default exists.
-- IPv4 and IPv6 prompts accept the correct family, reject the wrong family, and accept an empty optional value.
-- EOF and input errors produce setup errors rather than silently selecting values.
+- `--help` documents `--setup` as interactive initial setup.
+- `--setup` works with both `--config PATH` and `--config=PATH`.
+- missing setup/config selectors and unknown setup arguments fail clearly.
+- no hostname, domain, store, directory, tracer, DNS provider, or secret can be supplied as a setup command-line option.
 
-### Bootstrap construction
+### Prompt primitives
 
-- RocksDB setup uses `STALWART_SETUP_DATA_PATH`, file logging uses `STALWART_SETUP_LOG_PATH`, the internal directory is selected, and DNS is `Manual`.
-- FoundationDB setup selects `DataStore::FoundationDb` and preserves an optional cluster-file path.
-- TLS and DKIM answers map to `requestTlsCertificate` and `generateDkimKeys`.
-- setup-scoped paths are normalized with a trailing path separator where required.
+- yes/no accepts blank defaults and case-insensitive short/long answers;
+- required strings retry on blank input;
+- optional strings retain, set, and clear values as documented;
+- numeric menus reject non-numeric, out-of-range, and unavailable choices;
+- scalar JSON prompts reject the wrong JSON type;
+- collection prompts reject malformed/non-collection JSON;
+- EOF produces an error instead of silently accepting later defaults;
+- IPv4/IPv6 prompts reject the wrong family and accept an omitted optional value.
+- setup mode defaults to quick and accepts the advanced selection.
 
-### DNS checklist
+### Embedded webpage schema
 
-- supplied IPv4 produces an A and PTR entry.
-- supplied IPv6 produces an AAAA and PTR entry.
-- omitted addresses produce clearly marked placeholders, not invented IP addresses.
-- the generated zone contains MX and SPF records.
-- DKIM-enabled setup contains a DKIM TXT record.
-- no output offers or attempts automatic DNS updates.
+- the embedded gzip resource parses successfully;
+- the top-level Bootstrap form contains identity, four stores, directory, tracer, and DNS fields;
+- CLI setup uses the schema's variants for DataStore, BlobStore, SearchStore, InMemoryStore, DirectoryBootstrap, Tracer, and DnsServerBootstrap;
+- changing a variant loads its schema defaults and prompts every form field that is not server-set;
+- nested multiple-variant fields recurse into their selected form;
+- list/map/set editors accept JSON values of the correct container shape;
+- compiled-feature filtering marks unavailable backends and prevents selection;
+- the serialized interactive result deserializes to `Bootstrap` and passes its registry validation for the default path.
+- quick setup prompts only for server hostname and mail domain and retains the remaining serialized `Bootstrap` defaults.
 
-### Installer static behavior
+### Bootstrap and DNS
 
-- `sh -n install.sh` and, when available, `shellcheck install.sh` pass.
-- the installer invokes `--setup` before every service-creation function on a fresh install.
-- `STALWART_SETUP_STORE=foundationdb` is selected with `--fdb`; otherwise `rocksdb` is selected.
-- an existing config file bypasses setup.
-- setup failure is explicitly guarded, so the installer exits with rerun guidance and service creation is not reached.
-- the old bootstrap-log and `/admin` completion instructions are absent.
+- installer-provided data/log directories are visible defaults, not fixed answers;
+- manual DNS is the default and every automatic provider in `DnsServerBootstrap` is listed;
+- selecting an automatic provider prompts its nested credentials and settings;
+- TLS and DKIM answers map to their Bootstrap booleans;
+- installer-detected IPv4/IPv6 values become the quick-setup A/AAAA and PTR rows;
+- supplied IPv4/IPv6 produce correctly reversed PTR hostnames;
+- omitted IPv4 produces an explicit detection-failure placeholder and omitted IPv6 does not publish an AAAA row;
+- generated output contains MX, SPF, DMARC, and DKIM when enabled;
+- generated output is an aligned `TYPE`, `HOST`, `ANSWER`, `TTL`, `PRIO` table whose long DKIM values wrap without shifting columns;
+- completion output distinguishes manual DNS from the selected automatic provider.
 
-## Integration tests
+## Installer static tests
 
-Run the built binary against isolated temporary config, data, and log directories.
+- `sh -n install.sh` passes;
+- `shellcheck install.sh` passes when ShellCheck is installed;
+- only `-h` and `--help` are accepted; `--fdb`, a positional prefix, and unknown flags fail;
+- every prompt reads from `/dev/tty`, including when standard input is a pipe;
+- no `stalwartlabs/stalwart/releases` URL or upstream artifact downloader is used;
+- the default Git repository is `valuerouterDev/stalwart`;
+- source and local-binary choices are interactive;
+- install prefix and FoundationDB build-profile choices are interactive;
+- the standard community build enables SQLite, PostgreSQL, MySQL, RocksDB, S3, Redis, Azure, and the normal supporting features, but does not enable `enterprise`;
+- setup runs before all service creation/start functions on a fresh install;
+- no user-entered setup answer is included in the Stalwart command line or environment; only installer-derived data/log paths and detected public IP defaults are passed internally;
+- existing config skips setup;
+- empty and non-regular config paths fail instead of being treated as initialized;
+- setup returning without a non-empty regular config prevents service creation/start;
+- the selected binary's CLI setup compatibility is checked before system changes;
+- public IPv4/IPv6 detection is bounded, best-effort, and passed only as internal wizard defaults;
+- source, build, and setup failures are explicitly guarded before service creation;
+- old `/admin` completion instructions are absent.
 
-### Happy path, bundled store
+## Local CLI integration tests
 
-Input:
+Build a test binary with all feasible standard features, then use isolated temporary config, data, and log directories.
 
-- hostname `mail.example.test`;
-- domain `example.test`;
-- IPv4 `192.0.2.10`;
-- no IPv6;
-- TLS `no` (avoids an external ACME dependency in the test);
-- DKIM `yes`;
-- confirm `yes`.
+### Default single-node path
 
-Verify:
+Select advanced setup, then:
 
-- exit status is zero;
-- `config.json` exists and selects RocksDB under the temporary data directory;
-- a permanent `admin@example.test` credential is printed;
-- output includes the A record, IPv6 placeholder, PTR guidance, MX, SPF, and DKIM;
-- reopening the generated configuration succeeds.
+- valid hostname/domain;
+- IPv4 and no IPv6;
+- TLS off (avoids external ACME dependency in the test);
+- DKIM on;
+- RocksDB, default blob/search/cache stores;
+- internal directory;
+- file logging;
+- apply.
 
-### Happy path without DKIM
+Verify zero exit, valid `config.json`, initialized RocksDB, permanent administrator credential, manual DNS notice, A/AAAA placeholder/PTR guidance, MX/SPF/DMARC/DKIM records, and successful reopen of the saved config.
 
-Choose DKIM `no`. Verify setup succeeds, DNS output is still present, and no DKIM record is claimed.
+### Quick setup path
 
-### Declined confirmation
+Select quick setup, enter only a valid hostname and mail domain, and accept the final review. Verify all remaining values equal `Bootstrap::default()` plus installer data/log path defaults, detected IPs appear in the DNS table, and setup creates a valid config without presenting storage, directory, logging, TLS/DKIM, or DNS-provider questions.
 
-Answer `no` at confirmation. Verify non-zero/cancelled status as documented, no `config.json`, and no persistent registry initialization.
+### Web-form parity variants
 
-### Existing configuration
+For each top-level variant, drive the wizard far enough to select it and inspect its questions. Compare prompt names/defaults against `resources/schema/schema.json.gz`. For variants whose services are available (SQLite and local filesystem at minimum), complete setup and verify the stored object. For external databases/services, stop before apply or use disposable containers and record the limitation.
 
-Run setup a second time against the happy-path configuration. Verify it refuses to overwrite the initialized deployment and leaves files unchanged.
+### Nested settings
 
-### Existing store through another config path
+Exercise at least:
 
-Before the first normal server startup, run setup with a different nonexistent config path but the same data-store path as the happy-path setup. Verify it reports that the selected store is already initialized, creates no second config, and leaves registry object counts unchanged.
+- PostgreSQL with username/secret source and TLS options;
+- S3 with region and credential-source choices;
+- Redis Cluster with URL set;
+- LDAP with bind-secret choice and attribute sets;
+- SQL directory with a nested SQL store;
+- OpenTelemetry HTTP with nested HTTP authentication/headers.
+- Cloudflare or another disposable DNS provider configuration with a nested secret source.
 
-### Invalid input recovery
+Verify values survive JSON-to-`Bootstrap` conversion and registry validation.
 
-Provide an invalid hostname/domain and wrong-family IP values before valid values. Verify the wizard gives actionable feedback, retries, and succeeds after correction.
+### Input and state failures
 
-### FoundationDB selection
+- invalid hostname/domain and wrong-family IP recover after valid input;
+- malformed JSON collection recovers at the same field;
+- unavailable FoundationDB selection is rejected by a non-FoundationDB build;
+- invalid external-backend configuration produces validation/build feedback and no service startup;
+- declining apply and then cancelling leaves config/store absent;
+- a second setup against an existing config refuses overwrite;
+- another config path pointed at an initialized data store is rejected without changing object counts.
 
-Where a FoundationDB client and test cluster are available, select the FoundationDB store and verify the saved `config.json` plus registry bootstrap. Otherwise, verify construction and installer selection through unit/static tests and record the environment limitation.
+### FoundationDB
 
-## Platform installer checks
+Where the FoundationDB client and test cluster exist, build the FoundationDB profile, select it interactively for the main store, and complete/reopen setup. Otherwise verify feature annotation, build command construction, schema questions, and document the missing external prerequisite.
 
-In disposable Linux systemd, Linux init.d, macOS, and FreeBSD environments:
+## Installer interaction tests
 
-- run a fresh install through a TTY (including `curl ... | sh`, where the wizard must read `/dev/tty`);
-- verify service-account ownership of config, data, logs, and generated DKIM material;
-- verify the service starts after setup and does not enter bootstrap mode;
-- verify a reinstall skips setup and retains administrator/domain data;
-- verify a setup error prevents service installation/startup.
+Use a disposable Linux VM/container with a real pseudo-terminal:
 
-At minimum, the development environment must execute the applicable local platform checks and the remaining platform cases must receive static review.
+1. Run `sh install.sh` from this checkout and complete the current-checkout source build path.
+2. Pipe the script into `sudo sh`; verify every installer and Rust question still reads from `/dev/tty`.
+3. Run the existing-binary path with the newly built compatible binary.
+4. Exercise standard and custom prefix layouts.
+5. Verify ownership/permissions, service start after setup, and no bootstrap web mode.
+6. Rerun with an existing config and verify its registry/account/domain data are unchanged.
+7. Inject a build failure and a setup cancellation; verify no service creation/start occurs.
+8. Stub public-IP responses for IPv4 and IPv6 and verify the exact addresses appear in A/AAAA rows and generate PTR rows.
+9. Make setup return success without writing a config and verify installation fails before creating a service.
+10. Place an empty config at the selected path and verify installation gives a repair instruction instead of reporting success.
 
-## Three-agent review iterations
+macOS launchd, Linux init.d, and FreeBSD rc.d cases receive disposable-host execution where available and otherwise static review of unchanged service code.
 
-After implementation and local checks, perform three independent test-agent iterations. In each iteration the agent must:
+## Documentation checks
 
-1. Read `CLI_SETUP_SPEC.md` and this test plan.
-2. Inspect the complete working-tree diff.
-3. Run all feasible automated and integration checks.
-4. Report findings by severity with exact reproduction steps and identify unexecuted cases.
+- README starts with the exact install command for this repository's script;
+- it explains source-build and compatible-local-binary paths selected by the installer;
+- it does not direct users to official release binaries or the webpage setup;
+- it describes every wizard stage, automatic/manual DNS choices, and PTR follow-up;
+- examples contain no obsolete `--fdb`, positional-prefix, or `STALWART_SETUP_STORE` instructions.
 
-After each report, fix valid findings, rerun affected checks, and give the same agent the updated implementation for the next iteration. The third iteration must include a full regression pass and an explicit acceptance-criteria verdict.
+## Exit criteria
+
+All feasible automated/static/local integration checks pass. Any unavailable platform, external database, DNS, ACME, or FoundationDB test is explicitly listed with the reason. No service is started in a failure-path test, and the working-tree diff contains no upstream-download or webpage-setup instruction.

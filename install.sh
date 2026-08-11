@@ -12,20 +12,42 @@
 set -e
 set -u
 
-readonly BASE_URL="https://github.com/stalwartlabs/stalwart/releases/latest/download"
+readonly DEFAULT_REPOSITORY="https://github.com/valuerouterDev/stalwart.git"
+readonly STANDARD_FEATURES="sqlite postgres mysql rocks s3 redis azure nats"
+readonly FOUNDATIONDB_FEATURES="foundationdb s3 redis azure nats"
 
 main() {
-    downloader --check
+    # Installation and setup answers are deliberately not accepted as command
+    # line arguments. This keeps the curl-pipe invocation simple and prevents
+    # secrets from appearing in shell history or process listings.
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                print_usage
+                return 0
+                ;;
+            *)
+                err "❌ Unknown argument: $1. Run install.sh without arguments for interactive setup."
+                ;;
+        esac
+    done
+
+    if ! (exec 3<> /dev/tty) 2>/dev/null; then
+        err "❌ Install failed: An interactive terminal is required. Open a terminal and run the installer again."
+    fi
+    exec 3<> /dev/tty
+
     need_cmd uname
     need_cmd mktemp
     need_cmd chmod
     need_cmd chown
     need_cmd mkdir
     need_cmd rm
-    need_cmd tar
     need_cmd cp
     need_cmd env
     need_cmd hostname
+    need_cmd id
+    need_cmd dirname
 
     # Require root
     if [ "$(id -u)" -ne 0 ]; then
@@ -42,30 +64,31 @@ main() {
         *)       err "❌ Install failed: Unsupported OS: $_uname" ;;
     esac
 
-    # Parse arguments
-    local _component="stalwart"
+    say ""
+    say "┌─────────────────────────────────────────────────────────┐"
+    say "│              Stalwart Server Installer                  │"
+    say "└─────────────────────────────────────────────────────────┘"
+    say ""
+
+    # Select the filesystem layout interactively.
     local _prefix=""
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --fdb)
-                _component="stalwart-foundationdb"
-                ;;
-            -h|--help)
-                print_usage
-                exit 0
-                ;;
-            --*|-*)
-                err "❌ Unknown flag: $1 (try --help)"
-                ;;
-            *)
-                if [ -n "$_prefix" ]; then
-                    err "❌ Only one prefix argument is allowed, got: $_prefix $1"
-                fi
-                _prefix="$1"
-                ;;
+    prompt_menu "Installation layout" 1 \
+        "Standard system paths (recommended)" \
+        "Custom self-contained prefix"
+    if [ "$RETVAL" -eq 2 ]; then
+        prompt_text "Absolute installation prefix" "/opt/stalwart"
+        _prefix="$RETVAL"
+        case "$_prefix" in
+            /*) ;;
+            *) err "❌ Install failed: The installation prefix must be an absolute path." ;;
         esac
-        shift
-    done
+        while [ "${_prefix%/}" != "$_prefix" ]; do
+            _prefix="${_prefix%/}"
+        done
+        if [ -z "$_prefix" ]; then
+            err "❌ Install failed: '/' cannot be used as a custom installation prefix."
+        fi
+    fi
 
     # Derive install paths — FHS by default, self-contained under a custom prefix
     local _bin_dir _bin_file _conf_dir _log_dir _data_dir _env_file _config_file
@@ -91,10 +114,131 @@ main() {
     _config_file="${_conf_dir}/config.json"
     _env_file="${_conf_dir}/stalwart.env"
 
-    # Detect architecture
-    get_architecture || return 1
-    local _arch="$RETVAL"
-    assert_nz "$_arch" "arch"
+    # Select how to obtain a binary. Building this revision is the default so
+    # the installed executable always contains this interactive setup wizard.
+    local _source_mode _source_ref _build_profile="standard" _existing_binary=""
+    local _cargo_bin="" _build_user=""
+    local _script_dir=""
+    prompt_menu "Binary source" 1 \
+        "Build this Stalwart revision from source" \
+        "Use an existing compatible Stalwart binary"
+    _source_mode="$RETVAL"
+    if [ "$_source_mode" -eq 1 ]; then
+        if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ] && check_cmd sudo; then
+            _cargo_bin="$(sudo -H -u "$SUDO_USER" sh -lc 'command -v cargo' 2>/dev/null || true)"
+            if [ -n "$_cargo_bin" ] && [ -x "$_cargo_bin" ]; then
+                _build_user="$SUDO_USER"
+            fi
+        fi
+        if [ -z "$_cargo_bin" ] && check_cmd cargo; then
+            _cargo_bin="$(command -v cargo)"
+        fi
+        if [ -z "$_cargo_bin" ] || [ ! -x "$_cargo_bin" ]; then
+            err "need 'cargo' (install Rust for root or for the user invoking sudo)"
+        fi
+        local _source_default="$DEFAULT_REPOSITORY"
+        _script_dir="$(CDPATH= cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
+        if [ -n "$_script_dir" ] && [ -f "${_script_dir}/Cargo.toml" ] && [ -f "${_script_dir}/crates/main/Cargo.toml" ]; then
+            _source_default="$_script_dir"
+        fi
+        prompt_text "Source checkout path or Git repository" "$_source_default"
+        _source_ref="$RETVAL"
+        if [ ! -d "$_source_ref" ]; then
+            need_cmd git
+        elif [ ! -f "${_source_ref}/Cargo.toml" ] || [ ! -f "${_source_ref}/crates/main/Cargo.toml" ]; then
+            err "❌ Install failed: ${_source_ref} is not a Stalwart source checkout."
+        fi
+        prompt_menu "Build profile" 1 \
+            "Standard (all regular bootstrap backends)" \
+            "FoundationDB-enabled (requires FoundationDB client libraries)"
+        if [ "$RETVAL" -eq 2 ]; then
+            _build_profile="foundationdb"
+        fi
+    else
+        prompt_text "Path to the compatible Stalwart binary" ""
+        _existing_binary="$RETVAL"
+        if [ ! -f "$_existing_binary" ] || [ ! -x "$_existing_binary" ]; then
+            err "❌ Install failed: The supplied binary must be an executable regular file."
+        fi
+    fi
+
+    say ""
+    say "Installation summary"
+    say "  Binary:       ${_bin_file}"
+    say "  Configuration:${_config_file}"
+    say "  Data:         ${_data_dir}"
+    say "  Logs:         ${_log_dir}"
+    if [ "$_source_mode" -eq 1 ]; then
+        say "  Source:       ${_source_ref}"
+        say "  Build profile:${_build_profile}"
+    else
+        say "  Source binary:${_existing_binary}"
+    fi
+    say ""
+    if ! prompt_yes_no "Build/install the binary and start interactive server setup" "no"; then
+        err "Installation cancelled; no system files were changed."
+    fi
+
+    # Acquire/build the binary before changing accounts, install paths, or
+    # service definitions. Build failures therefore leave the system untouched.
+    local _tmp="" _source_dir="" _source_binary="" _features=""
+    _tmp="$(mktemp -d)"
+    cleanup_dir="$_tmp"
+    trap cleanup 0 HUP INT TERM
+    if [ "$_source_mode" -eq 1 ]; then
+        if [ -d "$_source_ref" ]; then
+            _source_dir="$(CDPATH= cd "$_source_ref" && pwd)"
+        else
+            say "⏳ Cloning ${_source_ref}..."
+            ensure git clone --depth 1 "$_source_ref" "${_tmp}/source"
+            _source_dir="${_tmp}/source"
+            if [ ! -f "${_source_dir}/Cargo.toml" ] || [ ! -f "${_source_dir}/crates/main/Cargo.toml" ]; then
+                err "❌ Install failed: The cloned repository is not a Stalwart source checkout."
+            fi
+        fi
+        if [ "$_build_profile" = "foundationdb" ]; then
+            _features="$FOUNDATIONDB_FEATURES"
+        else
+            _features="$STANDARD_FEATURES"
+        fi
+        say "⏳ Building Stalwart (${_build_profile} profile)..."
+        if [ -n "$_build_user" ]; then
+            ensure chown -R "$_build_user" "$_tmp"
+            ensure sudo -H -u "$_build_user" env CARGO_TARGET_DIR="${_tmp}/target" \
+                "$_cargo_bin" build \
+                --manifest-path "${_source_dir}/Cargo.toml" \
+                --release \
+                --package stalwart \
+                --locked \
+                --no-default-features \
+                --features "$_features"
+        else
+            ensure env CARGO_TARGET_DIR="${_tmp}/target" "$_cargo_bin" build \
+                --manifest-path "${_source_dir}/Cargo.toml" \
+                --release \
+                --package stalwart \
+                --locked \
+                --no-default-features \
+                --features "$_features"
+        fi
+        _source_binary="${_tmp}/target/release/stalwart"
+        if [ ! -x "$_source_binary" ]; then
+            err "❌ Install failed: Cargo completed without producing ${_source_binary}."
+        fi
+    else
+        _source_binary="$_existing_binary"
+    fi
+
+    # Fail before changing the server if the selected binary does not contain
+    # the command-line setup implementation required by this installer.
+    local _setup_help=""
+    if ! _setup_help="$("$_source_binary" --setup --help 2>/dev/null)"; then
+        err "❌ Install failed: The selected binary is not compatible with this installer's command-line setup."
+    fi
+    case "$_setup_help" in
+        *"Quick setup asks only"*) ;;
+        *) err "❌ Install failed: The selected binary predates this installer's quick setup and DNS table. Rebuild it from this source revision." ;;
+    esac
 
     # Create service account
     create_account "$_os" "$_account"
@@ -102,20 +246,14 @@ main() {
     # Create directories
     ensure mkdir -p "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir"
 
-    # Download and install the binary
-    say "⏳ Downloading ${_component} for ${_arch}..."
-    local _tmp _tar _src_name
-    _tmp="$(mktemp -d)"
-    _tar="${_tmp}/stalwart.tar.gz"
-    ensure downloader "${BASE_URL}/${_component}-${_arch}.tar.gz" "$_tar" "$_arch"
-    ensure tar zxf "$_tar" -C "$_tmp"
-    _src_name="stalwart"
-    if [ "$_component" = "stalwart-foundationdb" ]; then
-        _src_name="stalwart-foundationdb"
+    # Install the selected binary.
+    say "📦 Installing Stalwart at ${_bin_file}..."
+    if [ "$_source_binary" != "$_bin_file" ]; then
+        ensure cp "$_source_binary" "$_bin_file"
     fi
-    ensure cp "${_tmp}/${_src_name}" "$_bin_file"
     ensure chmod 0755 "$_bin_file"
-    ensure rm -rf "$_tmp"
+    cleanup
+    trap - 0 HUP INT TERM
 
     # Create env file if absent (preserve user edits on reinstall)
     if [ ! -e "$_env_file" ]; then
@@ -123,21 +261,43 @@ main() {
         write_env_file "$_env_file"
     fi
 
-    # Complete initial setup before installing or starting the service.
+    # Complete initial setup before installing or starting the service. Never
+    # treat an empty or non-regular config path as an initialized server.
+    if [ -e "$_config_file" ] && [ ! -f "$_config_file" ]; then
+        err "❌ Install failed: ${_config_file} exists but is not a regular file. Move it aside, then rerun the installer."
+    fi
+    if [ -f "$_config_file" ] && [ ! -s "$_config_file" ]; then
+        err "❌ Install failed: ${_config_file} is empty. Move it aside, then rerun the installer so initialization can complete."
+    fi
     if [ ! -e "$_config_file" ]; then
-        local _setup_store="rocksdb"
-        if [ "$_component" = "stalwart-foundationdb" ]; then
-            _setup_store="foundationdb"
+        local _public_ipv4="" _public_ipv6=""
+        say "🌐 Detecting this server's public IP addresses..."
+        detect_public_ip 4
+        _public_ipv4="$RETVAL"
+        detect_public_ip 6
+        _public_ipv6="$RETVAL"
+        if [ -n "$_public_ipv4" ]; then
+            say "   Public IPv4: ${_public_ipv4}"
+        else
+            say "   Public IPv4: not detected (advanced setup can enter it manually)"
+        fi
+        if [ -n "$_public_ipv6" ]; then
+            say "   Public IPv6: ${_public_ipv6}"
+        else
+            say "   Public IPv6: not detected (optional)"
         fi
         say "🧭 Starting interactive command-line setup..."
-        say "   DNS changes are manual; no DNS provider credentials will be requested."
         if ! env \
             STALWART_SETUP_DATA_PATH="$_data_dir" \
             STALWART_SETUP_LOG_PATH="$_log_dir" \
-            STALWART_SETUP_STORE="$_setup_store" \
-            "$_bin_file" --config="$_config_file" --setup < /dev/tty
+            STALWART_SETUP_PUBLIC_IPV4="$_public_ipv4" \
+            STALWART_SETUP_PUBLIC_IPV6="$_public_ipv6" \
+            "$_bin_file" --config="$_config_file" --setup <&3
         then
-            err "❌ Command-line setup failed. Correct the error, then rerun this installer with the same arguments. The service was not installed or started."
+            err "❌ Command-line setup failed. Correct the error, then rerun the installer. The service was not installed or started."
+        fi
+        if [ ! -f "$_config_file" ] || [ ! -s "$_config_file" ]; then
+            err "❌ Command-line setup returned without creating a non-empty ${_config_file}. The service was not installed or started."
         fi
     else
         say "ℹ️  Preserving existing configuration at ${_config_file}; setup skipped."
@@ -175,8 +335,8 @@ main() {
     say "🎉 Installation complete!"
     say ""
     say "Stalwart is configured and running on ${_host}."
-    say "Use the permanent administrator credential printed by the setup wizard."
-    say "Add the DNS records from the wizard manually at your DNS provider."
+    say "For the internal directory, use the administrator credential printed by the setup wizard."
+    say "Review the DNS checklist printed by the wizard and verify DNS after startup."
     say ""
 
     return 0
@@ -184,32 +344,163 @@ main() {
 
 print_usage() {
     cat <<'EOF'
-Usage: install.sh [--fdb] [PREFIX]
+Usage: install.sh
 
-Install Stalwart into standard FHS paths or under a custom prefix.
+Interactively build and install Stalwart, configure its initial bootstrap
+settings, and start the platform service.
 
-Fresh installations run an interactive command-line setup before starting the
-service. DNS records are printed for manual publication. Existing config.json
-files are preserved and skip setup.
+No installation or setup answer is accepted as a command-line parameter. The
+installer asks for the filesystem layout, binary source, optional FoundationDB
+build, and confirmation. Quick setup asks only for the server hostname and mail
+domain, keeps all other defaults, and uses best-effort detected public IPs.
+Advanced setup exposes the complete WebUI bootstrap form in the terminal,
+including nested storage, directory, logging, and DNS-provider settings.
+
+After setup, DNS records are printed in aligned TYPE, HOST, ANSWER, TTL, and
+PRIO columns. A fresh install cannot start the service unless setup creates a
+non-empty configuration file.
 
 Options:
-  --fdb       Install the FoundationDB build.
   -h, --help  Show this help.
 
-With no PREFIX, Stalwart is installed under standard FHS paths:
+The interactive standard-layout choice uses these FHS paths:
   binary   /usr/local/bin/stalwart
   config   /etc/stalwart/config.json      (/usr/local/etc/stalwart/config.json on FreeBSD)
   env      /etc/stalwart/stalwart.env     (/usr/local/etc/stalwart/stalwart.env on FreeBSD)
   logs     /var/log/stalwart/
   data     /var/lib/stalwart/             (/var/db/stalwart on FreeBSD)
 
-When PREFIX is provided, a self-contained layout is used instead:
+The interactive custom-prefix choice uses a self-contained layout:
   binary   $PREFIX/bin/stalwart
   config   $PREFIX/etc/config.json
   env      $PREFIX/etc/stalwart.env
   logs     $PREFIX/logs/
   data     $PREFIX/data/
 EOF
+}
+
+prompt_menu() {
+    local _label="$1" _default="$2" _count _index _answer _choice
+    shift 2
+    _count=$#
+    while true; do
+        printf '%s:\n' "$_label" >&3
+        _index=1
+        for _choice in "$@"; do
+            if [ "$_index" -eq "$_default" ]; then
+                printf '  %s) %s (default)\n' "$_index" "$_choice" >&3
+            else
+                printf '  %s) %s\n' "$_index" "$_choice" >&3
+            fi
+            _index=$((_index + 1))
+        done
+        printf 'Select %s [%s]: ' "$_label" "$_default" >&3
+        if ! IFS= read -r _answer <&3; then
+            err "❌ Install failed: Interactive input ended before setup completed."
+        fi
+        if [ -z "$_answer" ]; then
+            _answer="$_default"
+        fi
+        case "$_answer" in
+            *[!0-9]*|'') ;;
+            *)
+                if [ "$_answer" -ge 1 ] 2>/dev/null && [ "$_answer" -le "$_count" ] 2>/dev/null; then
+                    RETVAL="$_answer"
+                    return 0
+                fi
+                ;;
+        esac
+        printf '  Choose a number from 1 to %s.\n' "$_count" >&3
+    done
+}
+
+prompt_text() {
+    local _label="$1" _default="$2" _answer
+    while true; do
+        if [ -n "$_default" ]; then
+            printf '%s [%s]: ' "$_label" "$_default" >&3
+        else
+            printf '%s: ' "$_label" >&3
+        fi
+        if ! IFS= read -r _answer <&3; then
+            err "❌ Install failed: Interactive input ended before setup completed."
+        fi
+        if [ -z "$_answer" ]; then
+            _answer="$_default"
+        fi
+        if [ -n "$_answer" ]; then
+            RETVAL="$_answer"
+            return 0
+        fi
+        printf '  A value is required.\n' >&3
+    done
+}
+
+prompt_yes_no() {
+    local _label="$1" _default="$2" _answer _suffix
+    if [ "$_default" = "yes" ]; then
+        _suffix="Y/n"
+    else
+        _suffix="y/N"
+    fi
+    while true; do
+        printf '%s [%s]: ' "$_label" "$_suffix" >&3
+        if ! IFS= read -r _answer <&3; then
+            err "❌ Install failed: Interactive input ended before setup completed."
+        fi
+        case "$_answer" in
+            '') [ "$_default" = "yes" ] && return 0 || return 1 ;;
+            y|Y|yes|Yes|YES) return 0 ;;
+            n|N|no|No|NO) return 1 ;;
+            *) printf '  Answer yes or no.\n' >&3 ;;
+        esac
+    done
+}
+
+# Detect the public address observed by an external HTTPS service. Detection is
+# best-effort: the Rust wizard validates the result and advanced setup permits
+# manual correction when outbound HTTPS or an address family is unavailable.
+detect_public_ip() {
+    local _family="$1" _url _ip=""
+    if [ "$_family" -eq 4 ]; then
+        _url="https://api.ipify.org"
+    else
+        _url="https://api6.ipify.org"
+    fi
+
+    if check_cmd curl; then
+        _ip="$(curl \
+            --proto '=https' \
+            --tlsv1.2 \
+            --silent \
+            --show-error \
+            --fail \
+            --location \
+            --connect-timeout 5 \
+            --max-time 8 \
+            "-${_family}" \
+            "$_url" 2>/dev/null || true)"
+    elif check_cmd wget; then
+        _ip="$(wget \
+            --quiet \
+            --output-document=- \
+            --timeout=8 \
+            --tries=1 \
+            "-${_family}" \
+            "$_url" 2>/dev/null || true)"
+    fi
+
+    case "$_family:$_ip" in
+        4:*[!0-9.]*|4:|6:*[!0-9a-fA-F:.]*|6:) RETVAL="" ;;
+        *) RETVAL="$_ip" ;;
+    esac
+}
+
+cleanup() {
+    if [ -n "${cleanup_dir:-}" ] && [ -d "$cleanup_dir" ]; then
+        rm -rf "$cleanup_dir"
+    fi
+    cleanup_dir=""
 }
 
 write_env_file() {
