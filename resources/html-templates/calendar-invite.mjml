@@ -49,7 +49,7 @@
     <mj-section background-color="white" padding="5px 5px 5px 5px">
       <mj-column>
         <!-- Logo -->
-        <mj-image src="https://stalw.art/img/logo-dark@2x.png" alt="Stalwart Logo" width="200px" align="center" padding-bottom="20px" />
+        <mj-text align="center" font-size="22px" font-weight="bold" color="#1a1a18" padding-bottom="20px">{{brand_name}}</mj-text>
 
         <!-- Title -->
         <mj-text css-class="event-detail">

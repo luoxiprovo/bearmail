@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import DOMPurify from "dompurify";
-import { ArrowLeft, Download, Image as ImageIcon, LoaderCircle, Paperclip, Reply, ReplyAll, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Forward, Image as ImageIcon, LoaderCircle, Paperclip, Reply, ReplyAll, Trash2 } from "lucide-react";
 import { useApp } from "../app-context";
-import { getEmail, patchEmail } from "../jmap/mail";
+import { sanitizeEmailHtml } from "../emailHtml";
+import { findCalendarInvitationPart, getEmail, patchEmail } from "../jmap/mail";
 import type { Email, EmailBodyPart } from "../types";
 import { InvitationCard } from "../components/InvitationCard";
 import { useNavigate } from "../router";
@@ -26,7 +26,7 @@ export function MessagePage({ emailId }: { emailId: string }) {
   const body = useMemo(() => getBody(email, allowImages), [email, allowImages]);
   if (loading) return <div className="page-loading"><LoaderCircle className="spin" /> Loading message…</div>;
   if (!email) return <div className="empty-state"><h2>Message unavailable</h2><button onClick={() => navigate("/mail")}>Back to mail</button></div>;
-  const calendarAttachment = email.attachments?.find((part) => part.type?.toLowerCase().startsWith("text/calendar"));
+  const calendarAttachment = findCalendarInvitationPart(email);
   const trash = mailboxes.find((box) => box.role === "trash");
   const recipients = (email.to ?? []).map(formatAddress).join(", ");
 
@@ -43,7 +43,7 @@ export function MessagePage({ emailId }: { emailId: string }) {
     <article className="message-page">
       <header className="message-toolbar">
         <button className="icon-text-button" onClick={() => navigate(-1)}><ArrowLeft size={18} /> Back</button>
-        <div><button className="icon-button" aria-label="Reply" onClick={() => navigate("/mail/compose", { state: { replyTo: email } })}><Reply size={18} /></button><button className="icon-button" aria-label="Reply all" onClick={() => navigate("/mail/compose", { state: { replyTo: email, replyAll: true } })}><ReplyAll size={18} /></button>{trash && <button className="icon-button" aria-label="Move to trash" onClick={() => void remove()}><Trash2 size={18} /></button>}</div>
+        <div><button className="icon-button" aria-label="Reply" onClick={() => navigate("/mail/compose", { state: { replyTo: email } })}><Reply size={18} /></button><button className="icon-button" aria-label="Reply all" onClick={() => navigate("/mail/compose", { state: { replyTo: email, replyAll: true } })}><ReplyAll size={18} /></button><button className="icon-button" aria-label="Forward" onClick={() => navigate("/mail/compose", { state: { forward: email } })}><Forward size={18} /></button>{trash && <button className="icon-button" aria-label="Move to trash" onClick={() => void remove()}><Trash2 size={18} /></button>}</div>
       </header>
       <div className="message-content">
         <p className="eyebrow">MESSAGE</p><h1>{email.subject || "(no subject)"}</h1>
@@ -52,7 +52,7 @@ export function MessagePage({ emailId }: { emailId: string }) {
         {calendarAttachment && <InvitationCard attachment={calendarAttachment} />}
         {body.html ? <iframe className="email-frame" title="Message body" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={body.html} /> : <pre className="plain-body">{body.text || email.preview}</pre>}
         {Boolean(email.attachments?.length) && <section className="attachments"><h2><Paperclip size={18} /> Attachments</h2><div>{email.attachments?.map((attachment, index) => <AttachmentButton key={`${attachment.blobId}-${index}`} part={attachment} />)}</div></section>}
-        <div className="message-end-actions"><button className="secondary-button" onClick={() => navigate("/mail/compose", { state: { replyTo: email } })}><Reply size={17} /> Reply</button><button className="secondary-button" onClick={() => navigate("/mail/compose", { state: { replyTo: email, replyAll: true } })}><ReplyAll size={17} /> Reply all</button></div>
+        <div className="message-end-actions"><button className="secondary-button" onClick={() => navigate("/mail/compose", { state: { replyTo: email } })}><Reply size={17} /> Reply</button><button className="secondary-button" onClick={() => navigate("/mail/compose", { state: { replyTo: email, replyAll: true } })}><ReplyAll size={17} /> Reply all</button><button className="secondary-button" onClick={() => navigate("/mail/compose", { state: { forward: email } })}><Forward size={17} /> Forward</button></div>
       </div>
     </article>
   );
@@ -80,14 +80,11 @@ function getBody(email: Email | null, allowImages: boolean): { html: string; tex
   const rawHtml = htmlPart?.partId ? email.bodyValues?.[htmlPart.partId]?.value ?? "" : "";
   const text = textPart?.partId ? email.bodyValues?.[textPart.partId]?.value ?? "" : "";
   if (!rawHtml) return { html: "", text, hasRemoteImages: false };
-  const hasRemoteImages = /<img[^>]+src=["']https?:/i.test(rawHtml);
-  const clean = DOMPurify.sanitize(rawHtml, { FORBID_TAGS: ["script", "style", "form", "input", "button", "video", "audio"], FORBID_ATTR: ["srcset", "onerror", "onclick"] });
-  const document_ = new DOMParser().parseFromString(clean, "text/html");
-  document_.querySelectorAll("a").forEach((link) => { link.target = "_blank"; link.rel = "noopener noreferrer"; });
-  if (!allowImages) document_.querySelectorAll("img[src^='http']").forEach((image) => image.remove());
-  const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${allowImages ? "https: http: data: cid:" : "data: cid:"}; style-src 'unsafe-inline'; font-src 'none'; base-uri 'none'; form-action 'none'">`;
-  const style = `<style>body{margin:0;color:#273640;font:15px/1.65 system-ui,sans-serif;overflow-wrap:anywhere}a{color:#0d7068}img{max-width:100%;height:auto}blockquote{border-left:3px solid #d9dfe1;margin-left:0;padding-left:16px;color:#64737c}</style>`;
-  return { html: `<!doctype html><html><head>${csp}${style}</head><body>${document_.body.innerHTML}</body></html>`, text, hasRemoteImages };
+  const sanitized = sanitizeEmailHtml(rawHtml, {
+    allowImages,
+    stripExternalRsvp: Boolean(findCalendarInvitationPart(email)),
+  });
+  return { html: sanitized.html, text, hasRemoteImages: sanitized.hasRemoteImages };
 }
 
 function formatAddress(address?: { name?: string; email?: string }): string { return address?.name ? `${address.name} <${address.email}>` : address?.email || "Unknown sender"; }

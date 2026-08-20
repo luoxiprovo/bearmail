@@ -328,6 +328,16 @@ impl EmailIngest for Server {
                         }
                     }
 
+                    // Authenticated calendar invites (Gmail, Outlook, etc.) often trip HTML/URL
+                    // heuristics. Keep them in Inbox so iMIP and the WebUI RSVP card can run.
+                    if is_spam
+                        && is_sender_authenticated
+                        && message.parts.iter().any(is_calendar_scheduling_part)
+                    {
+                        is_spam = false;
+                        overridden = Some("calendar-invite");
+                    }
+
                     // Add Spam-Status header
                     const HEADER: &str = "X-Spam-Status";
                     let offset_field = extra_headers.len();
@@ -1095,5 +1105,75 @@ impl ThreadMerge {
             thread_id: max_thread_id,
             merge_ids,
         }
+    }
+}
+
+fn is_calendar_scheduling_part(part: &mail_parser::MessagePart<'_>) -> bool {
+    let Some(ct) = part.content_type() else {
+        return part.attachment_name().is_some_and(|name| {
+            let name = name.to_ascii_lowercase();
+            name.ends_with(".ics") || name.ends_with(".ifb")
+        });
+    };
+    let subtype = ct.subtype().unwrap_or_default();
+    let is_calendar_type = (ct.ctype().eq_ignore_ascii_case("text")
+        && subtype.eq_ignore_ascii_case("calendar"))
+        || (ct.ctype().eq_ignore_ascii_case("application")
+            && (subtype.eq_ignore_ascii_case("ics") || subtype.eq_ignore_ascii_case("calendar")));
+    is_calendar_type
+        || ct.attribute("name").is_some_and(|name| {
+            let name = name.to_ascii_lowercase();
+            name.ends_with(".ics") || name.ends_with(".ifb")
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use mail_parser::MessageParser;
+
+    use super::is_calendar_scheduling_part;
+
+    #[test]
+    fn detects_gmail_calendar_invite_parts() {
+        let message = MessageParser::default()
+            .parse(concat!(
+                "From: sender@gmail.com\r\n",
+                "To: you@example.test\r\n",
+                "MIME-Version: 1.0\r\n",
+                "Content-Type: multipart/mixed; boundary=b1\r\n",
+                "\r\n",
+                "--b1\r\n",
+                "Content-Type: text/plain\r\n",
+                "\r\n",
+                "Join this event\r\n",
+                "--b1\r\n",
+                "Content-Type: text/calendar; method=REQUEST; charset=UTF-8\r\n",
+                "\r\n",
+                "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+                "--b1\r\n",
+                "Content-Type: application/ics; name=\"invite.ics\"\r\n",
+                "Content-Disposition: attachment; filename=\"invite.ics\"\r\n",
+                "\r\n",
+                "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+                "--b1--\r\n"
+            ))
+            .unwrap();
+        assert!(message.parts.iter().any(is_calendar_scheduling_part));
+        assert!(
+            message
+                .parts
+                .iter()
+                .filter(|part| is_calendar_scheduling_part(part))
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn ignores_plain_text_without_calendar() {
+        let message = MessageParser::default()
+            .parse("From: a@b.test\r\n\r\nhello\r\n")
+            .unwrap();
+        assert!(!message.parts.iter().any(is_calendar_scheduling_part));
     }
 }

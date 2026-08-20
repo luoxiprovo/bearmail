@@ -108,10 +108,9 @@ pub(crate) fn attendee_handle_update(
                     }
 
                     // Send participation status update
-                    if local_attendee.is_server_scheduling
-                        && ((local_attendee.part_stat != old_local_attendee.part_stat)
-                            || local_attendee.force_send.is_some()
-                            || send_update)
+                    if (local_attendee.part_stat != old_local_attendee.part_stat)
+                        || local_attendee.force_send.is_some()
+                        || send_update
                     {
                         // Build the attendee list
                         if let Some(new_partstat) = local_attendee.part_stat {

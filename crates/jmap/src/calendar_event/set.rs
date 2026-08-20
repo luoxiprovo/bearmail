@@ -28,7 +28,7 @@ use groupware::{
         CalendarEventData, EVENT_DRAFT, EVENT_HIDE_ATTENDEES, EVENT_INVITE_OTHERS,
         EVENT_INVITE_SELF,
     },
-    scheduling::{ItipMessages, event_create::itip_create, event_update::itip_update},
+    scheduling::{ItipMessages, event_create::{itip_create_or_reply, itip_create_or_update}, event_update::itip_update},
 };
 use http_proto::HttpSessionData;
 use jmap_proto::{
@@ -331,17 +331,20 @@ impl CalendarEventSet for Server {
                 && access_token.has_permission(Permission::CalendarSchedulingSend)
                 && new_calendar_event.data.event_range_end() > now
             {
+                let old_ical = rkyv_deserialize(&calendar_event.inner.data.event)
+                    .caused_by(trc::location!())?;
                 let result = if new_calendar_event.schedule_tag.is_some() {
-                    let old_ical = rkyv_deserialize(&calendar_event.inner.data.event)
-                        .caused_by(trc::location!())?;
-
                     itip_update(
                         &mut new_calendar_event.data.event,
                         &old_ical,
                         account_info.addresses(),
                     )
                 } else {
-                    itip_create(&mut new_calendar_event.data.event, account_info.addresses())
+                    itip_create_or_update(
+                        &mut new_calendar_event.data.event,
+                        &old_ical,
+                        account_info.addresses(),
+                    )
                 };
 
                 match result {
@@ -656,7 +659,7 @@ impl CalendarEventSet for Server {
             && access_token.has_permission(Permission::CalendarSchedulingSend)
             && event.data.event_range_end() > now() as i64
         {
-            match itip_create(&mut event.data.event, account_info.addresses()) {
+            match itip_create_or_reply(&mut event.data.event, account_info.addresses()) {
                 Ok(messages) => {
                     if messages.iter().map(|r| r.to.len()).sum::<usize>()
                         < self.core.groupware.itip_outbound_max_recipients

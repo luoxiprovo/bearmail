@@ -4,7 +4,7 @@ A standalone browser client for Stalwart. It uses the authenticated JMAP session
 
 ## What works
 
-- OAuth 2.0 Authorization Code with PKCE and session-only app-password login
+- OAuth 2.0 Authorization Code with PKCE and password or app-password login that stays signed in on this device until you sign out
 - Mailbox navigation, incremental inbox/search queries, safe HTML reading, remote-image blocking, attachments, message actions, drafts, attachments, and JMAP submission
 - Day, week, month, and agenda calendar views; calendar visibility; event creation, editing, deletion, and guest invitations
 - `text/calendar` invite previews in mail, one-click Accept/Maybe/Decline, and import when the event has not yet been auto-added by Stalwart
@@ -24,11 +24,32 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:4173`, enter the Stalwart HTTPS URL, then use OAuth or an app password. No password is persisted.
+Open `http://localhost:4173`, enter the Stalwart HTTPS URL, then use OAuth, an account password, or an app password. The session is kept on this device until you sign out.
+
+## Combined install (recommended)
+
+The repository root `install.sh` installs Stalwart and this WebUI as two
+services and configures exact-origin CORS automatically. Build the distributable
+archive with:
+
+```sh
+npm ci
+npm test
+npm run build
+tar -czf ../stalwart-webui.tar.gz \
+  install.sh server.mjs stalwart-webui.service dist
+```
+
+Put `stalwart-webui.tar.gz`, the compatible `stalwart` binary, and the root
+`install.sh` in one directory on the new server, then run `sudo sh ./install.sh`.
+The root installer reuses a compatible system Node.js or downloads, verifies,
+and installs a private Node.js 22 runtime when needed. The WebUI archive is
+architecture-independent and does not require npm on the target.
 
 ## Standalone install
 
-This installer is separate from Stalwart's installer and never changes the mail server:
+The WebUI's internal installer remains available for standalone deployments and
+never changes the mail server:
 
 ```sh
 sudo ./install.sh \
@@ -37,7 +58,13 @@ sudo ./install.sh \
   --systemd
 ```
 
-Put a TLS reverse proxy in front of `127.0.0.1:8080`. Without `--systemd`, the script installs the built application and prints the command needed to start it. Use `--prefix` for an unprivileged local installation.
+Put a TLS reverse proxy in front of `127.0.0.1:8080`. The standalone WebUI package deliberately does not install a proxy or own public certificates. The repository-root combined installer offers an automatic Caddy mode because it can coordinate the distinct Stalwart and WebUI hostnames safely. Without `--systemd`, this script installs the built application and prints the command needed to start it. Use `--prefix` for an unprivileged local installation.
+
+The standalone installer still requires Node.js 22.12 or later. Use the
+repository root installer when you want prerequisites provisioned
+automatically. Advanced callers may select an absolute runtime path with
+`--node-bin`; a systemd runtime path must not be inside a user home or runtime
+directory because the service deliberately blocks access to those locations.
 
 ## Container
 

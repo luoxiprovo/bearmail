@@ -1,4 +1,4 @@
-import { CAPABILITIES, type DraftInput, type Email, type Identity, type Mailbox } from "../types";
+import { CAPABILITIES, type DraftInput, type Email, type EmailBodyPart, type Identity, type Mailbox } from "../types";
 import { JmapClient, JmapError, findResponse } from "./client";
 
 interface GetResult<T> { accountId: string; state: string; list: T[]; notFound?: string[] }
@@ -17,11 +17,12 @@ export interface EmailPage { emails: Email[]; total: number; queryState: string 
 
 export async function getEmails(
   client: JmapClient,
-  options: { mailboxId?: string; text?: string; position?: number; limit?: number; signal?: AbortSignal },
+  options: { mailboxId?: string; text?: string; hasAttachment?: boolean; position?: number; limit?: number; signal?: AbortSignal },
 ): Promise<EmailPage> {
   const filter: Record<string, unknown> = {};
   if (options.mailboxId) filter.inMailbox = options.mailboxId;
   if (options.text) filter.text = options.text;
+  if (options.hasAttachment) filter.hasAttachment = true;
   const response = await client.request([CAPABILITIES.mail], [
     ["Email/query", {
       accountId: client.mailAccountId,
@@ -56,6 +57,17 @@ export async function getEmail(client: JmapClient, id: string): Promise<Email> {
   return result.list[0];
 }
 
+export function isCalendarInvitationPart(part: EmailBodyPart): boolean {
+  const type = (part.type ?? "").toLowerCase();
+  if (type.startsWith("text/calendar") || type === "application/ics" || type === "application/calendar") return true;
+  const name = (part.name ?? "").toLowerCase();
+  return name.endsWith(".ics") || name.endsWith(".ifb");
+}
+
+export function findCalendarInvitationPart(email: Pick<Email, "attachments" | "textBody" | "htmlBody">): EmailBodyPart | undefined {
+  return [...(email.attachments ?? []), ...(email.textBody ?? []), ...(email.htmlBody ?? [])].find(isCalendarInvitationPart);
+}
+
 export async function patchEmail(client: JmapClient, id: string, patch: Record<string, unknown>): Promise<void> {
   const result = await client.call<SetResult>(CAPABILITIES.mail, "Email/set", {
     accountId: client.mailAccountId,
@@ -71,9 +83,101 @@ export async function destroyEmail(client: JmapClient, id: string): Promise<void
 export async function getIdentities(client: JmapClient): Promise<Identity[]> {
   const result = await client.call<GetResult<Identity>>(CAPABILITIES.submission, "Identity/get", {
     accountId: client.mailAccountId,
-    properties: ["id", "name", "email", "mayDelete"],
+    properties: ["id", "name", "email", "mayDelete", "textSignature", "htmlSignature"],
   });
   return result.list;
+}
+
+export const SIGNATURE_MAX_LENGTH = 2047;
+
+export function identitySignatureText(identity?: Identity): string {
+  if (identity?.textSignature?.trim()) return identity.textSignature.replace(/\s+$/, "");
+  return htmlToTextSignature(identity?.htmlSignature ?? "").replace(/\s+$/, "");
+}
+
+export function signatureBlock(signature: string): string {
+  const text = signature.replace(/\s+$/, "");
+  if (!text.trim()) return "";
+  return /^(?:-- |--$)/.test(text) ? text : `-- \n${text}`;
+}
+
+export function composeDraftBody(options: { signature?: string; quoted?: string; forwarded?: string } = {}): string {
+  const blocks = [""];
+  const signature = signatureBlock(options.signature ?? "");
+  if (signature) blocks.push(signature);
+  if (options.quoted) blocks.push(options.quoted);
+  if (options.forwarded) blocks.push(options.forwarded);
+  return blocks.join("\n\n");
+}
+
+export function replyQuote(email: Email): string {
+  const who = email.from?.[0]?.name || email.from?.[0]?.email || "someone";
+  const quoted = (emailPlainText(email) || email.preview || "").replace(/\r\n/g, "\n").split("\n").map((line) => `> ${line}`).join("\n");
+  return `On ${new Date(email.receivedAt).toLocaleString()}, ${who} wrote:\n${quoted}`;
+}
+
+export function replySubject(subject?: string): string {
+  return /^re:/i.test(subject ?? "") ? subject ?? "" : `Re: ${subject ?? ""}`;
+}
+
+export function forwardSubject(subject?: string): string {
+  return /^fwd:/i.test(subject ?? "") ? subject ?? "" : `Fwd: ${subject ?? ""}`;
+}
+
+export function forwardedMessage(email: Email): string {
+  const recipients = (email.to ?? []).map(formatMailbox).filter(Boolean).join(", ") || "undisclosed-recipients";
+  return [
+    "---------- Forwarded message ---------",
+    `From: ${formatMailbox(email.from?.[0])}`,
+    `Date: ${new Date(email.receivedAt).toLocaleString()}`,
+    `Subject: ${email.subject || "(no subject)"}`,
+    `To: ${recipients}`,
+    "",
+    emailPlainText(email) || email.preview || "",
+  ].join("\n");
+}
+
+export function emailPlainText(email: Email): string {
+  const part = email.textBody?.find((item) => item.partId && email.bodyValues?.[item.partId]);
+  return part?.partId ? email.bodyValues?.[part.partId]?.value ?? "" : "";
+}
+
+function formatMailbox(address?: { name?: string; email?: string }): string {
+  return address?.name ? `${address.name} <${address.email}>` : address?.email || "Unknown sender";
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
+}
+
+function htmlToTextSignature(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"');
+}
+
+export function textToHtmlSignature(text: string): string {
+  const html = text.split("\n").map(escapeHtml).join("<br>");
+  return html.length < 2048 ? html : escapeHtml(text.replace(/\s+/g, " ")).slice(0, SIGNATURE_MAX_LENGTH);
+}
+
+export async function updateIdentitySignatures(client: JmapClient, identityId: string, textSignature: string): Promise<void> {
+  if (textSignature.length > SIGNATURE_MAX_LENGTH) {
+    throw new JmapError(`Keep the signature under ${SIGNATURE_MAX_LENGTH} characters.`, "invalidProperties");
+  }
+  const result = await client.call<SetResult>(CAPABILITIES.submission, "Identity/set", {
+    accountId: client.mailAccountId,
+    update: { [identityId]: { textSignature, htmlSignature: textToHtmlSignature(textSignature) } },
+  });
+  if (result.notUpdated?.[identityId]) {
+    throw new JmapError(String(result.notUpdated[identityId].description ?? "The signature could not be saved."), String(result.notUpdated[identityId].type ?? "notUpdated"));
+  }
 }
 
 function cleanHeader(value: string): string { return value.replace(/[\r\n]+/g, " ").trim(); }
@@ -142,11 +246,24 @@ function toBase64(buffer: ArrayBuffer): string {
   return btoa(binary).match(/.{1,76}/g)?.join("\r\n") ?? "";
 }
 
-export async function sendDraft(client: JmapClient, emailId: string, identityId: string): Promise<void> {
+export async function sendDraft(
+  client: JmapClient,
+  emailId: string,
+  identityId: string,
+  draftMailboxId: string,
+  sentMailboxId: string,
+): Promise<void> {
   const result = await client.call<Record<string, any>>([CAPABILITIES.mail, CAPABILITIES.submission], "EmailSubmission/set", {
     accountId: client.mailAccountId,
     create: { send: { emailId, identityId } },
-    onSuccessDestroyEmail: ["#send"],
+    onSuccessUpdateEmail: {
+      "#send": {
+        [`mailboxIds/${sentMailboxId}`]: true,
+        [`mailboxIds/${draftMailboxId}`]: null,
+        "keywords/$draft": null,
+        "keywords/$seen": true,
+      },
+    },
   });
   if (!result.created?.send) throw new JmapError(String(result.notCreated?.send?.description ?? "The message was not sent."), String(result.notCreated?.send?.type ?? "submissionFailed"));
 }

@@ -1,147 +1,234 @@
-# Stalwart Interactive Installer and CLI Setup Specification
+# Stalwart and WebUI Interactive Installer Specification
 
 ## Goal
 
-A user runs `install.sh` without supplying installation or setup answers as command-line parameters. The installer obtains this repository's source (or accepts a locally built binary), installs it, and immediately starts a native terminal wizard. The wizard exposes the same identity, storage, directory, logging, and DNS-management fields as the webpage bootstrap form.
+A user places `install.sh`, a compatible compiled `stalwart` binary, and a
+prebuilt `stalwart-webui.tar.gz` in one directory on a new Linux server. Running
+`sudo sh ./install.sh` installs Stalwart and the mail/calendar WebUI with one
+interactive flow while keeping two systemd services and two public hostnames.
 
-The webpage is no longer part of first-run setup.
+The webpage is not part of first-run Stalwart bootstrap. All bootstrap fields
+available on the webpage remain available in the terminal wizard.
 
-## Installer interaction
+## Installer contract
 
-`install.sh` accepts only `-h` and `--help`. A prefix, `--fdb`, store choice, hostname, domain, and all other installation/setup answers must not be accepted as command-line arguments.
+`install.sh` accepts only `-h` and `--help`. A prefix, hostname, domain, origin,
+port, store, secret, and every other answer are rejected as command-line
+arguments. All questions read from `/dev/tty`; an unavailable terminal stops the
+installer before changes.
 
-The installer uses `/dev/tty` for its questions and for the Rust setup wizard. This makes the normal download-and-pipe form work:
+The target requires Linux and systemd. The installer asks for:
 
-```sh
-curl --proto '=https' --tlsv1.2 -sSfL \
-  https://raw.githubusercontent.com/valuerouterDev/stalwart/main/install.sh | sudo sh
-```
+1. standard FHS paths or a custom Stalwart prefix;
+2. the local Stalwart binary path (default `./stalwart` beside the script);
+3. the prebuilt WebUI archive path (default `./stalwart-webui.tar.gz`);
+4. the WebUI installation prefix and localhost port;
+5. the exact public WebUI HTTPS origin, with an optional nonstandard port and no path;
+6. automatic Caddy publishing (default) or an operator-managed proxy; and
+7. confirmation before system changes.
 
-When `/dev/tty` cannot be opened, installation stops before making changes and explains that an interactive terminal is required.
+An invalid editable answer does not terminate the installer. The installer
+explains the accepted form and repeats that question until the answer is valid
+or interactive input ends. Cancellation, missing prerequisites, invalid
+artifact contents, and installation command failures remain fatal.
 
-The installer asks for:
+The installer never downloads or builds either application. It validates that:
 
-1. standard FHS paths or a custom installation prefix;
-2. whether to build this revision from source or install an existing compatible binary;
-3. for a source build, the source checkout/repository and build profile (all standard bootstrap backends, or FoundationDB-enabled);
-4. confirmation before installing the binary and running setup.
+- the Stalwart artifact is an executable regular file compiled with the CLI
+  setup, quick setup, DNS table, and secure installer-result handoff;
+- the WebUI artifact is a safe gzip tar without absolute paths, parent traversal,
+  or symbolic links;
+- the archive root contains `install.sh`, `server.mjs`,
+  `stalwart-webui.service`, `dist/index.html`, and `dist/config.json`;
+- the public WebUI value is an exact HTTPS DNS origin;
+- the local WebUI port is valid and does not collide with Stalwart port 8080;
+- the WebUI prefix does not contain or sit inside a Stalwart binary,
+  configuration, data, log, private Node.js runtime, or selected Node.js
+  executable path.
 
-The default source repository is `https://github.com/valuerouterDev/stalwart.git`, not the upstream Stalwart release download. A checkout containing the current `install.sh` is preferred when available. The standard source build enables every community, non-FoundationDB backend reachable from the webpage bootstrap form and omits the `enterprise` Cargo feature. FoundationDB support is a separate community build choice because its client library is an external prerequisite.
+After artifact validation, the installer reuses an absolute system Node.js
+22.12-or-later executable when available outside a user home. Otherwise it:
 
-The installer verifies that the selected binary supports CLI setup, creates the service account and filesystem layout, installs the binary, detects the server's public IPv4/IPv6 addresses over HTTPS, then invokes:
+1. maps the Linux architecture to an official Node.js binary target;
+2. downloads the current Node.js 22 `SHASUMS256.txt` and immutable release
+   archive over HTTPS;
+3. verifies the archive's SHA-256 checksum;
+4. installs only the `node` executable under
+   `/opt/stalwart-node/<version>/bin/node`; and
+5. passes that exact absolute path to the WebUI installer and systemd unit.
+
+The private runtime does not replace a distro-managed or user-installed
+`node`. Supported official Linux targets are x64, arm64, armv7l, ppc64le, and
+s390x. If neither curl nor wget exists, the installer bootstraps curl through a
+recognized package manager. It similarly installs coreutils when no SHA-256
+tool exists. Download, checksum, architecture, or runtime execution failure
+stops installation before service accounts or application files are created.
+
+## Stalwart bootstrap
+
+After installing the binary but before creating or starting its service, a fresh
+installation invokes:
 
 ```text
 stalwart --config=<selected config path> --setup
 ```
 
-The config path and `--setup` select the operation; setup answers are never encoded in command arguments. Data, log, and detected public-IP values may be supplied internally as defaults, but advanced setup lets the user review and change them. IP detection is best-effort and never substitutes a private interface address for a public address.
+Setup answers are not command arguments. Installer-derived data/log paths,
+best-effort detected public IPv4/IPv6 addresses, and a root-only temporary result
+path are passed as environment values. Advanced setup may edit the address
+defaults. The result file is created with mode 0600 inside the installer's
+temporary directory and is deleted at completion.
 
-## Wizard stages and field parity
+The CLI offers:
 
-The canonical webpage schema embedded in `resources/schema/schema.json.gz` drives nested CLI questions. This prevents a second handwritten list of backend fields from drifting away from the webpage.
+- quick setup (default), which asks only for the Stalwart hostname and primary
+  mail domain and retains every other bootstrap default;
+- advanced setup, which prompts every reachable field in the embedded webpage
+  schema.
 
-The CLI first offers two modes:
+Advanced setup covers server identity and TLS/DKIM; main, blob, search, and
+in-memory stores; internal, LDAP, SQL, and OpenID Connect directories; every
+logging destination; and every manual or automatic DNS provider with its nested
+settings and secret sources. Unavailable compile-time variants remain visible
+but cannot be selected.
 
-- quick setup (default) asks only for the server hostname and default email domain, retains every other WebUI bootstrap default, uses detected public IPs, and proceeds directly to final review;
-- advanced setup presents all stages below.
+The fully constructed `Bootstrap` object uses the same registry validation as
+webpage setup. Existing non-empty regular `config.json` files are preserved.
+Empty/non-regular config paths fail. A fresh install cannot create services
+unless setup produces a non-empty config and its private result file.
 
-The advanced CLI presents the following stages in order.
+## Two services and two hostnames
 
-### 1. Server identity
+The installer creates and starts:
 
-- server hostname;
-- default email domain;
-- public IPv4 address (optional, used only for the DNS checklist);
-- public IPv6 address (optional, used only for the DNS checklist);
-- automatically obtain a TLS certificate;
-- generate DKIM signing keys.
+- `stalwart.service`, using the configured server hostname such as
+  `mail.example.com`;
+- `stalwart-webui.service`, bound to `127.0.0.1:8081` by default and configured
+  to connect to `https://mail.example.com`.
 
-Hostname and domain answers are normalized and validated before continuing. IP inputs must match their requested address family.
+The WebUI has a different public origin such as `https://webmail.example.com`.
+The two hostnames may resolve to the same public IP. The installer asks for the
+WebUI origin before Stalwart setup; `https://webmail.example.com` is only an
+example. After the mail hostname and domain are known, leftover example origins
+(`webmail.example.com`, `.org`, `.net`, `.test`) are re-prompted with the default
+`https://webmail.<mail-domain>`. The WebUI hostname cannot equal the mail
+hostname or a Caddy protocol-discovery name. Automatic mode installs a
+packaged Caddy service, writes separate Stalwart and WebUI routes, and replaces
+only its marked Caddyfile or a checksum-verified pristine package sample. It binds
+Stalwart HTTP/HTTPS to `127.0.0.1:8080` and `127.0.0.1:8443`, enables forwarded
+HTTP metadata, pins Stalwart's public URL, and publishes Caddy on ports 80/443.
+Operator-managed mode leaves proxy and listener policy untouched.
 
-### 2. Storage
+Because SMTP/IMAP TLS still terminates in Stalwart, automatic mode provisions a
+file-backed Certificate object, changes the primary Domain to manual
+certificate management, and selects that certificate as Stalwart's default. A
+systemd timer verifies the hostname and public/private key pair from Caddy's
+ACME storage, copies changed files with Stalwart-readable permissions, and
+restarts Stalwart. The initial placeholder is replaced after DNS permits Caddy
+to issue the public certificate. Neither mode exposes the WebUI over public
+plain HTTP.
 
-The user independently selects and configures every storage role offered by the webpage:
+## Exact CORS automation
 
-- main data storage: RocksDB, SQLite, FoundationDB, PostgreSQL, or MySQL;
-- attachment/file storage: data store, sharded, S3-compatible, Azure, filesystem, FoundationDB, PostgreSQL, or MySQL;
-- full-text search: data store, Elasticsearch, Meilisearch, FoundationDB, PostgreSQL, or MySQL;
-- cache/temporary storage: data store, sharded, Redis/Valkey, Redis Cluster, or Redis Sentinel.
+Only after both local services pass readiness checks, the installer posts an
+authenticated registry update to Stalwart's local JMAP endpoint. It sets:
 
-After a variant is selected, every field in that variant's webpage form is prompted with the same default from the embedded schema, except server-generated output fields. Nested choices such as secret sources, SQL stores, authentication modes, and regions are also interactive. Collection values use JSON syntax where the webpage uses a list, map, or set editor.
+| Header | Value |
+| --- | --- |
+| `Access-Control-Allow-Origin` | exact normalized WebUI origin |
+| `Access-Control-Allow-Headers` | `Authorization, Content-Type, Accept, X-Requested-With` |
+| `Access-Control-Allow-Methods` | `POST, GET, PATCH, PUT, DELETE, HEAD, OPTIONS` |
+| `Vary` | `Origin` |
 
-A variant that is present in the webpage schema but not compiled into the installed binary remains visible with an unavailable annotation. Selecting it gives an actionable build-feature message and does not advance.
+It also sets `usePermissiveCors=false`, requests `ReloadSettings`, and verifies
+an OPTIONS response locally. For fresh internal-directory setup, the private
+result supplies the one-time administrator credential. External-directory fresh
+setups and reinstalls prompt for an administrator password or app password with
+terminal echo disabled. If Stalwart rejects those credentials (HTTP 401/403),
+the installer explains the failure and asks again instead of exiting. The
+secret is streamed to the updater on standard input and is never a command
+argument or environment value.
 
-### 3. Account directory
+## Completion and DNS
 
-- internal directory;
-- LDAP;
-- SQL;
-- OpenID Connect.
+The setup result includes Stalwart's hostname/domain, public IPs, and complete
+provider-neutral DNS rows. The installer removes the administrator credential
+and saves mode-0600 non-secret installer state beside `config.json` for safe
+reinstalls.
 
-Every field reachable in the chosen webpage directory form is prompted. The completion screen only prints a newly generated administrator credential when bootstrap created one; external directories follow the existing promotion behavior.
+At the end, one aligned forward-DNS table contains `TYPE`, `HOST`, `ANSWER`,
+`TTL`, and `PRIO` columns with:
 
-### 4. Logging
+- Stalwart A/AAAA rows;
+- primary-domain MX, SPF, DKIM, DMARC, SRV, MTA-STS, TLS reporting, CAA,
+  autoconfig, and autodiscover rows where applicable;
+- WebUI A and optional AAAA rows using the same detected/supplied public IP;
+- an explicit placeholder when public IPv4 could not be detected.
 
-- rotating log file;
-- console/stdout;
-- systemd journal;
-- OpenTelemetry over HTTP;
-- OpenTelemetry over gRPC.
+PTR rows from the Stalwart setup result are excluded from that table. A separate
+reverse-DNS section maps each detected public IP to the Stalwart hostname,
+explains that the mapping is configured outside the domain's authoritative
+zone, and distinguishes direct-outbound deliverability guidance from
+the DNS required to open the Stalwart and WebUI URLs. The installer also
+distinguishes records added manually from records handled by Stalwart automatic
+DNS management; the mail and WebUI address records must resolve in either mode.
 
-Every field reachable in the chosen webpage tracer form is prompted.
+After printing the table, the installer asks:
 
-### 5. DNS management
+- whether to send outbound mail through a Mailjet SMTP relay (default yes).
+  Choosing yes prints the Mailjet account steps, then asks for the SMTP host
+  (default `in-v3.mailjet.com`), port (default 587), API key, and secret key.
+  It creates or updates a named `mailjet` MTA relay route over the local JMAP
+  management API, keeps local-domain delivery local, and reloads settings. If
+  Stalwart rejects the administrator credentials, or the Mailjet keys cannot be
+  applied, the installer asks for those values again instead of exiting. The
+  administrator and Mailjet secrets are streamed on standard input to the
+  updater; they are never command arguments or persistent installer state.
+- whether the printed forward-DNS rows are already in the authoritative zone.
+  If they are not, it asks for a name.com API username, token, and DNS zone
+  (default: the mail domain) and creates, updates, or replaces supported
+  records through `https://api.name.com/v4`. Conflicting records at the same
+  host (old A/AAAA addresses, extra MX targets, SPF/DKIM/DMARC TXT, and
+  CNAME/ANAME that cannot coexist with an address record) are listed and,
+  after confirmation (default yes), deleted or updated. Unrelated verification
+  TXT records and NS records are left unchanged. When a Mailjet relay was just
+  configured, SPF TXT answers gain `include:spf.mailjet.com`. CAA, TLSA, NS,
+  and PTR are not published. Invalid name.com credentials are explained and
+  the questions repeat.
 
-The CLI lists every DNS-management variant in `x:DnsServerBootstrap`, including manual DNS, RFC 2136/TSIG, Cloudflare, Route53, and the other providers offered by the webpage. Selecting a provider prompts every nested setting and secret-source choice from that provider's webpage form. Manual mode remains the default.
-
-## Validation, review, and persistence
-
-- Empty input accepts the displayed default.
-- Boolean input accepts case-insensitive `y`, `yes`, `n`, and `no`.
-- Menus accept only enabled numeric choices.
-- Scalar values are type checked; list/map/set values are parsed as JSON.
-- The fully constructed `Bootstrap` object is validated with the same registry validator used by webpage setup.
-- Validation failures are printed and the operator can revisit the questionnaire.
-- A final summary shows identity plus the selected stores, directory, tracer, TLS, DKIM, and DNS mode.
-- Declining final application may return to editing or cancel without creating `config.json` or initializing the persistent store.
-- Existing `config.json` files are preserved and skip setup during reinstall.
-- Empty or non-regular config paths are not considered initialized and produce an actionable error.
-- A fresh install cannot proceed to service creation unless setup returned successfully and produced a non-empty regular `config.json`.
-- The persistent-store emptiness check occurs before any registry write, preventing a second config file from partially reinitializing an existing store.
-
-## Completion output
-
-After successful bootstrap the CLI prints:
-
-- the permanent administrator username and one-time password when the internal directory created them;
-- one aligned table with `TYPE`, `HOST`, `ANSWER`, `TTL`, and `PRIO` columns;
-- an `A` row containing the detected or supplied IPv4 address, or an explicit detection-failure placeholder;
-- an `AAAA` row when public IPv6 is available;
-- a `PTR` row for each public IP, plus a note that reverse DNS belongs at the IP provider;
-- the complete primary-domain records, including applicable MX, SPF, DKIM, DMARC, SRV, MTA-STS, TLS reporting, CAA, autoconfig, and autodiscover rows;
-- for manual DNS, a reminder that Stalwart did not contact a provider;
-- for automatic DNS, the selected provider and a reminder to verify its first update after startup.
-
-## Failure and security behavior
-
-- Secrets are never placed in command arguments, DNS output, or installer environment variables.
-- Secret values already present while revisiting a form are masked in prompt defaults.
-- Setup failure prevents service installation/startup and returns a non-zero status.
-- Source-build prerequisites are checked before filesystem/service changes.
-- A locally supplied binary must be an executable regular file; the README explains platform and revision compatibility.
-- Service files and platform behavior for systemd, init.d, launchd, and FreeBSD rc.d remain unchanged after successful setup.
+The completion message shows the Stalwart admin URL, WebUI public URL, localhost
+WebUI upstream, HTTPS publishing status, and the account flow: create a user
+in the Stalwart admin panel, then sign in to the WebUI with the full email
+address/account name and password or app password. When Mailjet and DNS are in
+place, that user can send mail from the WebUI after public DNS resolves.
 
 ## Acceptance criteria
 
-1. `install.sh --fdb`, `install.sh /prefix`, and any other setup/install answer passed as an argument are rejected; the same choices exist interactively.
-2. `curl ... | sudo sh` reads questions from `/dev/tty` and never consumes the script stream as answers.
-3. The default install builds or uses this repository's revised binary and never downloads an upstream release artifact.
-4. All five top-level webpage bootstrap sections are represented; every form field reachable from a selected variant is prompted from the embedded schema.
-5. Every DNS-management provider and nested setting offered by the webpage is offered by the CLI; manual DNS remains the default.
-6. A fresh successful install starts only after bootstrap persisted a valid registry and config file.
-7. The permanent administrator credential, when created, is shown once.
-8. The final DNS checklist includes address/PTR guidance and the complete generated zone.
-9. Existing deployments are preserved during reinstall.
-10. Any source acquisition, build, setup, or validation error prevents service startup and returns non-zero.
-11. Quick setup asks only for hostname and domain before final review and preserves every other Bootstrap default.
-12. Public-IP detection populates the A/AAAA/PTR table rows when the clean server has the corresponding public address family.
+1. Any setup/install answer passed as an argument is rejected.
+2. All questions remain interactive through `/dev/tty`.
+3. The two application artifacts remain local and are never downloaded or
+   built; a missing runtime is obtained only from the official Node.js release
+   host and checksum-verified.
+4. Quick setup asks only for Stalwart hostname and mail domain.
+5. Advanced setup retains webpage bootstrap field parity.
+6. Fresh setup finishes before either service starts.
+7. Both systemd services pass local readiness checks.
+8. Stalwart stores and returns the exact WebUI CORS origin and required headers.
+9. No administrator secret appears in arguments, environment, DNS, or persistent installer state.
+10. The final forward-DNS table contains both public hostnames and actual
+    detected/supplied IPs without presenting PTR as a domain-zone record.
+11. Existing Stalwart configuration is preserved on reinstall.
+12. After DNS, HTTPS proxy, and TLS are configured, an admin-created account can
+    log in to the WebUI and use advertised JMAP Mail, Submission, and Calendar capabilities.
+13. Invalid interactive paths, ports, DNS names, WebUI origins, and
+    authentication answers show a correction and re-prompt instead of
+    terminating the installer.
+14. Automatic mode never overwrites an operator-owned Caddyfile, keeps ports
+    8080/8081 private, and installs an active certificate synchronization timer.
+15. Choosing Mailjet SMTP relay creates or updates a named `mailjet` route and
+    remote outbound strategy without placing Mailjet secrets in arguments or
+    installer state.
+16. When forward DNS is not already published, name.com credentials are accepted
+    interactively and only supported record types are created or updated.
+    Conflicting records at the same host are listed and replaced only after
+    confirmation; NS and unrelated verification TXT records are preserved.

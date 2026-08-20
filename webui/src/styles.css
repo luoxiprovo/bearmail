@@ -301,7 +301,7 @@
   .event-pill:hover { filter: brightness(.96); }
   .event-title { overflow: hidden; flex: 1; font-size: 10px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
   .event-pill time { flex: none; color: var(--muted); font-size: 8px; }
-  .event-pill.status-needs-action { border-style: dashed; background: color-mix(in srgb, var(--event-color) 6%, var(--paper)); opacity: .55; }
+  .event-pill.status-needs-action { border-style: dashed; background: color-mix(in srgb, var(--event-color) 6%, var(--paper)); opacity: .5; }
   .event-pill.status-tentative { opacity: .72; }
   .event-pill.status-declined { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--event-color) 8%, var(--paper)) 0 4px, var(--paper) 4px 8px); text-decoration: line-through; opacity: .42; }
   .more-events { color: var(--teal); font-size: 9px; font-weight: 700; text-align: left; }
@@ -322,7 +322,7 @@
   .agenda-event > time, .agenda-event > span { display: grid; align-content: center; }
   .agenda-event time span, .agenda-event small { color: var(--muted); font-size: 10px; }
   .agenda-event > i { border-radius: 4px; }
-  .agenda-event.status-needs-action { opacity: .55; }
+  .agenda-event.status-needs-action { opacity: .5; border-style: dashed; }
   .agenda-event.status-declined { opacity: .42; text-decoration: line-through; }
 
   .dialog-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(8,22,30,.52); backdrop-filter: blur(2px); }
@@ -362,6 +362,13 @@
   .settings-grid dt { color: var(--muted); }
   .settings-grid dd { display: flex; align-items: center; gap: 7px; max-width: 60%; margin: 0; overflow-wrap: anywhere; color: var(--ink); text-align: right; }
   .settings-actions { display: flex; gap: 7px; }
+  .signature-settings { grid-column: 1 / -1; }
+  .signature-settings textarea { width: 100%; min-height: 120px; margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; outline: 0; background: var(--paper-strong); line-height: 1.55; resize: vertical; }
+  .signature-settings textarea:focus { border-color: var(--teal); }
+  .signature-identity { display: grid; gap: 6px; margin-top: 14px; color: var(--muted); font-size: 12px; font-weight: 750; }
+  .signature-identity select { min-height: 41px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--paper-strong); color: var(--ink); }
+  .signature-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+  .signature-actions small { color: var(--muted); }
   .capability-list { display: grid; gap: 8px; margin: 17px 0 0; padding: 0; list-style: none; }
   .capability-list li { display: flex; align-items: center; gap: 10px; border-radius: 8px; padding: 8px 10px; background: var(--canvas); }
   .capability-list li svg { color: var(--teal); }

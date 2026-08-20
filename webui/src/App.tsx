@@ -10,9 +10,9 @@ import { useNavigate, usePath } from "./router";
 import { useEffect } from "react";
 
 export default function App() {
-  const { config, client } = useApp();
+  const { config, client, sessionReady } = useApp();
   const path = usePath();
-  if (!config) return <div className="boot"><span className="brand-mark">S</span><span>Opening your workspace…</span></div>;
+  if (!config || !sessionReady) return <div className="boot"><span className="brand-mark">S</span><span>Opening your workspace…</span></div>;
   if (!client) return <ConnectionPage />;
   let page;
   if (path.startsWith("/mail/message/")) page = <MessagePage emailId={decodeURIComponent(path.slice("/mail/message/".length))} />;

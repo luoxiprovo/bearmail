@@ -11,7 +11,7 @@ WorkingDirectory=@@PREFIX@@
 Environment=WEBUI_ROOT=@@PREFIX@@/dist
 Environment=WEBUI_HOST=127.0.0.1
 Environment=WEBUI_PORT=@@PORT@@
-ExecStart=/usr/bin/env node @@PREFIX@@/server.mjs
+ExecStart=@@NODE_BIN@@ @@PREFIX@@/server.mjs
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

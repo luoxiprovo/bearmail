@@ -65,14 +65,24 @@ export async function beginOAuth(serverInput: string, appName: string): Promise<
   window.location.assign(authorization.toString());
 }
 
-let callbackPromise: Promise<{ origin: string; client: JmapClient; username: string } | null> | null = null;
+type OAuthSession = {
+  origin: string;
+  client: JmapClient;
+  username: string;
+  accessToken: string;
+  refreshToken?: string;
+  tokenEndpoint?: string;
+  clientId?: string;
+};
 
-export function completeOAuthCallback(): Promise<{ origin: string; client: JmapClient; username: string } | null> {
+let callbackPromise: Promise<OAuthSession | null> | null = null;
+
+export function completeOAuthCallback(): Promise<OAuthSession | null> {
   callbackPromise ??= finishOAuthCallback();
   return callbackPromise;
 }
 
-async function finishOAuthCallback(): Promise<{ origin: string; client: JmapClient; username: string } | null> {
+async function finishOAuthCallback(): Promise<OAuthSession | null> {
   if (window.location.pathname !== "/login") return null;
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
@@ -97,11 +107,34 @@ async function finishOAuthCallback(): Promise<{ origin: string; client: JmapClie
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body,
   });
-  const token = await tokenResponse.json() as { access_token?: string; error?: string; error_description?: string };
+  const token = await tokenResponse.json() as { access_token?: string; refresh_token?: string; error?: string; error_description?: string };
   if (!tokenResponse.ok || !token.access_token) throw new JmapError(token.error_description ?? token.error ?? "The authorization code could not be exchanged.", "oauthTokenFailed");
   const auth = new BearerAuthProvider(token.access_token);
   const discovered = await discoverSession(pending.server, auth);
-  return { origin: discovered.origin, client: new JmapClient(discovered.session, auth), username: discovered.session.username };
+  return {
+    origin: discovered.origin,
+    client: new JmapClient(discovered.session, auth),
+    username: discovered.session.username,
+    accessToken: token.access_token,
+    refreshToken: token.refresh_token,
+    tokenEndpoint: pending.tokenEndpoint,
+    clientId: pending.clientId,
+  };
+}
+
+export async function refreshOAuthAccessToken(input: { tokenEndpoint: string; clientId: string; refreshToken: string }): Promise<{ accessToken: string; refreshToken?: string }> {
+  const tokenResponse = await fetch(input.tokenEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: input.refreshToken,
+      client_id: input.clientId,
+    }),
+  });
+  const token = await tokenResponse.json() as { access_token?: string; refresh_token?: string; error?: string; error_description?: string };
+  if (!tokenResponse.ok || !token.access_token) throw new JmapError(token.error_description ?? token.error ?? "The saved session expired. Sign in again.", "oauthRefreshFailed");
+  return { accessToken: token.access_token, refreshToken: token.refresh_token };
 }
 
 function randomUrlSafe(bytes: number): string { const value = new Uint8Array(bytes); crypto.getRandomValues(value); return base64Url(value); }

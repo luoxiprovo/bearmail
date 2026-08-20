@@ -132,25 +132,78 @@ Key features:
 
 ## Install This Version
 
-Run the interactive installer from a terminal:
+For complete prerequisites, an installer prompt walkthrough, post-install
+steps, verification, and troubleshooting, read [How to install Stalwart and the
+Mail/Calendar WebUI](docs/INSTALL.md).
+
+For account holders, read [How to sign in to the WebUI and send
+email](docs/WEBUI_USER_GUIDE.md).
+
+Build or obtain the two release artifacts, then put them in the same directory
+as `install.sh`:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSfL \
-  https://raw.githubusercontent.com/valuerouterDev/stalwart/main/install.sh | sudo sh
+install.sh
+stalwart
+stalwart-webui.tar.gz
 ```
 
-The installer does not accept setup answers as command-line parameters. It asks you to choose:
+The Stalwart binary must be compiled from this revision. To build the community
+edition without the enterprise-only feature gates:
+
+```sh
+cargo build --release --package stalwart --locked --no-default-features \
+  --features "sqlite postgres mysql rocks s3 redis azure nats"
+cp target/release/stalwart ./stalwart
+```
+
+Build and package the WebUI on a build machine with Node.js 22.12 or later:
+
+```sh
+cd webui
+npm ci
+npm test
+npm run build
+tar -czf ../stalwart-webui.tar.gz \
+  install.sh server.mjs stalwart-webui.service dist
+```
+
+Copy the three files to the new Linux systemd server and run:
+
+```sh
+chmod +x stalwart
+sudo sh ./install.sh
+```
+
+The installer accepts no setup answers as command-line parameters. It asks for:
 
 1. standard system paths or a custom self-contained prefix;
-2. a source build or an existing compatible binary;
-3. the standard build or the FoundationDB-enabled build;
-4. quick setup (hostname and mail domain only) or advanced setup (every initial server setting).
+2. the local Stalwart binary and prebuilt WebUI archive;
+3. the WebUI prefix, local service port, and exact public HTTPS origin;
+4. automatic Caddy publishing (recommended) or an existing operator-managed proxy;
+5. confirmation before changing the system;
+6. quick setup (hostname and mail domain only) or advanced Stalwart setup (every initial server setting);
+7. whether to send outbound mail through a Mailjet SMTP relay; and
+8. whether to publish the printed DNS rows through the name.com API when they are not already in the zone.
 
-The source-build path produces a community binary and deliberately omits the `enterprise` Cargo feature, so enterprise-only Dashboard/Tenants controls are not compiled into it. It requires Cargo, a Rust toolchain, and Stalwart's native build prerequisites. The FoundationDB-enabled path additionally requires compatible FoundationDB client libraries. If you choose an existing binary, it must come from this revision and match the server's operating system, CPU architecture, and runtime libraries.
+The installer validates both artifacts before system changes, installs
+`stalwart.service` and `stalwart-webui.service`, and keeps the WebUI bound to
+`127.0.0.1` (port 8081 by default). The supplied binary must match the new
+server's operating system, CPU architecture, and runtime libraries. A
+compatible system Node.js is reused. If Node.js 22.12 or later is unavailable,
+the installer downloads an official Node.js 22 Linux archive, verifies its
+SHA-256 checksum, and installs a private version without replacing the system
+`node` command.
 
 Quick setup is the default. It asks for the server hostname and mail domain, then keeps every other WebUI bootstrap default and proceeds to the final review. Advanced setup uses the same embedded schema as the webpage bootstrap form. It offers server identity and TLS/DKIM choices; every data, blob, search, and cache backend; internal, LDAP, SQL, and OpenID Connect directories; all logging destinations; and every manual or automatic DNS provider with its nested settings. Empty input accepts the displayed default, and unavailable backends are clearly marked when the selected binary lacks their build feature.
 
-On a fresh install, the script detects the server's public IPv4 and IPv6 addresses over HTTPS and passes them to setup as editable defaults. After review, setup initializes the selected store, writes the configuration, prints the permanent administrator credential when the internal directory is used, and shows every DNS record in an aligned `TYPE`, `HOST`, `ANSWER`, `TTL`, `PRIO` table. Reverse DNS must be configured through the provider that owns the public IP. Existing non-empty `config.json` files are preserved on reinstall; the installer refuses to start a service unless fresh setup produced a non-empty config.
+On a fresh install, the script detects the server's public IPv4 and IPv6 addresses over HTTPS and passes them to setup as editable defaults. After review, setup initializes the selected store and writes the configuration. Once both services are healthy, the installer uses the generated internal administrator credential—or prompts for an external-directory administrator—through Stalwart's local JMAP management API to add the exact WebUI CORS origin and reload settings. The password is streamed over standard input to the local updater; it is not placed in command arguments or an environment variable.
+
+The final aligned `TYPE`, `HOST`, `ANSWER`, `TTL`, `PRIO` table contains all Stalwart records plus the WebUI hostname's A/AAAA rows with the detected or supplied public addresses. Reverse DNS remains the responsibility of the provider that owns the public IP. Existing non-empty `config.json` files are preserved on reinstall; a reinstall asks for an administrator password to reapply and verify CORS.
+
+If outbound TCP 25 is blocked (as on Google Cloud), choose the Mailjet SMTP relay when asked and enter the API key and secret key from [Mailjet's SMTP settings](https://app.mailjet.com/account/relay). If the DNS rows are not already in the zone and the domain is at name.com, the installer can publish them with a name.com API username and token. See [How to set up a Mailjet SMTP relay](docs/MAILJET_SMTP_RELAY.md).
+
+The two public HTTPS hostnames require hostname-based routing: Stalwart uses a hostname such as `mail.example.com`, while `webmail.example.com` routes to the localhost WebUI service. In the recommended mode, the installer installs an otherwise-unconfigured Caddy package, moves Stalwart's HTTP listeners to loopback, writes both routes, obtains public certificates, and synchronizes Caddy's mail-host certificate into Stalwart for IMAPS/SMTPS. It refuses to overwrite an existing operator-owned Caddyfile. Choose operator-managed mode to keep an existing Caddy, NGINX, Apache, load balancer, or other proxy untouched. The installer never exposes the WebUI over public plain HTTP.
 
 ## Support
 

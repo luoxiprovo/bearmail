@@ -53,14 +53,14 @@ export function ConnectionPage() {
           <p className="form-intro">Enter the address of your Stalwart server and your account credentials.</p>
           <label>Mail server <span className="input-shell"><Server size={18} /><input required inputMode="url" placeholder="https://mail.example.com" value={server} onChange={(event) => setServer(event.target.value)} readOnly={!config?.allowCustomServers} /></span></label>
           {config?.allowOAuth && <button type="button" className="oauth-button" disabled={busy || !server.trim()} onClick={() => void oauth()}><KeyRound size={18} /> Continue with Stalwart <ArrowRight size={17} /></button>}
-          {config?.allowOAuth && config.allowBasicAuth && <div className="form-separator"><span>or use an app password</span></div>}
+          {config?.allowOAuth && config.allowBasicAuth && <div className="form-separator"><span>or use a password</span></div>}
           {config?.allowBasicAuth && <>
           <label>Email or account name <span className="input-shell"><Mail size={18} /><input required autoComplete="username" placeholder="you@example.com" value={username} onChange={(event) => setUsername(event.target.value)} /></span></label>
-          <label>App password <span className="input-shell"><LockKeyhole size={18} /><input required type="password" autoComplete="current-password" placeholder="Session only" value={password} onChange={(event) => setPassword(event.target.value)} /></span></label>
+          <label>Password or app password <span className="input-shell"><LockKeyhole size={18} /><input required type="password" autoComplete="current-password" placeholder="Your password" value={password} onChange={(event) => setPassword(event.target.value)} /></span></label>
           </>}
           {error && <div className="form-error" role="alert">{error}</div>}
-          {config?.allowBasicAuth && <button className="primary-button connect-submit" disabled={busy}>{busy ? "Connecting…" : "Connect with app password"}<ArrowRight size={18} /></button>}
-          <p className="privacy-note"><Check size={15} /> Your password stays in this browser tab and is never written to storage.</p>
+          {config?.allowBasicAuth && <button className="primary-button connect-submit" disabled={busy}>{busy ? "Connecting…" : "Connect with password"}<ArrowRight size={18} /></button>}
+          <p className="privacy-note"><Check size={15} /> You stay signed in on this device until you sign out.</p>
         </form>
       </section>
     </div>

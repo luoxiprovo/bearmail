@@ -1,5 +1,6 @@
 import { CAPABILITIES, type Calendar, type CalendarEvent, type EventParticipant, type ParticipantIdentity, type ParticipationStatus } from "../types";
 import { JmapClient, JmapError, findResponse } from "./client";
+import { findCalendarInvitationPart, getEmails } from "./mail";
 
 interface GetResult<T> { accountId: string; state: string; list: T[]; notFound?: string[] }
 
@@ -49,20 +50,44 @@ export async function getCalendarEvent(client: JmapClient, id: string): Promise<
 
 export async function findEventByUid(client: JmapClient, uid: string): Promise<CalendarEvent | null> {
   const response = await client.request([CAPABILITIES.calendars], [
-    ["CalendarEvent/query", { accountId: client.calendarAccountId, filter: { uid }, limit: 1 }, "query"],
-    ["CalendarEvent/get", { accountId: client.calendarAccountId, "#ids": { resultOf: "query", name: "CalendarEvent/query", path: "/ids" } }, "get"],
+    ["CalendarEvent/query", { accountId: client.calendarAccountId, filter: { uid }, limit: 5 }, "query"],
+    ["CalendarEvent/get", {
+      accountId: client.calendarAccountId,
+      "#ids": { resultOf: "query", name: "CalendarEvent/query", path: "/ids" },
+      properties: ["id", "uid", "title", "description", "start", "duration", "timeZone", "showWithoutTime", "calendarIds", "participants", "organizerCalendarAddress", "locations", "status"],
+    }, "get"],
   ]);
-  return findResponse<GetResult<CalendarEvent>>(response.methodResponses, "get").list[0] ?? null;
+  return findResponse<GetResult<CalendarEvent>>(response.methodResponses, "get").list.find((item) => item.uid === uid) ?? null;
 }
 
 export async function parseCalendarAttachment(client: JmapClient, blobId: string): Promise<CalendarEvent | null> {
-  if (!client.has(CAPABILITIES.calendarsParse)) return null;
-  const result = await client.call<Record<string, any>>(CAPABILITIES.calendarsParse, "CalendarEvent/parse", {
+  if (!client.has(CAPABILITIES.calendars) && !client.has(CAPABILITIES.calendarsParse)) return null;
+  const result = await client.call<Record<string, any>>([CAPABILITIES.calendars, CAPABILITIES.calendarsParse], "CalendarEvent/parse", {
     accountId: client.calendarAccountId,
     blobIds: [blobId],
   });
   const parsed = result.parsed?.[blobId];
   return Array.isArray(parsed) ? (parsed[0] as CalendarEvent | undefined) ?? null : null;
+}
+
+const PARSE_ONLY_EVENT_KEYS = ["id", "baseEventId", "isOrigin", "method", "utcStart", "utcEnd", "iCalendar"] as const;
+
+export function eventFromParsedInvitation(
+  parsed: CalendarEvent,
+  calendarId: string,
+  identities: ParticipantIdentity[],
+  status: Exclude<ParticipationStatus, "needs-action"> | "needs-action" = "needs-action",
+  extraAddresses: string[] = [],
+): Record<string, unknown> {
+  const event: Record<string, unknown> = { ...parsed, calendarIds: { [calendarId]: true } };
+  for (const key of PARSE_ONLY_EVENT_KEYS) delete event[key];
+  const own = findOwnParticipant(parsed, identities, extraAddresses);
+  if (own && event.participants && status !== "needs-action") {
+    const participants = structuredClone(event.participants as Record<string, EventParticipant>);
+    participants[own.id] = { ...participants[own.id], participationStatus: status };
+    event.participants = participants;
+  }
+  return event;
 }
 
 export async function importCalendarInvitation(
@@ -71,23 +96,22 @@ export async function importCalendarInvitation(
   calendarId: string,
   identities: ParticipantIdentity[],
   status: Exclude<ParticipationStatus, "needs-action"> | "needs-action" = "needs-action",
+  extraAddresses: string[] = [],
 ): Promise<string> {
-  const own = findOwnParticipant(parsed, identities);
-  const event: Record<string, unknown> = { ...parsed, calendarIds: { [calendarId]: true } };
-  delete event.id;
-  if (own && event.participants && status !== "needs-action") {
-    const participants = structuredClone(event.participants as Record<string, EventParticipant>);
-    participants[own.id] = { ...participants[own.id], participationStatus: status };
-    event.participants = participants;
-  }
+  const event = eventFromParsedInvitation(withOwnAttendee(parsed, identities, extraAddresses), calendarId, identities, status, extraAddresses);
   const result = await client.call<Record<string, any>>(CAPABILITIES.calendars, "CalendarEvent/set", {
     accountId: client.calendarAccountId,
     create: { invitation: event },
     sendSchedulingMessages: status !== "needs-action",
   });
   const id = result.created?.invitation?.id as string | undefined;
-  if (!id) throw new JmapError(String(result.notCreated?.invitation?.description ?? "The invitation could not be added."), String(result.notCreated?.invitation?.type ?? "notCreated"));
-  return id;
+  if (id) return id;
+  const existing = parsed.uid ? await findEventByUid(client, parsed.uid) : null;
+  if (existing) {
+    if (status !== "needs-action") await respondToInvitation(client, existing, identities, status, extraAddresses, calendarId);
+    return existing.id;
+  }
+  throw new JmapError(String(result.notCreated?.invitation?.description ?? "The invitation could not be added."), String(result.notCreated?.invitation?.type ?? "notCreated"));
 }
 
 export interface EventInput {
@@ -143,8 +167,13 @@ export async function destroyCalendarEvent(client: JmapClient, id: string): Prom
 export function findOwnParticipant(
   event: CalendarEvent,
   identities: ParticipantIdentity[],
+  extraAddresses: string[] = [],
 ): { id: string; participant: EventParticipant } | null {
-  const ownAddresses = new Set(identities.map((item) => normalizeCalendarAddress(item.calendarAddress)));
+  const ownAddresses = new Set(
+    [...identities.map((item) => item.calendarAddress), ...extraAddresses]
+      .map(normalizeCalendarAddress)
+      .filter(Boolean),
+  );
   for (const [id, participant] of Object.entries(event.participants ?? {})) {
     const address = normalizeCalendarAddress(participant.calendarAddress ?? participant.email ?? "");
     if (ownAddresses.has(address)) return { id, participant };
@@ -152,8 +181,69 @@ export function findOwnParticipant(
   return null;
 }
 
-export function participationStatus(event: CalendarEvent, identities: ParticipantIdentity[]): ParticipationStatus | "none" {
-  return findOwnParticipant(event, identities)?.participant.participationStatus ?? "none";
+export function withOwnAttendee(
+  event: CalendarEvent,
+  identities: ParticipantIdentity[],
+  extraAddresses: string[] = [],
+): CalendarEvent {
+  if (findOwnParticipant(event, identities, extraAddresses)) return event;
+  const address = normalizeCalendarAddress(
+    identities.find((item) => item.isDefault)?.calendarAddress
+    ?? identities[0]?.calendarAddress
+    ?? extraAddresses[0]
+    ?? "",
+  );
+  if (!address) return event;
+  return {
+    ...event,
+    participants: {
+      ...event.participants,
+      [crypto.randomUUID()]: {
+        "@type": "Participant",
+        calendarAddress: `mailto:${address}`,
+        kind: "individual",
+        expectReply: true,
+        participationStatus: "needs-action",
+      },
+    },
+  };
+}
+
+export function participationStatus(event: CalendarEvent, identities: ParticipantIdentity[], extraAddresses: string[] = []): ParticipationStatus | "none" {
+  return findOwnParticipant(event, identities, extraAddresses)?.participant.participationStatus ?? "none";
+}
+
+export function showsOnCalendar(event: CalendarEvent, identities: ParticipantIdentity[]): boolean {
+  return participationStatus(event, identities) !== "declined";
+}
+
+export async function importUnansweredInvitesFromMail(
+  client: JmapClient,
+  calendarId: string,
+  identities: ParticipantIdentity[],
+  extraAddresses: string[] = [],
+): Promise<void> {
+  if (!calendarId || typeof client.has !== "function") return;
+  if (!client.has(CAPABILITIES.mail)) return;
+  if (!client.has(CAPABILITIES.calendars) && !client.has(CAPABILITIES.calendarsParse)) return;
+  try {
+    const page = await getEmails(client, { hasAttachment: true, limit: 40 });
+    for (const email of page.emails) {
+      const part = findCalendarInvitationPart(email);
+      if (!part?.blobId) continue;
+      try {
+        const parsed = await parseCalendarAttachment(client, part.blobId);
+        if (!parsed?.uid || parsed.status === "cancelled") continue;
+        if (isEventOrganizer(parsed, identities)) continue;
+        if (await findEventByUid(client, parsed.uid)) continue;
+        await importCalendarInvitation(client, parsed, calendarId, identities, "needs-action", extraAddresses);
+      } catch {
+        // Keep calendar loading even if one invitation cannot be imported.
+      }
+    }
+  } catch {
+    // Mail lookup is best-effort; the calendar should still open.
+  }
 }
 
 export interface ParsedGuestAddresses {
@@ -257,10 +347,17 @@ export async function respondToInvitation(
   event: CalendarEvent,
   identities: ParticipantIdentity[],
   status: Exclude<ParticipationStatus, "needs-action">,
+  extraAddresses: string[] = [],
+  calendarId?: string,
 ): Promise<void> {
-  const own = findOwnParticipant(event, identities);
+  const prepared = withOwnAttendee(event, identities, extraAddresses);
+  const own = findOwnParticipant(prepared, identities, extraAddresses);
   if (!own) throw new JmapError("Your address is not listed as an attendee.", "participantNotFound");
-  await updateCalendarEvent(client, event.id, { [`participants/${own.id}/participationStatus`]: status }, true);
+  const participants = structuredClone(prepared.participants ?? {});
+  participants[own.id] = { ...participants[own.id], participationStatus: status };
+  const patch: Record<string, unknown> = { participants };
+  if (calendarId && !Object.keys(event.calendarIds ?? {}).length) patch.calendarIds = { [calendarId]: true };
+  await updateCalendarEvent(client, event.id, patch, true);
 }
 
 export function toJmapLocal(date: Date): string {

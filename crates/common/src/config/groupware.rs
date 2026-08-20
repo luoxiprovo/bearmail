@@ -76,6 +76,7 @@ pub enum CalendarTemplateVariable {
     Changed,
     Value,
     LogoCid,
+    BrandName,
     OldValue,
     Rsvp,
 }
@@ -170,6 +171,7 @@ impl FromStr for CalendarTemplateVariable {
             "key" => Ok(CalendarTemplateVariable::Key),
             "value" => Ok(CalendarTemplateVariable::Value),
             "logo_cid" => Ok(CalendarTemplateVariable::LogoCid),
+            "brand_name" => Ok(CalendarTemplateVariable::BrandName),
             "actions" => Ok(CalendarTemplateVariable::Actions),
             "changed" => Ok(CalendarTemplateVariable::Changed),
             "old_value" => Ok(CalendarTemplateVariable::OldValue),

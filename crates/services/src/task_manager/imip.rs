@@ -14,7 +14,7 @@ use calcard::{
 };
 use chrono::{DateTime, Locale};
 use common::{
-    DEFAULT_LOGO_BASE64, Server,
+    Server,
     auth::AccountInfo,
     config::groupware::CalendarTemplateVariable,
     i18n,
@@ -34,7 +34,7 @@ use registry::{schema::structs::TaskCalendarItipMessage, types::EnumImpl};
 use smtp::core::{Session, SessionData};
 use smtp_proto::{MailFrom, RcptTo};
 use std::{str::FromStr, sync::Arc, time::Duration};
-use store::{ahash::AHashMap, write::now};
+use store::ahash::AHashMap;
 use trc::AddContext;
 use utils::template::{Variable, Variables};
 
@@ -83,33 +83,6 @@ async fn send_imip(
         .next()
         .and_then(|msg| msg.from.rsplit('@').next())
         .unwrap_or("localhost");
-
-    // Obtain logo image
-    let logo = match server.logo_resource(sender_domain).await {
-        Ok(logo) => logo,
-        Err(err) => {
-            trc::error!(
-                err.caused_by(trc::location!())
-                    .details("Failed to fetch logo image")
-            );
-            None
-        }
-    };
-    let logo_cid = format!("logo.{}@{sender_domain}", now());
-    let logo = if let Some(logo) = &logo {
-        MimePart::new(
-            ContentType::new(logo.content_type.as_ref()),
-            BodyPart::Binary(logo.contents.as_slice().into()),
-        )
-    } else {
-        MimePart::new(
-            ContentType::new("image/png"),
-            BodyPart::Binary(DEFAULT_LOGO_BASE64.as_bytes().into()),
-        )
-        .transfer_encoding("base64")
-    }
-    .inline()
-    .cid(&logo_cid);
 
     let account_info = server
         .account_info(account_id)
@@ -164,7 +137,7 @@ async fn send_imip(
                 itip_message.from.as_str(),
                 recipient.as_str(),
                 &summary,
-                &logo_cid,
+                sender_domain,
             )
             .await;
             let txt_body = html_to_text(&tpl.body);
@@ -186,22 +159,16 @@ async fn send_imip(
                     ContentType::new("multipart/mixed"),
                     BodyPart::Multipart(vec![
                         MimePart::new(
-                            ContentType::new("multipart/related"),
+                            ContentType::new("multipart/alternative"),
                             BodyPart::Multipart(vec![
                                 MimePart::new(
-                                    ContentType::new("multipart/alternative"),
-                                    BodyPart::Multipart(vec![
-                                        MimePart::new(
-                                            ContentType::new("text/plain"),
-                                            BodyPart::Text(txt_body.into()),
-                                        ),
-                                        MimePart::new(
-                                            ContentType::new("text/html"),
-                                            BodyPart::Text(tpl.body.as_str().into()),
-                                        ),
-                                    ]),
+                                    ContentType::new("text/plain"),
+                                    BodyPart::Text(txt_body.into()),
                                 ),
-                                logo.clone(),
+                                MimePart::new(
+                                    ContentType::new("text/html"),
+                                    BodyPart::Text(tpl.body.as_str().into()),
+                                ),
                             ]),
                         ),
                         MimePart::new(
@@ -319,7 +286,7 @@ pub async fn build_itip_template(
     from: &str,
     to: &str,
     summary: &ItipSummary,
-    logo_cid: &str,
+    brand_name: &str,
 ) -> Details {
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
@@ -478,7 +445,7 @@ pub async fn build_itip_template(
         Variable::Block(details),
     );
     variables.insert_single(CalendarTemplateVariable::PageTitle, subject.clone());
-    variables.insert_single(CalendarTemplateVariable::LogoCid, format!("cid:{logo_cid}"));
+    variables.insert_single(CalendarTemplateVariable::BrandName, brand_name.to_string());
 
     if let Some(guests) = fields
         .iter()

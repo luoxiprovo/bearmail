@@ -93,6 +93,8 @@ export interface Identity {
   name: string;
   email: string;
   mayDelete?: boolean;
+  textSignature?: string;
+  htmlSignature?: string;
 }
 
 export interface Calendar {

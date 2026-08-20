@@ -1,14 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { loadRuntimeConfig } from "./config";
-import { BasicAuthProvider, JmapClient, JmapError, discoverSession } from "./jmap/client";
+import { BasicAuthProvider, BearerAuthProvider, JmapClient, JmapError, discoverSession } from "./jmap/client";
 import { getCalendars, getParticipantIdentities } from "./jmap/calendar";
 import { getIdentities, getMailboxes } from "./jmap/mail";
+import { completeOAuthCallback, beginOAuth, refreshOAuthAccessToken } from "./jmap/oauth";
+import { clearStoredAuth, loadStoredAuth, saveStoredAuth, type StoredAuth } from "./session";
 import { CAPABILITIES, type Calendar, type Identity, type Mailbox, type ParticipantIdentity, type RuntimeConfig, type ToastMessage } from "./types";
-import { beginOAuth, completeOAuthCallback } from "./jmap/oauth";
 
 interface AppContextValue {
   config: RuntimeConfig | null;
   client: JmapClient | null;
+  sessionReady: boolean;
   serverOrigin: string;
   username: string;
   mailboxes: Mailbox[];
@@ -33,6 +35,7 @@ const AppContext = createContext<AppContextValue | null>(null);
 export function AppProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<RuntimeConfig | null>(null);
   const [client, setClient] = useState<JmapClient | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
   const [serverOrigin, setServerOrigin] = useState(() => sessionStorage.getItem("stalwart.server") ?? "");
   const [username, setUsername] = useState(() => sessionStorage.getItem("stalwart.username") ?? "");
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
@@ -85,6 +88,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const applySession = useCallback(async (nextClient: JmapClient, origin: string, name: string) => {
+    if (!nextClient.has(CAPABILITIES.mail)) throw new JmapError("This account does not advertise JMAP Mail.", "missingCapability");
+    setClient(nextClient);
+    setServerOrigin(origin);
+    setUsername(name);
+    sessionStorage.setItem("stalwart.server", origin);
+    sessionStorage.setItem("stalwart.username", name);
+    await refreshClient(nextClient);
+  }, [refreshClient]);
+
   const refresh = useCallback(async () => {
     if (!client) return;
     try {
@@ -100,39 +113,84 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const auth = new BasicAuthProvider(name.trim(), password);
       const discovered = await discoverSession(server, auth);
       const nextClient = new JmapClient(discovered.session, auth);
-      if (!nextClient.has(CAPABILITIES.mail)) throw new JmapError("This account does not advertise JMAP Mail.", "missingCapability");
-      setClient(nextClient);
-      setServerOrigin(discovered.origin);
-      setUsername(discovered.session.username || name.trim());
-      sessionStorage.setItem("stalwart.server", discovered.origin);
-      sessionStorage.setItem("stalwart.username", discovered.session.username || name.trim());
-      await refreshClient(nextClient);
+      const username = discovered.session.username || name.trim();
+      await applySession(nextClient, discovered.origin, username);
+      saveStoredAuth({ type: "basic", server: discovered.origin, username, password });
     } catch (error) {
       if (error instanceof TypeError) {
         throw new JmapError("The browser could not reach JMAP. Check the server URL, TLS certificate, and CORS allow-list.", "networkError");
       }
       throw error;
     }
-  }, [refreshClient]);
+  }, [applySession]);
 
   const connectOAuth = useCallback(async (server: string) => {
     await beginOAuth(server, config?.appName ?? "Stalwart Mail");
   }, [config?.appName]);
 
   useEffect(() => {
-    if (!config || window.location.pathname !== "/login") return;
-    completeOAuthCallback().then(async (result) => {
-      if (!result) return;
-      if (!result.client.has(CAPABILITIES.mail)) throw new JmapError("This account does not advertise JMAP Mail.", "missingCapability");
-      setClient(result.client); setServerOrigin(result.origin); setUsername(result.username);
-      sessionStorage.setItem("stalwart.server", result.origin); sessionStorage.setItem("stalwart.username", result.username);
-      await refreshClient(result.client);
-      history.replaceState(null, "", "/mail"); window.dispatchEvent(new PopStateEvent("popstate"));
-    }).catch((error) => {
-      setOauthError(error instanceof Error ? error.message : "OAuth sign-in failed.");
-      history.replaceState(null, "", "/connect"); window.dispatchEvent(new PopStateEvent("popstate"));
-    });
-  }, [config, refreshClient]);
+    if (!config) return;
+    let cancelled = false;
+    const restore = async () => {
+      try {
+        if (window.location.pathname === "/login") {
+          const result = await completeOAuthCallback();
+          if (result) {
+            await applySession(result.client, result.origin, result.username);
+            saveStoredAuth({
+              type: "oauth",
+              server: result.origin,
+              username: result.username,
+              accessToken: result.accessToken,
+              refreshToken: result.refreshToken,
+              tokenEndpoint: result.tokenEndpoint,
+              clientId: result.clientId,
+            });
+            history.replaceState(null, "", "/mail");
+            window.dispatchEvent(new PopStateEvent("popstate"));
+            return;
+          }
+        }
+        const stored = loadStoredAuth();
+        if (!stored) return;
+        if (stored.type === "basic") {
+          const auth = new BasicAuthProvider(stored.username, stored.password);
+          const discovered = await discoverSession(stored.server, auth);
+          await applySession(new JmapClient(discovered.session, auth), discovered.origin, discovered.session.username || stored.username);
+          return;
+        }
+        let accessToken = stored.accessToken;
+        let refreshToken = stored.refreshToken;
+        const trySession = async (token: string) => {
+          const auth = new BearerAuthProvider(token);
+          const discovered = await discoverSession(stored.server, auth);
+          await applySession(new JmapClient(discovered.session, auth), discovered.origin, discovered.session.username || stored.username);
+        };
+        try {
+          await trySession(accessToken);
+        } catch (error) {
+          if (!(error instanceof JmapError && error.type === "authenticationFailed") || !stored.refreshToken || !stored.tokenEndpoint || !stored.clientId) throw error;
+          const refreshed = await refreshOAuthAccessToken({ tokenEndpoint: stored.tokenEndpoint, clientId: stored.clientId, refreshToken: stored.refreshToken });
+          accessToken = refreshed.accessToken;
+          refreshToken = refreshed.refreshToken ?? refreshToken;
+          await trySession(accessToken);
+          saveStoredAuth({ ...stored, accessToken, refreshToken });
+        }
+      } catch (error) {
+        const failedAuth = error instanceof JmapError && (error.type === "authenticationFailed" || error.type.startsWith("oauth"));
+        if (failedAuth) clearStoredAuth();
+        if (window.location.pathname === "/login") {
+          setOauthError(error instanceof Error ? error.message : "OAuth sign-in failed.");
+          history.replaceState(null, "", "/connect");
+          window.dispatchEvent(new PopStateEvent("popstate"));
+        }
+      } finally {
+        if (!cancelled) setSessionReady(true);
+      }
+    };
+    void restore();
+    return () => { cancelled = true; };
+  }, [applySession, config]);
 
   const logout = useCallback(() => {
     setClient(null);
@@ -141,8 +199,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setIdentities([]);
     setParticipantIdentities([]);
     setLastSync(null);
-    sessionStorage.removeItem("stalwart.server");
-    sessionStorage.removeItem("stalwart.username");
+    clearStoredAuth();
   }, []);
 
   useEffect(() => {
@@ -154,9 +211,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [client, config, refreshClient]);
 
   const value = useMemo<AppContextValue>(() => ({
-    config, client, serverOrigin, username, mailboxes, calendars, identities, participantIdentities,
+    config, client, sessionReady, serverOrigin, username, mailboxes, calendars, identities, participantIdentities,
     loadingData, lastSync, syncVersion, online, toasts, oauthError, connect, connectOAuth, logout, refresh, notify,
-  }), [config, client, serverOrigin, username, mailboxes, calendars, identities, participantIdentities, loadingData, lastSync, syncVersion, online, toasts, oauthError, connect, connectOAuth, logout, refresh, notify]);
+  }), [config, client, sessionReady, serverOrigin, username, mailboxes, calendars, identities, participantIdentities, loadingData, lastSync, syncVersion, online, toasts, oauthError, connect, connectOAuth, logout, refresh, notify]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

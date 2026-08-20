@@ -11,6 +11,82 @@ use utils::{DomainPart, is_valid_domain};
 
 const WEB_SCHEMA_GZ: &[u8] = include_bytes!("../../../../resources/schema/schema.json.gz");
 
+fn looks_like_machine_hostname(name: &str) -> bool {
+    let name = name.trim().trim_end_matches('.').to_ascii_lowercase();
+    if name.is_empty() || !name.contains('.') {
+        return true;
+    }
+    name.ends_with(".internal")
+        || name.ends_with(".local")
+        || name.ends_with(".localhost")
+        || name.ends_with(".lan")
+        || name.ends_with(".home")
+        || name.ends_with(".corp")
+        || name.ends_with(".localdomain")
+}
+
+pub(crate) fn public_mail_hostname_default(local_hostname: &str) -> String {
+    if looks_like_machine_hostname(local_hostname) {
+        String::new()
+    } else {
+        local_hostname.trim().trim_end_matches('.').to_ascii_lowercase()
+    }
+}
+
+fn identity_prompt_label<'a>(name: &str, fallback: &'a str) -> &'a str {
+    match name {
+        "serverHostname" => "Public mail hostname",
+        "defaultDomain" => "Primary mail domain",
+        _ => fallback,
+    }
+}
+
+fn sanitize_identity_current(name: &str, current: Value) -> Value {
+    let Some(value) = current.as_str() else {
+        return current;
+    };
+    if value.is_empty() || looks_like_machine_hostname(value) {
+        return Value::String(String::new());
+    }
+    if name == "defaultDomain" && value.contains(".internal") {
+        return Value::String(String::new());
+    }
+    current
+}
+
+fn write_identity_help<W: Write>(output: &mut W) -> Result<(), String> {
+    writeln!(
+        output,
+        "    Enter public DNS names you will publish for this mail server."
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "    Do not use this VM's cloud or OS hostname (names ending in .internal or .local)."
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "      Public mail hostname example: mail.example.com"
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "      Primary mail domain example:  example.com"
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "    Hostname is the DNS name of this server. Domain is the part after @ in email addresses."
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "    Press Enter only if the value in [brackets] is already that public DNS name."
+    )
+    .map_err(io_error)
+}
+
 #[derive(Clone, Debug)]
 struct MenuChoice {
     value: String,
@@ -57,11 +133,6 @@ impl<'a, R: BufRead, W: Write> WebSetupWizard<'a, R, W> {
     /// Prompts only for the two identity fields used by quick setup while
     /// retaining the WebUI bootstrap defaults for every other field.
     pub fn configure_bootstrap_identity(&mut self, current: Value) -> Result<Value, String> {
-        let fields = self
-            .schema
-            .pointer("/fields/x:Bootstrap")
-            .cloned()
-            .ok_or_else(|| "Web setup fields for x:Bootstrap were not found".to_string())?;
         let form = self
             .schema
             .pointer("/forms/x:Bootstrap")
@@ -74,10 +145,8 @@ impl<'a, R: BufRead, W: Write> WebSetupWizard<'a, R, W> {
         };
 
         writeln!(self.output, "\n  Server Identity").map_err(io_error)?;
+        write_identity_help(self.output)?;
         for name in ["serverHostname", "defaultDomain"] {
-            let field = fields
-                .pointer(&format!("/properties/{}", escape_pointer(name)))
-                .ok_or_else(|| format!("Web setup field '{name}' was not found"))?;
             let form_field = form
                 .get("sections")
                 .and_then(Value::as_array)
@@ -86,16 +155,14 @@ impl<'a, R: BufRead, W: Write> WebSetupWizard<'a, R, W> {
                 .filter_map(|section| section.get("fields").and_then(Value::as_array))
                 .flatten()
                 .find(|form_field| form_field.get("name").and_then(Value::as_str) == Some(name));
-            let label = form_field
-                .and_then(|form_field| form_field.get("label"))
-                .and_then(Value::as_str)
-                .unwrap_or(name);
-            if let Some(description) = field.get("description").and_then(Value::as_str) {
-                for line in description.lines() {
-                    writeln!(self.output, "    {line}").map_err(io_error)?;
-                }
-            }
-            let existing = value.get(name).cloned().unwrap_or(Value::Null);
+            let label = identity_prompt_label(
+                name,
+                form_field
+                    .and_then(|form_field| form_field.get("label"))
+                    .and_then(Value::as_str)
+                    .unwrap_or(name),
+            );
+            let existing = sanitize_identity_current(name, value.get(name).cloned().unwrap_or(Value::Null));
             let updated = self.prompt_domain(label, existing)?;
             value
                 .as_object_mut()
@@ -194,6 +261,9 @@ impl<'a, R: BufRead, W: Write> WebSetupWizard<'a, R, W> {
         for section in sections {
             if let Some(title) = section.get("title").and_then(Value::as_str) {
                 writeln!(self.output, "\n  {title}").map_err(io_error)?;
+                if schema_name == "x:Bootstrap" && title == "Server Identity" {
+                    write_identity_help(self.output)?;
+                }
             }
             let Some(form_fields) = section.get("fields").and_then(Value::as_array) else {
                 continue;
@@ -229,10 +299,10 @@ impl<'a, R: BufRead, W: Write> WebSetupWizard<'a, R, W> {
                 let updated = if schema_name == "x:Bootstrap"
                     && matches!(name, "serverHostname" | "defaultDomain")
                 {
-                    for line in description.lines() {
-                        writeln!(self.output, "    {line}").map_err(io_error)?;
-                    }
-                    self.prompt_domain(label, existing)?
+                    self.prompt_domain(
+                        identity_prompt_label(name, label),
+                        sanitize_identity_current(name, existing),
+                    )?
                 } else {
                     self.prompt_field(label, description, &field_type, existing)?
                 };
@@ -770,8 +840,26 @@ mod tests {
         assert_eq!(bootstrap.default_domain, "quick.test");
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("Server Identity"));
+        assert!(output.contains("Public mail hostname"));
+        assert!(output.contains("mail.example.com"));
+        assert!(output.contains(".internal"));
         assert!(!output.contains("Storage"));
         assert!(!output.contains("Logging"));
+    }
+
+    #[test]
+    fn machine_hostnames_are_not_offered_as_mail_defaults() {
+        assert!(looks_like_machine_hostname(
+            "hermes.us-west3-b.c.valuerouter-439417.internal"
+        ));
+        assert!(looks_like_machine_hostname("localhost"));
+        assert!(looks_like_machine_hostname("mail.internal"));
+        assert!(!looks_like_machine_hostname("mail.example.com"));
+        assert!(public_mail_hostname_default("hermes.internal").is_empty());
+        assert_eq!(
+            public_mail_hostname_default("mail.example.com"),
+            "mail.example.com"
+        );
     }
 
     #[test]

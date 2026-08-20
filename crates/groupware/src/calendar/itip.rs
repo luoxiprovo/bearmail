@@ -688,7 +688,10 @@ fn render_response(server: &Server, response: Response, language: &str) -> Strin
             variables.insert_single(CalendarTemplateVariable::Color, "warning".to_string());
         }
     }
-    variables.insert_single(CalendarTemplateVariable::LogoCid, "/logo.svg".to_string());
+    variables.insert_single(
+        CalendarTemplateVariable::BrandName,
+        server.core.network.server_name.clone(),
+    );
 
     template.eval(&variables)
 }

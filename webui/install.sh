@@ -1,16 +1,35 @@
 #!/bin/sh
 set -eu
 
+# Compatibility marker consumed by the repository's combined installer.
+STALWART_WEBUI_ARCHIVE_VERSION=2
+
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 prefix="/opt/stalwart-webui"
 server_url=""
 port="8080"
+node_bin=""
 install_service="false"
 build="true"
 
 usage() {
-  printf '%s\n' "Usage: ./install.sh [--server-url URL] [--prefix PATH] [--port PORT] [--systemd] [--no-build]"
+  printf '%s\n' "Usage: ./install.sh [--server-url URL] [--prefix PATH] [--port PORT] [--node-bin PATH] [--systemd] [--no-build]"
   printf '%s\n' "Installs only the web UI. It does not change Stalwart or accept account credentials."
+}
+
+node_at_least_22_12() {
+  _node_version=$("$1" --version 2>/dev/null) || return 1
+  case "$_node_version" in v*) _node_numbers=${_node_version#v} ;; *) return 1 ;; esac
+  case "$_node_numbers" in ''|.*|*.|*..*|*[!0-9.]*) return 1 ;; esac
+  _node_major=${_node_numbers%%.*}
+  _node_rest=${_node_numbers#*.}
+  [ "$_node_rest" != "$_node_numbers" ] || return 1
+  _node_minor=${_node_rest%%.*}
+  _node_patch=${_node_rest#*.}
+  [ "$_node_patch" != "$_node_rest" ] || return 1
+  case "$_node_major:$_node_minor:$_node_patch" in *[!0-9:]*) return 1 ;; esac
+  [ "$_node_major" -gt 22 ] 2>/dev/null || \
+    { [ "$_node_major" -eq 22 ] 2>/dev/null && [ "$_node_minor" -ge 12 ] 2>/dev/null; }
 }
 
 while [ "$#" -gt 0 ]; do
@@ -18,6 +37,7 @@ while [ "$#" -gt 0 ]; do
     --server-url) server_url=${2:?Missing URL after --server-url}; shift 2 ;;
     --prefix) prefix=${2:?Missing path after --prefix}; shift 2 ;;
     --port) port=${2:?Missing port after --port}; shift 2 ;;
+    --node-bin) node_bin=${2:?Missing path after --node-bin}; shift 2 ;;
     --systemd) install_service="true"; shift ;;
     --no-build) build="false"; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -27,9 +47,27 @@ done
 
 case "$port" in *[!0-9]*|'') printf 'Port must be a number.\n' >&2; exit 2 ;; esac
 case "$prefix" in /*) ;; *) printf 'Prefix must be an absolute path.\n' >&2; exit 2 ;; esac
-command -v node >/dev/null 2>&1 || { printf 'Node.js 22 or later is required.\n' >&2; exit 1; }
+if [ -z "$node_bin" ]; then
+  command -v node >/dev/null 2>&1 || { printf 'Node.js 22.12 or later is required. Use the repository root installer to provision it automatically.\n' >&2; exit 1; }
+  node_bin=$(command -v node)
+fi
+case "$node_bin" in
+  /*) ;;
+  *) printf 'Node binary path must be absolute.\n' >&2; exit 2 ;;
+esac
+case "$node_bin" in *[!A-Za-z0-9_./-]*) printf 'Node binary path contains unsupported characters.\n' >&2; exit 2 ;; esac
+[ -x "$node_bin" ] || { printf 'Node binary is not executable: %s\n' "$node_bin" >&2; exit 1; }
+if [ "$install_service" = "true" ]; then
+  case "$node_bin" in
+    /home/*|/root/*|/run/user/*)
+      printf 'The systemd Node binary must not be inside a user home or runtime directory.\n' >&2
+      exit 2
+      ;;
+  esac
+fi
+node_at_least_22_12 "$node_bin" || { printf 'Node.js 22.12 or later is required.\n' >&2; exit 1; }
 if [ -n "$server_url" ]; then
-  SERVER_URL="$server_url" node -e '
+  SERVER_URL="$server_url" "$node_bin" -e '
     const url = new URL(process.env.SERVER_URL);
     const local = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname);
     if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) throw new Error("The default server URL must use HTTPS (except localhost).");
@@ -46,7 +84,7 @@ fi
 install -d "$prefix/dist"
 cp -R "$script_dir/dist/." "$prefix/dist/"
 install -m 0644 "$script_dir/server.mjs" "$prefix/server.mjs"
-SERVER_URL="$server_url" CONFIG_PATH="$prefix/dist/config.json" node -e '
+SERVER_URL="$server_url" CONFIG_PATH="$prefix/dist/config.json" "$node_bin" -e '
   const fs = require("node:fs");
   const path = process.env.CONFIG_PATH;
   const config = JSON.parse(fs.readFileSync(path, "utf8"));
@@ -59,16 +97,27 @@ if [ "$install_service" = "true" ]; then
   command -v systemctl >/dev/null 2>&1 || { printf '%s\n' "systemd was not found." >&2; exit 1; }
   if ! id stalwart-webui >/dev/null 2>&1; then useradd --system --home-dir "$prefix" --shell /usr/sbin/nologin stalwart-webui; fi
   chown -R stalwart-webui:stalwart-webui "$prefix"
-  sed -e "s|@@PREFIX@@|$prefix|g" -e "s|@@PORT@@|$port|g" "$script_dir/stalwart-webui.service" > /etc/systemd/system/stalwart-webui.service
+  sed -e "s|@@PREFIX@@|$prefix|g" -e "s|@@PORT@@|$port|g" -e "s|@@NODE_BIN@@|$node_bin|g" "$script_dir/stalwart-webui.service" > /etc/systemd/system/stalwart-webui.service
   systemctl daemon-reload
-  systemctl enable --now stalwart-webui.service
-  WEBUI_HEALTH_URL="http://127.0.0.1:$port/healthz/ready" node -e '
-    fetch(process.env.WEBUI_HEALTH_URL).then((response) => {
-      if (!response.ok) throw new Error(`Health check failed (${response.status}).`);
-    }).catch((error) => { console.error(error.message); process.exit(1); });
+  systemctl enable stalwart-webui.service
+  systemctl restart stalwart-webui.service
+  WEBUI_HEALTH_URL="http://127.0.0.1:$port/healthz/ready" "$node_bin" -e '
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    (async () => {
+      let last = "no response";
+      for (let attempt = 0; attempt < 30; attempt++) {
+        try {
+          const response = await fetch(process.env.WEBUI_HEALTH_URL, { signal: AbortSignal.timeout(2000) });
+          if (response.ok) return;
+          last = `HTTP ${response.status}`;
+        } catch (error) { last = error.message; }
+        await delay(500);
+      }
+      throw new Error(`Health check failed: ${last}`);
+    })().catch((error) => { console.error(error.message); process.exit(1); });
   '
   printf 'Installed and started stalwart-webui.service on 127.0.0.1:%s\n' "$port"
 else
   printf 'Installed to %s. Start with:\n' "$prefix"
-  printf '  WEBUI_ROOT=%s/dist WEBUI_PORT=%s node %s/server.mjs\n' "$prefix" "$port" "$prefix"
+  printf '  WEBUI_ROOT=%s/dist WEBUI_PORT=%s %s %s/server.mjs\n' "$prefix" "$port" "$node_bin" "$prefix"
 fi

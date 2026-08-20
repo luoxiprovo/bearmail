@@ -804,7 +804,7 @@ pub async fn test_build_itip_templates(test: &TestServer) {
             "john.doe@example.org",
             "jane.smith@example.net",
             &summary,
-            "124",
+            "example.org",
         )
         .await;
 

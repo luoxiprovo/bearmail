@@ -410,7 +410,8 @@ impl Server {
 pub const SETUP_DNS_TTL: u32 = 3600;
 
 /// A provider-neutral DNS record shown by the offline setup wizard.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SetupDnsRecord {
     pub record_type: String,
     pub host: String,

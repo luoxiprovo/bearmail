@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { CalendarPlus, Check, ChevronLeft, ChevronRight, Clock3, LoaderCircle, MapPin, Plus, Trash2, UsersRound, X } from "lucide-react";
 import { useApp } from "../app-context";
-import { createCalendarEvent, destroyCalendarEvent, eventEnd, eventGuestAddresses, eventSchedulingFields, getCalendarEvents, isEventOrganizer, isParticipantIdentityAddress, parseGuestAddresses, participationStatus, respondToInvitation, toJmapLocal, updateCalendarEvent, type EventInput } from "../jmap/calendar";
+import { createCalendarEvent, destroyCalendarEvent, eventEnd, eventGuestAddresses, eventSchedulingFields, getCalendarEvents, importUnansweredInvitesFromMail, isEventOrganizer, isParticipantIdentityAddress, parseGuestAddresses, participationStatus, respondToInvitation, showsOnCalendar, toJmapLocal, updateCalendarEvent, type EventInput } from "../jmap/calendar";
 import type { CalendarEvent, ParticipationStatus } from "../types";
 
 type CalendarView = "month" | "week" | "day" | "agenda";
 
 export function CalendarPage() {
-  const { client, calendars, participantIdentities, notify, syncVersion } = useApp();
+  const { client, calendars, identities, participantIdentities, username, notify, syncVersion } = useApp();
   const [view, setView] = useState<CalendarView>(() => (localStorage.getItem("stalwart.calendarView") as CalendarView) || "month");
   const [anchor, setAnchor] = useState(startOfDay(new Date()));
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -20,13 +20,18 @@ export function CalendarPage() {
   const load = useCallback(async () => {
     if (!client) return;
     setLoading(true);
-    try { setEvents(await getCalendarEvents(client, range.start, range.end)); }
+    try {
+      const calendarId = calendars.find((item) => item.isVisible !== false)?.id ?? calendars[0]?.id;
+      const extraAddresses = [...identities.map((item) => item.email), username].filter(Boolean);
+      if (calendarId) await importUnansweredInvitesFromMail(client, calendarId, participantIdentities, extraAddresses);
+      setEvents(await getCalendarEvents(client, range.start, range.end));
+    }
     catch (error) { notify(error instanceof Error ? error.message : "Calendar could not be loaded.", "error"); }
     finally { setLoading(false); }
-  }, [client, notify, range.end.getTime(), range.start.getTime(), syncVersion]);
+  }, [calendars, client, identities, notify, participantIdentities, range.end.getTime(), range.start.getTime(), syncVersion, username]);
   useEffect(() => { void load(); }, [load]);
 
-  const filtered = events.filter((event) => Object.keys(event.calendarIds ?? {}).some((id) => visible.has(id))).map((event) => ({
+  const filtered = events.filter((event) => Object.keys(event.calendarIds ?? {}).some((id) => visible.has(id)) && showsOnCalendar(event, participantIdentities)).map((event) => ({
     ...event,
     color: event.color || calendars.find((calendar) => event.calendarIds?.[calendar.id])?.color,
   }));
@@ -44,7 +49,7 @@ export function CalendarPage() {
         <button className="primary-button new-event" onClick={() => setEditor({ date: new Date() })}><Plus size={18} /> New event</button>
         <MiniMonth anchor={anchor} selected={anchor} onSelect={setAnchor} />
         <div className="calendar-list"><div className="panel-heading"><span>My calendars</span></div>{calendars.map((calendar) => <label key={calendar.id}><input type="checkbox" checked={visible.has(calendar.id)} onChange={() => setVisible((current) => { const next = new Set(current); next.has(calendar.id) ? next.delete(calendar.id) : next.add(calendar.id); return next; })} /><i style={{ background: calendar.color || "#287f77" }} /><span>{calendar.name}</span></label>)}</div>
-        <div className="invite-legend"><p className="eyebrow">INVITATION STATUS</p><span><i className="legend-solid" /> Accepted</span><span><i className="legend-pending" /> Awaiting response</span><span><i className="legend-declined" /> Declined</span></div>
+        <div className="invite-legend"><p className="eyebrow">INVITATION STATUS</p><span><i className="legend-solid" /> Accepted</span><span><i className="legend-pending" /> Awaiting response</span></div>
       </aside>
       <section className="calendar-main">
         <header className="calendar-header"><div><p className="eyebrow">CALENDAR</p><h1>{rangeLabel(anchor, view)}</h1></div><div className="calendar-controls"><button className="today-button" onClick={() => setAnchor(startOfDay(new Date()))}>Today</button><button className="icon-button" aria-label="Previous" onClick={() => move(-1)}><ChevronLeft size={19} /></button><button className="icon-button" aria-label="Next" onClick={() => move(1)}><ChevronRight size={19} /></button><div className="view-switch" aria-label="Calendar view">{(["day", "week", "month", "agenda"] as CalendarView[]).map((item) => <button key={item} aria-pressed={view === item} className={view === item ? "active" : ""} onClick={() => chooseView(item)}>{item}</button>)}</div><button className="icon-button header-add" aria-label="New event" onClick={() => setEditor({ date: anchor })}><CalendarPlus size={19} /></button></div></header>
@@ -73,7 +78,7 @@ function EventPill({ event, identities, onClick, expanded = false }: { event: Ca
 }
 
 function EventDialog({ event, initialDate, onClose, onChanged }: { event?: CalendarEvent; initialDate?: Date; onClose(): void; onChanged(): Promise<void> }) {
-  const { client, calendars, participantIdentities, notify } = useApp();
+  const { client, calendars, identities, participantIdentities, username, notify } = useApp();
   const initialStart = event ? eventDate(event) : withHour(initialDate ?? new Date(), new Date().getHours() + 1);
   const initialEnd = event ? eventEnd(event) : new Date(initialStart.getTime() + 3_600_000);
   const [input, setInput] = useState<EventInput>({ title: event?.title ?? "", start: toInputValue(initialStart, event?.showWithoutTime), end: toInputValue(initialEnd, event?.showWithoutTime), allDay: event?.showWithoutTime ?? false, calendarId: Object.keys(event?.calendarIds ?? {})[0] ?? calendars[0]?.id ?? "", description: event?.description ?? "", location: Object.values(event?.locations ?? {})[0]?.name ?? "" });
@@ -125,7 +130,11 @@ function EventDialog({ event, initialDate, onClose, onChanged }: { event?: Calen
   };
   const respond = async (status: Exclude<ParticipationStatus, "needs-action">) => {
     if (!client || !event) return; setBusy(true);
-    try { await respondToInvitation(client, event, participantIdentities, status); notify("Response sent", "success"); await onChanged(); }
+    try {
+      await respondToInvitation(client, event, participantIdentities, status, [...identities.map((item) => item.email), username].filter(Boolean));
+      notify(status === "accepted" ? "Invitation accepted" : status === "tentative" ? "Marked as maybe" : "Invitation declined", "success");
+      await onChanged();
+    }
     catch (error) { notify(error instanceof Error ? error.message : "Response could not be sent.", "error"); setBusy(false); }
   };
   const remove = async () => { if (!client || !event || !confirm("Delete this event? Attendees may receive a cancellation.")) return; setBusy(true); try { await destroyCalendarEvent(client, event.id); notify("Event deleted", "success"); await onChanged(); } catch (error) { notify(error instanceof Error ? error.message : "Event could not be deleted.", "error"); setBusy(false); } };
@@ -133,9 +142,19 @@ function EventDialog({ event, initialDate, onClose, onChanged }: { event?: Calen
     <div className="dialog-backdrop" onMouseDown={(click) => { if (click.target === click.currentTarget) onClose(); }}>
       <form className="event-dialog" onSubmit={submit} aria-modal="true" role="dialog" aria-labelledby="event-title">
         <header>
-          <div><p className="eyebrow">{event ? "EVENT DETAILS" : "NEW EVENT"}</p><h2 id="event-title">{event?.title || "Plan your time"}</h2></div>
+          <div><p className="eyebrow">{event ? (ownStatus === "needs-action" ? "INVITATION" : "EVENT DETAILS") : "NEW EVENT"}</p><h2 id="event-title">{event?.title || "Plan your time"}</h2></div>
           <button type="button" className="icon-button" aria-label="Close" onClick={onClose}><X size={19} /></button>
         </header>
+        {event && !canManageGuests && ownStatus !== "none" && (
+          <div className="dialog-rsvp">
+            <span>{ownStatus === "needs-action" ? "Awaiting your response" : "Your response"}</span>
+            {(["accepted", "tentative", "declined"] as const).map((status) => (
+              <button type="button" key={status} aria-pressed={ownStatus === status} className={ownStatus === status ? "selected" : ""} disabled={busy} onClick={() => void respond(status)}>
+                {status === "accepted" ? "Accept" : status === "tentative" ? "Maybe" : "Decline"}
+              </button>
+            ))}
+          </div>
+        )}
         <label>Title<input autoFocus required value={input.title} onChange={(change) => update("title", change.target.value)} placeholder="Event title" /></label>
         <div className="event-time-row">
           <label><Clock3 size={16} /> Starts<input type={input.allDay ? "date" : "datetime-local"} required value={input.start} onChange={(change) => update("start", change.target.value)} /></label>
@@ -162,7 +181,6 @@ function EventDialog({ event, initialDate, onClose, onChanged }: { event?: Calen
           <div className="dialog-attendees"><UsersRound size={17} /><span>{Object.keys(event.participants).length} attendee{Object.keys(event.participants).length === 1 ? "" : "s"}</span></div>
         ) : null}
         <label>Notes<textarea value={input.description} onChange={(change) => update("description", change.target.value)} placeholder="Add details" /></label>
-        {event && !canManageGuests && ownStatus !== "none" && <div className="dialog-rsvp"><span>Your response</span>{(["accepted", "tentative", "declined"] as const).map((status) => <button type="button" key={status} aria-pressed={ownStatus === status} className={ownStatus === status ? "selected" : ""} disabled={busy} onClick={() => void respond(status)}>{status === "tentative" ? "Maybe" : status}</button>)}</div>}
         <footer>
           {event && <button type="button" className="danger-button" onClick={() => void remove()}><Trash2 size={16} /> Delete</button>}
           <span />

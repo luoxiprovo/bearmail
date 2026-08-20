@@ -206,7 +206,9 @@ For a CORS failure, diagnostics explain that the UI and Stalwart are on differen
 - Resolve sending identities through `Identity/get` and require a permitted identity.
 - Upload attachment blobs before draft import.
 - Autosave by importing a replacement MIME draft, and destroy the previous draft only after the replacement succeeds; show saved/saving/error state.
-- Send through `EmailSubmission/set`; never send through SMTP from the browser.
+- Send through `EmailSubmission/set` with `onSuccessUpdateEmail` so the
+  message is moved from Drafts to Sent; never send through SMTP from the
+  browser.
 - Prevent accidental double submission.
 - Keep a failed submission as a recoverable draft with the server error translated into user language.
 - Warn before closing a composer with unsaved local changes.

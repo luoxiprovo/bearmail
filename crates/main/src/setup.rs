@@ -15,12 +15,15 @@ use registry::schema::{
     structs::{Bootstrap, CertificateManagement},
 };
 use serde_json::Value;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     env,
     ffi::OsString,
+    fs::OpenOptions,
     io::{self, BufRead, Write},
     net::{Ipv4Addr, Ipv6Addr},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use store::RegistryStore;
 
@@ -29,20 +32,25 @@ use registry::schema::structs::{DataStore, DnsServerBootstrap, RocksDbStore, Tra
 
 mod wizard;
 
-use wizard::{WebSetupWizard, prompt_yes_no, read_line};
+use wizard::{
+    WebSetupWizard, prompt_yes_no, public_mail_hostname_default, read_line,
+};
 
 const SETUP_HELP: &str = r#"Usage: stalwart --config <PATH> --setup
 
 Run the interactive initial setup without starting network services.
 
-Quick setup asks only for the server hostname and mail domain. Advanced setup
-exposes the same bootstrap fields and nested choices as the WebUI.
+Quick setup asks only for the public mail hostname and primary mail domain.
+Do not use this computer's cloud or OS hostname (for example a name ending in
+.internal). Example hostname: mail.example.com. Example domain: example.com.
+Advanced setup exposes the same bootstrap fields and nested choices as the WebUI.
 
 Installer-provided defaults:
   STALWART_SETUP_DATA_PATH  Initial path shown for a local data store
   STALWART_SETUP_LOG_PATH   Initial path shown for file logging
   STALWART_SETUP_PUBLIC_IPV4  Detected public IPv4 address
   STALWART_SETUP_PUBLIC_IPV6  Detected public IPv6 address
+  STALWART_SETUP_RESULT_PATH  Root-only JSON result used by the combined installer
 "#;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -56,6 +64,24 @@ struct SetupAnswers {
     bootstrap: Bootstrap,
     ipv4: Option<Ipv4Addr>,
     ipv6: Option<Ipv6Addr>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SetupResult<'a> {
+    version: u8,
+    server_hostname: &'a str,
+    default_domain: &'a str,
+    public_ipv4: Option<Ipv4Addr>,
+    public_ipv6: Option<Ipv6Addr>,
+    administrator: Option<SetupAdministrator<'a>>,
+    dns_records: &'a [SetupDnsRecord],
+}
+
+#[derive(serde::Serialize)]
+struct SetupAdministrator<'a> {
+    username: &'a str,
+    secret: &'a str,
 }
 
 pub fn is_requested() -> bool {
@@ -88,10 +114,15 @@ pub async fn run() -> Result<(), String> {
     let bootstrap_registry = RegistryStore::init_for_setup(options.config_path.clone())
         .await
         .map_err(|err| format!("Failed to initialize setup: {err}"))?;
-    let default_hostname = bootstrap_registry.local_hostname().to_string();
-    let default_domain = psl::domain_str(&default_hostname)
-        .unwrap_or("example.org")
-        .to_string();
+    let default_hostname =
+        public_mail_hostname_default(&bootstrap_registry.local_hostname().to_string());
+    let default_domain = if default_hostname.is_empty() {
+        String::new()
+    } else {
+        psl::domain_str(&default_hostname)
+            .unwrap_or("")
+            .to_string()
+    };
 
     let mut stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
@@ -137,6 +168,33 @@ pub async fn run() -> Result<(), String> {
     )
     .await
     .map_err(|err| format!("Failed to generate DNS records: {err}"))?;
+
+    let dns_records = build_completion_dns_records(ipv4, ipv6, &server_hostname, &dns_records);
+
+    if let Some(path) = env::var_os("STALWART_SETUP_RESULT_PATH")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+    {
+        let setup_result = SetupResult {
+            version: 1,
+            server_hostname: &server_hostname,
+            default_domain: &default_domain,
+            public_ipv4: ipv4,
+            public_ipv6: ipv6,
+            administrator: result
+                .username
+                .as_deref()
+                .zip(result.secret.as_deref())
+                .map(|(username, secret)| SetupAdministrator { username, secret }),
+            dns_records: &dns_records,
+        };
+        if let Err(err) = write_setup_result(&path, &setup_result) {
+            eprintln!(
+                "Warning: failed to write installer result {}: {err}",
+                path.display()
+            );
+        }
+    }
 
     print_setup_result(
         ipv4,
@@ -303,7 +361,7 @@ fn prompt_setup_mode<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> Res
         writeln!(output, "Setup mode:").map_err(io_error)?;
         writeln!(
             output,
-            "  1) Quick setup - ask for hostname and mail domain; keep all other defaults (default)"
+            "  1) Quick setup - ask for the public mail hostname and domain; keep all other defaults (default)"
         )
         .map_err(io_error)?;
         writeln!(
@@ -363,8 +421,18 @@ fn print_summary<W: Write>(
     ipv6: Option<Ipv6Addr>,
 ) -> Result<(), String> {
     writeln!(output, "\nSetup summary:").map_err(io_error)?;
-    writeln!(output, "  Hostname: {}", bootstrap.server_hostname).map_err(io_error)?;
-    writeln!(output, "  Mail domain: {}", bootstrap.default_domain).map_err(io_error)?;
+    writeln!(
+        output,
+        "  Public mail hostname: {}",
+        bootstrap.server_hostname
+    )
+    .map_err(io_error)?;
+    writeln!(
+        output,
+        "  Primary mail domain: {}",
+        bootstrap.default_domain
+    )
+    .map_err(io_error)?;
     writeln!(
         output,
         "  Main data store: {}",
@@ -454,7 +522,7 @@ fn print_setup_result(
     dns_mode: &str,
     username: Option<&str>,
     secret: Option<&str>,
-    dns_records: &[SetupDnsRecord],
+    records: &[SetupDnsRecord],
     tls_configured: bool,
 ) -> io::Result<()> {
     let mut output = io::stdout().lock();
@@ -486,6 +554,52 @@ fn print_setup_result(
         writeln!(output, "-------------------------------------")?;
     }
 
+    print_dns_table(&mut output, records)?;
+
+    writeln!(
+        output,
+        "\nTTL values are seconds. PRIO is used by MX and SRV records."
+    )?;
+    writeln!(
+        output,
+        "Wrapped HOST or ANSWER lines continue the cell above; concatenate them without spaces."
+    )?;
+    if ipv4.is_none() {
+        writeln!(
+            output,
+            "Warning: public IPv4 detection failed. Replace <PUBLIC_IPV4_NOT_DETECTED> before publishing."
+        )?;
+    }
+    if ipv4.is_some() || ipv6.is_some() {
+        writeln!(
+            output,
+            "PTR records must be configured by the provider that owns each public IP address."
+        )?;
+    }
+    if matches!(dns_mode, "Manual" | "Deprecated1") {
+        writeln!(
+            output,
+            "DNS management is manual. Stalwart did not contact or modify your DNS provider."
+        )?;
+    } else {
+        writeln!(
+            output,
+            "Automatic DNS management is configured through {dns_mode}; verify its first update after startup."
+        )?;
+    }
+    writeln!(
+        output,
+        "════════════════════════════════════════════════════════════"
+    )?;
+    Ok(())
+}
+
+fn build_completion_dns_records(
+    ipv4: Option<Ipv4Addr>,
+    ipv6: Option<Ipv6Addr>,
+    server_hostname: &str,
+    dns_records: &[SetupDnsRecord],
+) -> Vec<SetupDnsRecord> {
     let mut records = Vec::with_capacity(dns_records.len() + 4);
     records.push(SetupDnsRecord {
         record_type: "A".to_string(),
@@ -524,44 +638,22 @@ fn print_setup_result(
         });
     }
     records.extend_from_slice(dns_records);
-    print_dns_table(&mut output, &records)?;
+    records
+}
 
-    writeln!(
-        output,
-        "\nTTL values are seconds. PRIO is used by MX and SRV records."
-    )?;
-    writeln!(
-        output,
-        "Wrapped HOST or ANSWER lines continue the cell above; concatenate them without spaces."
-    )?;
-    if ipv4.is_none() {
-        writeln!(
-            output,
-            "Warning: public IPv4 detection failed. Replace <PUBLIC_IPV4_NOT_DETECTED> before publishing."
-        )?;
-    }
-    if ipv4.is_some() || ipv6.is_some() {
-        writeln!(
-            output,
-            "PTR records must be configured by the provider that owns each public IP address."
-        )?;
-    }
-    if matches!(dns_mode, "Manual" | "Deprecated1") {
-        writeln!(
-            output,
-            "DNS management is manual. Stalwart did not contact or modify your DNS provider."
-        )?;
-    } else {
-        writeln!(
-            output,
-            "Automatic DNS management is configured through {dns_mode}; verify its first update after startup."
-        )?;
-    }
-    writeln!(
-        output,
-        "════════════════════════════════════════════════════════════"
-    )?;
-    Ok(())
+fn write_setup_result(path: &Path, result: &SetupResult<'_>) -> Result<(), String> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let mut file = options
+        .open(path)
+        .map_err(|err| format!("failed to create file: {err}"))?;
+    serde_json::to_writer(&mut file, result)
+        .map_err(|err| format!("failed to serialize result: {err}"))?;
+    file.write_all(b"\n")
+        .map_err(|err| format!("failed to finish result: {err}"))
 }
 
 fn print_dns_table<W: Write>(output: &mut W, records: &[SetupDnsRecord]) -> io::Result<()> {
@@ -883,6 +975,90 @@ mod tests {
             ipv6_reverse_name("2001:db8::1".parse().unwrap()),
             "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa"
         );
+    }
+
+    #[test]
+    fn completion_dns_rows_include_detected_addresses_and_reverse_dns() {
+        let mail_rows = vec![SetupDnsRecord {
+            record_type: "MX".to_string(),
+            host: "example.test".to_string(),
+            answer: "mail.example.test".to_string(),
+            ttl: SETUP_DNS_TTL,
+            priority: Some(10),
+        }];
+        let records = build_completion_dns_records(
+            Some("192.0.2.4".parse().unwrap()),
+            Some("2001:db8::4".parse().unwrap()),
+            "mail.example.test.",
+            &mail_rows,
+        );
+
+        assert_eq!(records[0].record_type, "A");
+        assert_eq!(records[0].host, "mail.example.test");
+        assert_eq!(records[0].answer, "192.0.2.4");
+        assert!(records.iter().any(|record| {
+            record.record_type == "AAAA"
+                && record.host == "mail.example.test"
+                && record.answer == "2001:db8::4"
+        }));
+        assert!(records.iter().any(|record| {
+            record.record_type == "PTR"
+                && record.host == "4.2.0.192.in-addr.arpa"
+                && record.answer == "mail.example.test"
+        }));
+        assert_eq!(records.last(), mail_rows.last());
+    }
+
+    #[test]
+    fn setup_result_is_json_and_created_private() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "stalwart-cli-setup-result-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("result.json");
+        let records = vec![SetupDnsRecord {
+            record_type: "A".to_string(),
+            host: "mail.example.test".to_string(),
+            answer: "192.0.2.4".to_string(),
+            ttl: SETUP_DNS_TTL,
+            priority: None,
+        }];
+        let result = SetupResult {
+            version: 1,
+            server_hostname: "mail.example.test",
+            default_domain: "example.test",
+            public_ipv4: Some("192.0.2.4".parse().unwrap()),
+            public_ipv6: None,
+            administrator: Some(SetupAdministrator {
+                username: "admin",
+                secret: "test-secret",
+            }),
+            dns_records: &records,
+        };
+
+        write_setup_result(&path, &result).unwrap();
+        let json: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(json["serverHostname"], "mail.example.test");
+        assert_eq!(json["administrator"]["username"], "admin");
+        assert_eq!(json["administrator"]["secret"], "test-secret");
+        assert_eq!(json["dnsRecords"][0]["recordType"], "A");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        assert!(write_setup_result(&path, &result).is_err());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
 
     #[tokio::test]

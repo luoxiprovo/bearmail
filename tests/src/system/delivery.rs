@@ -407,6 +407,64 @@ END:VCARD
     assert_eq!(samples.iter().filter(|x| !x.1.is_spam).count(), 2);
     assert_eq!(samples.iter().filter(|x| x.1.is_spam).count(), 0);
 
+    // Authenticated calendar invites stay in Inbox even when GTUBE would junk them.
+    lmtp.ingest(
+        "dmarc-bill@example.org",
+        &["john.doe@example.org"],
+        concat!(
+            "From: dmarc-bill@example.org\r\n",
+            "To: john.doe@example.org\r\n",
+            "Message-ID: <calendar-invite@example.org>\r\n",
+            "MIME-Version: 1.0\r\n",
+            "Content-Type: multipart/mixed; boundary=calbnd\r\n",
+            "Subject: XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X\r\n",
+            "\r\n",
+            "--calbnd\r\n",
+            "Content-Type: text/plain\r\n",
+            "\r\n",
+            "You have been invited.\r\n",
+            "--calbnd\r\n",
+            "Content-Type: text/calendar; method=REQUEST; charset=UTF-8\r\n",
+            "\r\n",
+            "BEGIN:VCALENDAR\r\n",
+            "METHOD:REQUEST\r\n",
+            "BEGIN:VEVENT\r\n",
+            "UID:calendar-invite@example.org\r\n",
+            "DTSTART:20260820T100000Z\r\n",
+            "DTEND:20260820T110000Z\r\n",
+            "SUMMARY:Planning\r\n",
+            "ORGANIZER:mailto:dmarc-bill@example.org\r\n",
+            "ATTENDEE:mailto:john.doe@example.org\r\n",
+            "END:VEVENT\r\n",
+            "END:VCALENDAR\r\n",
+            "--calbnd--\r\n"
+        ),
+    )
+    .await;
+    let john_cache = test
+        .server
+        .get_cached_messages(john.id().document_id())
+        .await
+        .unwrap();
+    let inbox_ids = john_cache
+        .in_mailbox(INBOX_ID)
+        .map(|e| e.document_id)
+        .collect::<RoaringBitmap>();
+    let junk_ids = john_cache
+        .in_mailbox(JUNK_ID)
+        .map(|e| e.document_id)
+        .collect::<RoaringBitmap>();
+    assert_eq!(john_cache.emails.items.len(), 6);
+    assert_eq!(inbox_ids.len(), 4);
+    assert_eq!(junk_ids.len(), 1);
+    assert_message_headers_contains(
+        &test.server,
+        john.id().document_id(),
+        inbox_ids.max().unwrap(),
+        "X-Spam-Status: No, reason=calendar-invite",
+    )
+    .await;
+
     // EXPN and VRFY
     lmtp.expn("members@example.org", 2)
         .await

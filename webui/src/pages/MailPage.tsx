@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, CalendarDays, ChevronRight, Inbox, LoaderCircle, MailOpen, Paperclip, Search, Star, Trash2 } from "lucide-react";
 import { useApp } from "../app-context";
-import { getEmails, patchEmail } from "../jmap/mail";
+import { findCalendarInvitationPart, getEmails, patchEmail } from "../jmap/mail";
 import type { Email, Mailbox } from "../types";
 import { useNavigate } from "../router";
 
@@ -66,7 +66,7 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
         ) : <div className="email-list" role="list">
           {emails.map((email) => {
             const unread = !email.keywords?.["$seen"];
-            const invited = email.attachments?.some((part) => part.type?.toLowerCase().startsWith("text/calendar"));
+            const invited = Boolean(findCalendarInvitationPart(email));
             return (
               <article key={email.id} role="listitem" tabIndex={0} className={`email-row ${unread ? "unread" : ""}`} onClick={() => navigate(`/mail/message/${email.id}`)} onKeyDown={(event) => { if (event.key === "Enter") navigate(`/mail/message/${email.id}`); }}>
                 <button className={`star-button ${email.keywords?.["$flagged"] ? "selected" : ""}`} aria-label={email.keywords?.["$flagged"] ? "Unstar" : "Star"} onClick={(event) => { event.stopPropagation(); void action(email, { "keywords/$flagged": email.keywords?.["$flagged"] ? null : true }, "Star updated"); }}><Star size={17} /></button>

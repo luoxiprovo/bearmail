@@ -12,13 +12,21 @@
 set -e
 set -u
 
-readonly DEFAULT_REPOSITORY="https://github.com/valuerouterDev/stalwart.git"
-readonly STANDARD_FEATURES="sqlite postgres mysql rocks s3 redis azure nats"
-readonly FOUNDATIONDB_FEATURES="foundationdb s3 redis azure nats"
+NODE_BIN=""
+NODE_VERSION=""
+NODE_INSTALL_ROOT="/opt/stalwart-node"
+VALIDATION_ERROR=""
+CADDY_CONFIG_FILE="/etc/caddy/Caddyfile"
+CADDY_MANAGED_MARKER="# STALWART_INSTALLER_MANAGED_CADDYFILE=1"
+CADDY_CERT_ROOT="/var/lib/caddy/.local/share/caddy/certificates"
+CADDY_CERT_SYNC_SCRIPT="/usr/local/libexec/stalwart-caddy-cert-sync"
+CADDY_CERT_SYNC_SERVICE="/etc/systemd/system/stalwart-caddy-cert-sync.service"
+CADDY_CERT_SYNC_TIMER="/etc/systemd/system/stalwart-caddy-cert-sync.timer"
+cleanup_restart_caddy=""
 
 main() {
     # Installation and setup answers are deliberately not accepted as command
-    # line arguments. This keeps the curl-pipe invocation simple and prevents
+    # line arguments. This keeps invocation simple and prevents
     # secrets from appearing in shell history or process listings.
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -41,32 +49,41 @@ main() {
     need_cmd mktemp
     need_cmd chmod
     need_cmd chown
-    need_cmd mkdir
-    need_cmd rm
     need_cmd cp
+    need_cmd dirname
     need_cmd env
+    need_cmd find
+    need_cmd grep
     need_cmd hostname
     need_cmd id
-    need_cmd dirname
+    need_cmd install
+    need_cmd mkdir
+    need_cmd mv
+    need_cmd rm
+    need_cmd sed
+    need_cmd systemctl
+    need_cmd stty
+    need_cmd tar
+    need_cmd tr
+    need_cmd useradd
 
     # Require root
     if [ "$(id -u)" -ne 0 ]; then
         err "❌ Install failed: This program needs to run as root."
     fi
 
-    # Detect OS
-    local _os _uname _account
-    _uname="$(uname)"
-    case "$_uname" in
-        Linux)   _os="linux"; _account="stalwart" ;;
-        Darwin)  _os="macos"; _account="_stalwart" ;;
-        FreeBSD) _os="freebsd"; _account="stalwart" ;;
-        *)       err "❌ Install failed: Unsupported OS: $_uname" ;;
-    esac
+    if [ "$(uname)" != "Linux" ]; then
+        err "❌ Install failed: The combined Stalwart and WebUI installer currently requires Linux with systemd."
+    fi
+    if ! systemctl --version >/dev/null 2>&1; then
+        err "❌ Install failed: systemd is required for the two-service installation."
+    fi
+    local _account="stalwart" _script_dir
+    _script_dir="$(CDPATH= cd "$(dirname "$0")" 2>/dev/null && pwd)"
 
     say ""
     say "┌─────────────────────────────────────────────────────────┐"
-    say "│              Stalwart Server Installer                  │"
+    say "│        Stalwart + Mail and Calendar WebUI Installer     │"
     say "└─────────────────────────────────────────────────────────┘"
     say ""
 
@@ -76,18 +93,9 @@ main() {
         "Standard system paths (recommended)" \
         "Custom self-contained prefix"
     if [ "$RETVAL" -eq 2 ]; then
-        prompt_text "Absolute installation prefix" "/opt/stalwart"
+        prompt_absolute_prefix "Absolute installation prefix" "/opt/stalwart" \
+            "custom installation prefix"
         _prefix="$RETVAL"
-        case "$_prefix" in
-            /*) ;;
-            *) err "❌ Install failed: The installation prefix must be an absolute path." ;;
-        esac
-        while [ "${_prefix%/}" != "$_prefix" ]; do
-            _prefix="${_prefix%/}"
-        done
-        if [ -z "$_prefix" ]; then
-            err "❌ Install failed: '/' cannot be used as a custom installation prefix."
-        fi
     fi
 
     # Derive install paths — FHS by default, self-contained under a custom prefix
@@ -95,15 +103,8 @@ main() {
     if [ -z "$_prefix" ]; then
         _bin_dir="/usr/local/bin"
         _log_dir="/var/log/stalwart"
-        if [ "$_os" = "freebsd" ]; then
-            # hier(7): third-party config lives under /usr/local/etc,
-            # variable data under /var/db
-            _conf_dir="/usr/local/etc/stalwart"
-            _data_dir="/var/db/stalwart"
-        else
-            _conf_dir="/etc/stalwart"
-            _data_dir="/var/lib/stalwart"
-        fi
+        _conf_dir="/etc/stalwart"
+        _data_dir="/var/lib/stalwart"
     else
         _bin_dir="${_prefix}/bin"
         _conf_dir="${_prefix}/etc"
@@ -114,124 +115,76 @@ main() {
     _config_file="${_conf_dir}/config.json"
     _env_file="${_conf_dir}/stalwart.env"
 
-    # Select how to obtain a binary. Building this revision is the default so
-    # the installed executable always contains this interactive setup wizard.
-    local _source_mode _source_ref _build_profile="standard" _existing_binary=""
-    local _cargo_bin="" _build_user=""
-    local _script_dir=""
-    prompt_menu "Binary source" 1 \
-        "Build this Stalwart revision from source" \
-        "Use an existing compatible Stalwart binary"
-    _source_mode="$RETVAL"
-    if [ "$_source_mode" -eq 1 ]; then
-        if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ] && check_cmd sudo; then
-            _cargo_bin="$(sudo -H -u "$SUDO_USER" sh -lc 'command -v cargo' 2>/dev/null || true)"
-            if [ -n "$_cargo_bin" ] && [ -x "$_cargo_bin" ]; then
-                _build_user="$SUDO_USER"
-            fi
-        fi
-        if [ -z "$_cargo_bin" ] && check_cmd cargo; then
-            _cargo_bin="$(command -v cargo)"
-        fi
-        if [ -z "$_cargo_bin" ] || [ ! -x "$_cargo_bin" ]; then
-            err "need 'cargo' (install Rust for root or for the user invoking sudo)"
-        fi
-        local _source_default="$DEFAULT_REPOSITORY"
-        _script_dir="$(CDPATH= cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
-        if [ -n "$_script_dir" ] && [ -f "${_script_dir}/Cargo.toml" ] && [ -f "${_script_dir}/crates/main/Cargo.toml" ]; then
-            _source_default="$_script_dir"
-        fi
-        prompt_text "Source checkout path or Git repository" "$_source_default"
-        _source_ref="$RETVAL"
-        if [ ! -d "$_source_ref" ]; then
-            need_cmd git
-        elif [ ! -f "${_source_ref}/Cargo.toml" ] || [ ! -f "${_source_ref}/crates/main/Cargo.toml" ]; then
-            err "❌ Install failed: ${_source_ref} is not a Stalwart source checkout."
-        fi
-        prompt_menu "Build profile" 1 \
-            "Standard (all regular bootstrap backends)" \
-            "FoundationDB-enabled (requires FoundationDB client libraries)"
-        if [ "$RETVAL" -eq 2 ]; then
-            _build_profile="foundationdb"
-        fi
+    local _source_binary _webui_archive _webui_prefix _webui_port _webui_origin
+    local _webui_hostname _webui_stage _setup_result_file _installer_state
+    local _proxy_mode
+    prompt_executable_file "Path to the compiled Stalwart binary" "${_script_dir}/stalwart" \
+        "The Stalwart artifact must be an executable regular file."
+    _source_binary="$RETVAL"
+    prompt_regular_file "Path to the prebuilt WebUI tar archive" "${_script_dir}/stalwart-webui.tar.gz" \
+        "The WebUI artifact must be a regular file."
+    _webui_archive="$RETVAL"
+    prompt_webui_prefix "WebUI installation prefix" "/opt/stalwart-webui" \
+        "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir" "$NODE_INSTALL_ROOT"
+    _webui_prefix="$RETVAL"
+    prompt_webui_port "WebUI local service port" "8081"
+    _webui_port="$RETVAL"
+    prompt_https_origin "Public WebUI origin (exact HTTPS URL, no path)" \
+        "https://webmail.example.com"
+    _webui_origin="$RETVAL"
+    origin_hostname "$_webui_origin"
+    _webui_hostname="$RETVAL"
+    prompt_menu "HTTPS publishing" 1 \
+        "Configure Caddy automatically (recommended)" \
+        "Use an existing operator-managed reverse proxy"
+    if [ "$RETVAL" -eq 1 ]; then
+        _proxy_mode="caddy"
+        while [ "$_webui_origin" != "https://${_webui_hostname}" ]; do
+            printf '  Automatic Caddy publishing uses standard HTTPS port 443.\n' >&3
+            prompt_https_origin "Public WebUI origin (exact HTTPS URL, no path or custom port)" \
+                "https://${_webui_hostname}"
+            _webui_origin="$RETVAL"
+            origin_hostname "$_webui_origin"
+            _webui_hostname="$RETVAL"
+        done
+        validate_caddy_config_ownership
     else
-        prompt_text "Path to the compatible Stalwart binary" ""
-        _existing_binary="$RETVAL"
-        if [ ! -f "$_existing_binary" ] || [ ! -x "$_existing_binary" ]; then
-            err "❌ Install failed: The supplied binary must be an executable regular file."
-        fi
+        _proxy_mode="operator"
     fi
 
     say ""
     say "Installation summary"
-    say "  Binary:       ${_bin_file}"
-    say "  Configuration:${_config_file}"
-    say "  Data:         ${_data_dir}"
-    say "  Logs:         ${_log_dir}"
-    if [ "$_source_mode" -eq 1 ]; then
-        say "  Source:       ${_source_ref}"
-        say "  Build profile:${_build_profile}"
+    say "  Stalwart artifact: ${_source_binary}"
+    say "  Stalwart binary:   ${_bin_file}"
+    say "  Configuration:     ${_config_file}"
+    say "  Data:              ${_data_dir}"
+    say "  Logs:              ${_log_dir}"
+    say "  WebUI archive:     ${_webui_archive}"
+    say "  WebUI files:       ${_webui_prefix}"
+    say "  WebUI service:     127.0.0.1:${_webui_port}"
+    say "  WebUI public URL:  ${_webui_origin}"
+    if [ "$_proxy_mode" = "caddy" ]; then
+        say "  HTTPS publishing:  installer-managed Caddy on ports 80 and 443"
+        say ""
+        say "Caddy will route the two public hostnames by Host header. Stalwart's"
+        say "HTTP listeners and the WebUI will be restricted to localhost."
     else
-        say "  Source binary:${_existing_binary}"
+        say "  HTTPS publishing:  operator-managed reverse proxy"
+        say ""
+        say "The WebUI stays on localhost. Your HTTPS reverse proxy must route"
+        say "${_webui_origin} to 127.0.0.1:${_webui_port}."
     fi
     say ""
-    if ! prompt_yes_no "Build/install the binary and start interactive server setup" "no"; then
+    if ! prompt_yes_no "Install both services and run interactive server setup" "no"; then
         err "Installation cancelled; no system files were changed."
     fi
 
-    # Acquire/build the binary before changing accounts, install paths, or
-    # service definitions. Build failures therefore leave the system untouched.
-    local _tmp="" _source_dir="" _source_binary="" _features=""
+    # Validate and stage both local artifacts before changing the system.
+    local _tmp="" _setup_help=""
     _tmp="$(mktemp -d)"
     cleanup_dir="$_tmp"
-    trap cleanup 0 HUP INT TERM
-    if [ "$_source_mode" -eq 1 ]; then
-        if [ -d "$_source_ref" ]; then
-            _source_dir="$(CDPATH= cd "$_source_ref" && pwd)"
-        else
-            say "⏳ Cloning ${_source_ref}..."
-            ensure git clone --depth 1 "$_source_ref" "${_tmp}/source"
-            _source_dir="${_tmp}/source"
-            if [ ! -f "${_source_dir}/Cargo.toml" ] || [ ! -f "${_source_dir}/crates/main/Cargo.toml" ]; then
-                err "❌ Install failed: The cloned repository is not a Stalwart source checkout."
-            fi
-        fi
-        if [ "$_build_profile" = "foundationdb" ]; then
-            _features="$FOUNDATIONDB_FEATURES"
-        else
-            _features="$STANDARD_FEATURES"
-        fi
-        say "⏳ Building Stalwart (${_build_profile} profile)..."
-        if [ -n "$_build_user" ]; then
-            ensure chown -R "$_build_user" "$_tmp"
-            ensure sudo -H -u "$_build_user" env CARGO_TARGET_DIR="${_tmp}/target" \
-                "$_cargo_bin" build \
-                --manifest-path "${_source_dir}/Cargo.toml" \
-                --release \
-                --package stalwart \
-                --locked \
-                --no-default-features \
-                --features "$_features"
-        else
-            ensure env CARGO_TARGET_DIR="${_tmp}/target" "$_cargo_bin" build \
-                --manifest-path "${_source_dir}/Cargo.toml" \
-                --release \
-                --package stalwart \
-                --locked \
-                --no-default-features \
-                --features "$_features"
-        fi
-        _source_binary="${_tmp}/target/release/stalwart"
-        if [ ! -x "$_source_binary" ]; then
-            err "❌ Install failed: Cargo completed without producing ${_source_binary}."
-        fi
-    else
-        _source_binary="$_existing_binary"
-    fi
-
-    # Fail before changing the server if the selected binary does not contain
-    # the command-line setup implementation required by this installer.
-    local _setup_help=""
+    trap cleanup 0
+    trap 'cleanup; exit 1' HUP INT TERM
     if ! _setup_help="$("$_source_binary" --setup --help 2>/dev/null)"; then
         err "❌ Install failed: The selected binary is not compatible with this installer's command-line setup."
     fi
@@ -239,9 +192,57 @@ main() {
         *"Quick setup asks only"*) ;;
         *) err "❌ Install failed: The selected binary predates this installer's quick setup and DNS table. Rebuild it from this source revision." ;;
     esac
+    case "$_setup_help" in
+        *"STALWART_SETUP_RESULT_PATH"*) ;;
+        *) err "❌ Install failed: The selected binary predates the secure combined-installer handoff. Rebuild it from this source revision." ;;
+    esac
+
+    _webui_stage="${_tmp}/webui"
+    ensure mkdir -p "$_webui_stage"
+    if ! tar -tzf "$_webui_archive" > "${_tmp}/archive-files"; then
+        err "❌ Install failed: The WebUI artifact is not a readable gzip tar archive."
+    fi
+    if grep -Eq '(^/|(^|/)\.\.(/|$))' "${_tmp}/archive-files"; then
+        err "❌ Install failed: The WebUI archive contains an unsafe path."
+    fi
+    ensure tar --no-same-owner --no-same-permissions -xzf "$_webui_archive" -C "$_webui_stage"
+    if find "$_webui_stage" -type l -print -quit | grep -q .; then
+        err "❌ Install failed: Symbolic links are not allowed in the WebUI archive."
+    fi
+    for _required in install.sh server.mjs stalwart-webui.service dist/index.html dist/config.json; do
+        if [ ! -f "${_webui_stage}/${_required}" ]; then
+            err "❌ Install failed: The WebUI archive is missing ${_required}."
+        fi
+    done
+    if ! grep -q 'STALWART_WEBUI_ARCHIVE_VERSION=2' "${_webui_stage}/install.sh"; then
+        err "❌ Install failed: The WebUI archive is not compatible with this combined installer."
+    fi
+
+    prepare_node_runtime "$_tmp"
+    if paths_overlap "$_webui_prefix" "$NODE_BIN"; then
+        printf '  The WebUI prefix must not contain or be contained by the selected Node.js executable (%s).\n' \
+            "$NODE_BIN" >&3
+        prompt_webui_prefix "WebUI installation prefix" "$_webui_prefix" \
+            "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir" \
+            "$NODE_INSTALL_ROOT" "$NODE_BIN"
+        _webui_prefix="$RETVAL"
+    fi
+
+    if [ "$_proxy_mode" = "caddy" ]; then
+        say "📦 Preparing Caddy and TLS tools..."
+        ensure_caddy_available
+        ensure_openssl_available
+        need_cmd cmp
+        # The packaged Caddy service may have started with its default file.
+        # Keep 443 free until Stalwart's listeners have been moved to loopback.
+        if systemctl is-active --quiet caddy.service; then
+            cleanup_restart_caddy="true"
+        fi
+        ensure systemctl stop caddy.service
+    fi
 
     # Create service account
-    create_account "$_os" "$_account"
+    create_account "$_account"
 
     # Create directories
     ensure mkdir -p "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir"
@@ -249,12 +250,9 @@ main() {
     # Install the selected binary.
     say "📦 Installing Stalwart at ${_bin_file}..."
     if [ "$_source_binary" != "$_bin_file" ]; then
-        ensure cp "$_source_binary" "$_bin_file"
+        install_executable_atomically "$_source_binary" "$_bin_file"
     fi
     ensure chmod 0755 "$_bin_file"
-    cleanup
-    trap - 0 HUP INT TERM
-
     # Create env file if absent (preserve user edits on reinstall)
     if [ ! -e "$_env_file" ]; then
         say "📝 Writing env file at ${_env_file}..."
@@ -269,29 +267,35 @@ main() {
     if [ -f "$_config_file" ] && [ ! -s "$_config_file" ]; then
         err "❌ Install failed: ${_config_file} is empty. Move it aside, then rerun the installer so initialization can complete."
     fi
+    local _public_ipv4="" _public_ipv6="" _fresh_setup="false"
+    say "🌐 Detecting this server's public IP addresses..."
+    detect_public_ip 4
+    _public_ipv4="$RETVAL"
+    detect_public_ip 6
+    _public_ipv6="$RETVAL"
+    if [ -n "$_public_ipv4" ]; then
+        say "   Public IPv4: ${_public_ipv4}"
+    else
+        say "   Public IPv4: not detected (advanced setup can enter it manually)"
+    fi
+    if [ -n "$_public_ipv6" ]; then
+        say "   Public IPv6: ${_public_ipv6}"
+    else
+        say "   Public IPv6: not detected (optional)"
+    fi
+
+    _setup_result_file="${_tmp}/setup-result.json"
+    _installer_state="${_conf_dir}/installer-state.json"
     if [ ! -e "$_config_file" ]; then
-        local _public_ipv4="" _public_ipv6=""
-        say "🌐 Detecting this server's public IP addresses..."
-        detect_public_ip 4
-        _public_ipv4="$RETVAL"
-        detect_public_ip 6
-        _public_ipv6="$RETVAL"
-        if [ -n "$_public_ipv4" ]; then
-            say "   Public IPv4: ${_public_ipv4}"
-        else
-            say "   Public IPv4: not detected (advanced setup can enter it manually)"
-        fi
-        if [ -n "$_public_ipv6" ]; then
-            say "   Public IPv6: ${_public_ipv6}"
-        else
-            say "   Public IPv6: not detected (optional)"
-        fi
+        _fresh_setup="true"
         say "🧭 Starting interactive command-line setup..."
+        print_server_identity_help
         if ! env \
             STALWART_SETUP_DATA_PATH="$_data_dir" \
             STALWART_SETUP_LOG_PATH="$_log_dir" \
             STALWART_SETUP_PUBLIC_IPV4="$_public_ipv4" \
             STALWART_SETUP_PUBLIC_IPV6="$_public_ipv6" \
+            STALWART_SETUP_RESULT_PATH="$_setup_result_file" \
             "$_bin_file" --config="$_config_file" --setup <&3
         then
             err "❌ Command-line setup failed. Correct the error, then rerun the installer. The service was not installed or started."
@@ -299,8 +303,25 @@ main() {
         if [ ! -f "$_config_file" ] || [ ! -s "$_config_file" ]; then
             err "❌ Command-line setup returned without creating a non-empty ${_config_file}. The service was not installed or started."
         fi
+        if [ ! -s "$_setup_result_file" ]; then
+            err "❌ Command-line setup did not create its secure installer result. The services were not started."
+        fi
     else
-        say "ℹ️  Preserving existing configuration at ${_config_file}; setup skipped."
+        say "ℹ️  Preserving existing configuration at ${_config_file}; hostname and mail-domain setup skipped."
+        if [ -s "$_installer_state" ]; then
+            json_field "$_installer_state" "serverHostname"
+            if [ -n "$RETVAL" ]; then
+                say "   Current hostname:    ${RETVAL}"
+            fi
+            json_field "$_installer_state" "defaultDomain"
+            if [ -n "$RETVAL" ]; then
+                say "   Current mail domain: ${RETVAL}"
+            fi
+        fi
+        say "   Moving this file aside is not enough: the data store is already initialized."
+        say "   To choose hostname and domain again, stop Stalwart, move ${_config_file},"
+        say "   installer-state.json, and the data directory aside, then rerun the installer."
+        say "   From this checkout: sudo sh ./test_install.sh --reset-setup --skip-build"
     fi
 
     # Ownership and permissions
@@ -309,35 +330,203 @@ main() {
     ensure chmod 0750 "$_conf_dir" "$_log_dir" "$_data_dir"
     ensure chown "root:${_account}" "$_env_file"
     ensure chmod 0640 "$_env_file"
+    if [ -f "$_installer_state" ]; then
+        ensure chown root:root "$_installer_state"
+        ensure chmod 0600 "$_installer_state"
+    fi
 
-    # Install and start the service
-    say "🚀 Starting service..."
-    case "$_os" in
-        linux)
-            if check_cmd systemctl; then
-                create_service_linux_systemd "$_bin_file" "$_config_file" "$_env_file" "$_account"
-            else
-                create_service_linux_initd "$_bin_file" "$_config_file" "$_env_file" "$_account"
+    say "🚀 Starting Stalwart service..."
+    create_service_linux_systemd "$_bin_file" "$_config_file" "$_env_file" "$_account"
+    wait_for_http "http://127.0.0.1:8080/healthz/ready" "Stalwart"
+
+    local _mail_hostname="" _mail_domain="" _admin_username="" _admin_secret=""
+    local _mail_identity_prompted="false"
+    if [ "$_fresh_setup" = "true" ]; then
+        json_field "$_setup_result_file" "serverHostname"
+        _mail_hostname="$RETVAL"
+        json_field "$_setup_result_file" "defaultDomain"
+        _mail_domain="$RETVAL"
+        json_field "$_setup_result_file" "administrator.username"
+        _admin_username="$RETVAL"
+        json_field "$_setup_result_file" "administrator.secret"
+        _admin_secret="$RETVAL"
+    elif [ -s "$_installer_state" ]; then
+        json_field "$_installer_state" "serverHostname"
+        _mail_hostname="$RETVAL"
+        json_field "$_installer_state" "defaultDomain"
+        _mail_domain="$RETVAL"
+    else
+        print_server_identity_help
+        suggested_public_mail_hostname
+        prompt_dns_name "Public mail hostname (example: mail.example.com)" "$RETVAL"
+        _mail_hostname="$RETVAL"
+        suggested_primary_mail_domain "$_mail_hostname"
+        prompt_dns_name "Primary mail domain (example: example.com)" "$RETVAL"
+        _mail_domain="$RETVAL"
+        _mail_identity_prompted="true"
+    fi
+    if [ "$_mail_identity_prompted" = "false" ]; then
+        if ! normalize_dns_name "$_mail_hostname"; then
+            err "❌ Install failed: ${VALIDATION_ERROR}"
+        fi
+        _mail_hostname="$RETVAL"
+        if ! normalize_dns_name "$_mail_domain"; then
+            err "❌ Install failed: ${VALIDATION_ERROR}"
+        fi
+        _mail_domain="$RETVAL"
+    fi
+    confirm_dedicated_webui_origin "$_proxy_mode" "$_mail_hostname" "$_mail_domain"
+
+    # Persist only non-secret setup output before the WebUI/CORS stages so a
+    # failed late stage can be retried without losing the complete DNS rows.
+    write_installer_state \
+        "$_setup_result_file" "$_installer_state" "$_mail_hostname" "$_mail_domain" \
+        "$_public_ipv4" "$_public_ipv6" "$_webui_origin" "$_webui_hostname" "$_proxy_mode"
+    ensure chown root:root "$_installer_state"
+    ensure chmod 0600 "$_installer_state"
+
+    say "📦 Installing the WebUI service..."
+    ensure sh "${_webui_stage}/install.sh" \
+        --server-url "https://${_mail_hostname}" \
+        --prefix "$_webui_prefix" \
+        --port "$_webui_port" \
+        --node-bin "$NODE_BIN" \
+        --systemd \
+        --no-build
+    wait_for_http "http://127.0.0.1:${_webui_port}/healthz/ready" "WebUI"
+
+    if [ -z "$_admin_username" ] || [ -z "$_admin_secret" ]; then
+        prompt_admin_credentials "admin"
+        _admin_username="$ADMIN_USERNAME_RETVAL"
+        _admin_secret="$ADMIN_SECRET_RETVAL"
+    fi
+    say "🔐 Adding the exact WebUI CORS origin to Stalwart..."
+    local _cors_status
+    while true; do
+        _cors_status=0
+        configure_stalwart_cors "$_webui_origin" "$_admin_username" "$_admin_secret" || _cors_status=$?
+        if [ "$_cors_status" -eq 0 ]; then
+            break
+        fi
+        if [ "$_cors_status" -eq 2 ]; then
+            printf '  Stalwart rejected those administrator credentials. Enter them again.\n' >&3
+            prompt_admin_credentials "$_admin_username"
+            _admin_username="$ADMIN_USERNAME_RETVAL"
+            _admin_secret="$ADMIN_SECRET_RETVAL"
+            continue
+        fi
+        err "❌ Install failed: Stalwart CORS could not be configured or verified."
+    done
+
+    if [ "$_proxy_mode" = "caddy" ]; then
+        local _proxy_cert_dir _proxy_cert _proxy_key _proxy_status
+        _proxy_cert_dir="${_conf_dir}/proxy-certs"
+        _proxy_cert="${_proxy_cert_dir}/caddy-mail.pem"
+        _proxy_key="${_proxy_cert_dir}/caddy-mail.key"
+
+        say "🔐 Preparing Stalwart to use Caddy's renewed mail certificate..."
+        create_placeholder_certificate \
+            "$_proxy_cert_dir" "$_proxy_cert" "$_proxy_key" "$_mail_hostname" "$_account"
+        while true; do
+            _proxy_status=0
+            configure_stalwart_caddy_proxy \
+                "$_mail_domain" "$_proxy_cert" "$_proxy_key" \
+                "$_admin_username" "$_admin_secret" || _proxy_status=$?
+            if [ "$_proxy_status" -eq 0 ]; then
+                break
             fi
-            ;;
-        macos)
-            create_service_macos "$_bin_file" "$_config_file" "$_env_file" "$_account"
-            ;;
-        freebsd)
-            create_service_freebsd "$_bin_file" "$_config_file" "$_env_file" "$_account" "$_log_dir"
-            ;;
-    esac
+            if [ "$_proxy_status" -eq 2 ]; then
+                printf '  Stalwart rejected those administrator credentials. Enter them again.\n' >&3
+                prompt_admin_credentials "$_admin_username"
+                _admin_username="$ADMIN_USERNAME_RETVAL"
+                _admin_secret="$ADMIN_SECRET_RETVAL"
+                continue
+            fi
+            err "❌ Install failed: Stalwart could not be prepared for the Caddy reverse proxy."
+        done
+        install_stalwart_public_url_dropin \
+            "/etc/systemd/system/stalwart.service.d/10-public-url.conf" "$_mail_hostname"
 
-    # Completion message
-    local _host
-    _host="$(hostname -f 2>/dev/null || hostname)"
+        say "🔒 Restricting Stalwart HTTP listeners to localhost..."
+        ensure systemctl daemon-reload
+        ensure systemctl restart stalwart.service
+        wait_for_http "http://127.0.0.1:8080/healthz/ready" "Stalwart"
+
+        say "🌐 Installing the two-hostname Caddy configuration..."
+        install_caddy_configuration \
+            "$_tmp" "$_mail_hostname" "$_mail_domain" "$_webui_hostname" "$_webui_port"
+        install_caddy_certificate_sync \
+            "$_mail_hostname" "$_proxy_cert" "$_proxy_key" "$_account"
+        ensure systemctl daemon-reload
+        ensure systemctl enable --now caddy.service
+        ensure systemctl restart caddy.service
+        if ! systemctl is-active --quiet caddy.service; then
+            err "❌ Install failed: Caddy did not remain active. Inspect: journalctl -u caddy.service"
+        fi
+        cleanup_restart_caddy=""
+        ensure systemctl enable --now stalwart-caddy-cert-sync.timer
+        # If DNS is already live, this imports Caddy's first certificate now.
+        # Otherwise the timer retries without failing the installation.
+        systemctl start stalwart-caddy-cert-sync.service >/dev/null 2>&1 || true
+    fi
+
+    say ""
+    say "Forward DNS records for Stalwart and the WebUI"
+    say "------------------------------------------------"
+    print_combined_dns_table "$_installer_state" "$_webui_hostname"
+
+    local _mailjet_relay="false" _dns_published="false"
+    configure_optional_mailjet_relay \
+        "$_admin_username" "$_admin_secret" "$_mail_domain"
+    if [ "$RETVAL" = "true" ]; then
+        _mailjet_relay="true"
+    fi
+    publish_optional_namecom_dns \
+        "$_installer_state" "$_webui_hostname" "$_mail_domain" "$_mailjet_relay"
+    if [ "$RETVAL" = "true" ]; then
+        _dns_published="true"
+    fi
+
+    _admin_secret=""
+    unset _admin_secret
+
     say ""
     say "🎉 Installation complete!"
     say ""
-    say "Stalwart is configured and running on ${_host}."
-    say "For the internal directory, use the administrator credential printed by the setup wizard."
-    say "Review the DNS checklist printed by the wizard and verify DNS after startup."
+    say "  Stalwart admin: https://${_mail_hostname}/admin/"
+    say "  Mail/Calendar:  ${_webui_origin}/"
+    say "  WebUI upstream: http://127.0.0.1:${_webui_port}"
     say ""
+    if [ "$_proxy_mode" = "caddy" ]; then
+        say "Caddy now routes ${_mail_hostname} to Stalwart and ${_webui_hostname}"
+        say "to the WebUI. Allow inbound TCP 80/443; Caddy obtains HTTPS certificates"
+        say "once the mail and WebUI hostnames resolve here. The installed timer"
+        say "synchronizes its mail-host certificate into Stalwart for IMAPS/SMTPS."
+    else
+        say "Configure your HTTPS reverse proxy to send ${_webui_origin} to the WebUI"
+        say "upstream above, and keep the WebUI port private."
+    fi
+    if [ "$_dns_published" = "true" ]; then
+        say "Name.com now has the forward-DNS rows for ${_mail_domain}. Wait for"
+        say "propagation before testing the public URLs."
+    elif [ "$_mailjet_relay" != "true" ]; then
+        say "If the printed forward-DNS rows are not yet in the authoritative zone,"
+        say "add them before public login."
+    fi
+    if [ "$_mailjet_relay" = "true" ]; then
+        say "Outbound mail uses the Mailjet SMTP relay. After DNS resolves, create a"
+        say "user in the Stalwart admin panel and send from the WebUI with that"
+        say "account. Finish Mailjet domain verification and Mailjet's DKIM record"
+        say "in the Mailjet dashboard if those are still pending."
+    else
+        say "Then create an account in the Stalwart admin panel. The user can sign in to"
+        say "the WebUI with the full email address (or account name) and its password."
+        say "Direct MX delivery needs outbound TCP 25, which Google Cloud blocks."
+    fi
+    say ""
+
+    cleanup
+    trap - 0 HUP INT TERM
 
     return 0
 }
@@ -346,29 +535,46 @@ print_usage() {
     cat <<'EOF'
 Usage: install.sh
 
-Interactively build and install Stalwart, configure its initial bootstrap
-settings, and start the platform service.
+Interactively install a local Stalwart binary and a prebuilt standalone WebUI,
+configure Stalwart, add the exact WebUI CORS origin, and start two services.
 
 No installation or setup answer is accepted as a command-line parameter. The
-installer asks for the filesystem layout, binary source, optional FoundationDB
-build, and confirmation. Quick setup asks only for the server hostname and mail
-domain, keeps all other defaults, and uses best-effort detected public IPs.
+installer asks for paths and public values. Quick setup asks only for the
+public mail hostname (example: mail.example.com) and primary mail domain
+(example: example.com). Do not use this computer's cloud hostname, such as a
+name ending in .internal. Quick setup keeps all other defaults and uses
+best-effort detected public IPs.
 Advanced setup exposes the complete WebUI bootstrap form in the terminal,
 including nested storage, directory, logging, and DNS-provider settings.
 
-After setup, DNS records are printed in aligned TYPE, HOST, ANSWER, TTL, and
-PRIO columns. A fresh install cannot start the service unless setup creates a
-non-empty configuration file.
+Place these artifacts beside this script (or choose another path when asked):
+  ./stalwart                   executable compiled from this source revision
+  ./stalwart-webui.tar.gz      prebuilt WebUI archive
+
+The WebUI archive must contain install.sh, server.mjs,
+stalwart-webui.service, dist/index.html, and dist/config.json at its root.
+Linux with systemd is required. If Node.js 22.12 or later is unavailable, the
+installer downloads the latest official Node.js 22 Linux binary, verifies its
+SHA-256 checksum, and installs a private runtime under /opt/stalwart-node/.
+
+After setup, combined DNS records are printed in aligned TYPE, HOST, ANSWER,
+TTL, and PRIO columns. The installer then asks whether to send outbound mail
+through a Mailjet SMTP relay, and whether the printed DNS rows are already in
+the zone. If they are not, it can publish them through the name.com DNS API.
+The recommended publishing mode installs Caddy, routes the Stalwart and WebUI
+hostnames to separate localhost upstreams, obtains HTTPS certificates, and
+synchronizes the mail-host certificate into Stalwart. An explicit
+operator-managed mode leaves reverse-proxy configuration untouched.
 
 Options:
   -h, --help  Show this help.
 
 The interactive standard-layout choice uses these FHS paths:
   binary   /usr/local/bin/stalwart
-  config   /etc/stalwart/config.json      (/usr/local/etc/stalwart/config.json on FreeBSD)
-  env      /etc/stalwart/stalwart.env     (/usr/local/etc/stalwart/stalwart.env on FreeBSD)
+  config   /etc/stalwart/config.json
+  env      /etc/stalwart/stalwart.env
   logs     /var/log/stalwart/
-  data     /var/lib/stalwart/             (/var/db/stalwart on FreeBSD)
+  data     /var/lib/stalwart/
 
 The interactive custom-prefix choice uses a self-contained layout:
   binary   $PREFIX/bin/stalwart
@@ -428,6 +634,282 @@ prompt_text() {
         if [ -z "$_answer" ]; then
             _answer="$_default"
         fi
+        if [ -n "$_answer" ]; then
+            RETVAL="$_answer"
+            return 0
+        fi
+        printf '  A value is required.\n' >&3
+    done
+}
+
+normalize_absolute_prefix() {
+    local _input="$1" _description="$2"
+    case "$_input" in
+        /*) ;;
+        *)
+            VALIDATION_ERROR="The ${_description} must be an absolute path."
+            return 1
+            ;;
+    esac
+    case "$_input" in
+        *[!A-Za-z0-9_./-]*)
+            VALIDATION_ERROR="The ${_description} contains unsupported characters."
+            return 1
+            ;;
+    esac
+    case "$_input" in
+        *//*|*/./*|*/.|*/../*|*/..)
+            VALIDATION_ERROR="The ${_description} must be a normalized absolute path."
+            return 1
+            ;;
+    esac
+    while [ "${_input%/}" != "$_input" ]; do
+        _input="${_input%/}"
+    done
+    if [ -z "$_input" ]; then
+        VALIDATION_ERROR="'/' cannot be used as the ${_description}."
+        return 1
+    fi
+    RETVAL="$_input"
+}
+
+prompt_absolute_prefix() {
+    local _label="$1" _default="$2" _description="$3"
+    while true; do
+        prompt_text "$_label" "$_default"
+        if normalize_absolute_prefix "$RETVAL" "$_description"; then
+            return 0
+        fi
+        printf '  %s\n' "$VALIDATION_ERROR" >&3
+    done
+}
+
+prompt_executable_file() {
+    local _label="$1" _default="$2" _message="$3"
+    while true; do
+        prompt_text "$_label" "$_default"
+        if [ -f "$RETVAL" ] && [ -x "$RETVAL" ]; then
+            return 0
+        fi
+        printf '  %s\n' "$_message" >&3
+    done
+}
+
+prompt_regular_file() {
+    local _label="$1" _default="$2" _message="$3"
+    while true; do
+        prompt_text "$_label" "$_default"
+        if [ -f "$RETVAL" ]; then
+            return 0
+        fi
+        printf '  %s\n' "$_message" >&3
+    done
+}
+
+prompt_webui_prefix() {
+    local _label="$1" _default="$2" _protected_path _overlap
+    shift 2
+    while true; do
+        prompt_absolute_prefix "$_label" "$_default" "WebUI installation prefix"
+        _overlap=""
+        for _protected_path in "$@"; do
+            if paths_overlap "$RETVAL" "$_protected_path"; then
+                _overlap="$_protected_path"
+                break
+            fi
+        done
+        if [ -z "$_overlap" ]; then
+            return 0
+        fi
+        printf '  The WebUI prefix must not contain or be contained by the protected path (%s).\n' \
+            "$_overlap" >&3
+    done
+}
+
+prompt_port() {
+    local _label="$1" _default="$2" _answer
+    while true; do
+        prompt_text "$_label" "$_default"
+        _answer="$RETVAL"
+        case "$_answer" in
+            *[!0-9]*|'') ;;
+            *)
+                if [ "$_answer" -ge 1 ] 2>/dev/null && [ "$_answer" -le 65535 ] 2>/dev/null; then
+                    RETVAL="$_answer"
+                    return 0
+                fi
+                ;;
+        esac
+        printf '  Enter a port from 1 through 65535.\n' >&3
+    done
+}
+
+prompt_webui_port() {
+    local _label="$1" _default="$2"
+    while true; do
+        prompt_port "$_label" "$_default"
+        if [ "$RETVAL" -ne 8080 ]; then
+            return 0
+        fi
+        printf '  Port 8080 is reserved for Stalwart; enter a different port.\n' >&3
+    done
+}
+
+prompt_https_origin() {
+    local _label="$1" _default="$2"
+    while true; do
+        prompt_text "$_label" "$_default"
+        if normalize_https_origin "$RETVAL"; then
+            return 0
+        fi
+        printf '  %s\n' "$VALIDATION_ERROR" >&3
+    done
+}
+
+prompt_dns_name() {
+    local _label="$1" _default="$2"
+    while true; do
+        prompt_text "$_label" "$_default"
+        if normalize_dns_name "$RETVAL"; then
+            return 0
+        fi
+        printf '  %s\n' "$VALIDATION_ERROR" >&3
+    done
+}
+
+looks_like_public_mail_hostname() {
+    local _name
+    _name="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+    _name="${_name%.}"
+    case "$_name" in
+        *.*) ;;
+        *) return 1 ;;
+    esac
+    case "$_name" in
+        *.internal|*.local|*.localhost|*.lan|*.home|*.corp|*.localdomain)
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+suggested_public_mail_hostname() {
+    local _candidate
+    _candidate="$(hostname -f 2>/dev/null || hostname)"
+    if looks_like_public_mail_hostname "$_candidate"; then
+        RETVAL="$_candidate"
+    else
+        RETVAL=""
+    fi
+}
+
+suggested_primary_mail_domain() {
+    local _hostname="$1" _domain
+    _domain="${_hostname#*.}"
+    if looks_like_public_mail_hostname "$_domain"; then
+        RETVAL="$_domain"
+    else
+        RETVAL=""
+    fi
+}
+
+suggested_webui_origin() {
+    RETVAL="https://webmail.${1}"
+}
+
+is_example_webui_placeholder() {
+    case "$1" in
+        webmail.example.com|webmail.example.org|webmail.example.net|webmail.example.test)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+confirm_dedicated_webui_origin() {
+    local _mode="$1" _mail_hostname="$2" _mail_domain="$3" _suggested
+    suggested_webui_origin "$_mail_domain"
+    _suggested="$RETVAL"
+    if is_example_webui_placeholder "$_webui_hostname"; then
+        printf '  The WebUI origin is still the installer example (%s).\n' "$_webui_origin" >&3
+        printf '  Use a dedicated hostname in your mail domain, typically %s\n' "$_suggested" >&3
+        prompt_https_origin "Public WebUI origin (exact HTTPS URL, no path)" "$_suggested"
+        _webui_origin="$RETVAL"
+        origin_hostname "$_webui_origin"
+        _webui_hostname="$RETVAL"
+    fi
+    if webui_hostname_conflicts "$_mode" "$_mail_hostname" "$_mail_domain" "$_webui_hostname" || \
+        { [ "$_mode" = "caddy" ] && [ "$_webui_origin" != "https://${_webui_hostname}" ]; }
+    then
+        printf '  The WebUI hostname conflicts with a Stalwart public hostname.\n' >&3
+        while webui_hostname_conflicts "$_mode" "$_mail_hostname" "$_mail_domain" "$_webui_hostname" || \
+            { [ "$_mode" = "caddy" ] && [ "$_webui_origin" != "https://${_webui_hostname}" ]; }
+        do
+            prompt_https_origin "Public WebUI origin (exact HTTPS URL, no path)" \
+                "$_suggested"
+            _webui_origin="$RETVAL"
+            origin_hostname "$_webui_origin"
+            _webui_hostname="$RETVAL"
+            if [ "$_mode" = "caddy" ] && [ "$_webui_origin" != "https://${_webui_hostname}" ]; then
+                printf '  Automatic Caddy publishing requires standard HTTPS port 443.\n' >&3
+            elif webui_hostname_conflicts "$_mode" "$_mail_hostname" "$_mail_domain" "$_webui_hostname"; then
+                printf '  Enter a dedicated WebUI hostname such as webmail.%s.\n' "$_mail_domain" >&3
+            fi
+        done
+    fi
+}
+
+print_server_identity_help() {
+    say ""
+    say "Public mail hostname and mail domain"
+    say "------------------------------------"
+    say "Enter DNS names you will publish for this mail server, not this VM's"
+    say "cloud or OS hostname (do not use a name ending in .internal or .local)."
+    say "  Public mail hostname  example: mail.example.com"
+    say "    SMTP greeting, TLS certificate, MX/A records, and the WebUI server URL."
+    say "  Primary mail domain   example: example.com"
+    say "    The part after @. If the hostname is mail.example.com, use example.com."
+    say "  WebUI hostname        typically webmail.example.com, not mail.example.com."
+    say "    If you left the earlier example, it becomes https://webmail.<domain>."
+    say "Press Enter only if the value in [brackets] is already that public DNS name."
+    say ""
+}
+
+prompt_mailjet_port() {
+    local _label="$1" _default="$2"
+    while true; do
+        prompt_port "$_label" "$_default"
+        case "$RETVAL" in
+            465|587|588|2525) return 0 ;;
+        esac
+        printf '  Enter 587 (STARTTLS) or 465 (implicit TLS). 588 and 2525 are also accepted.\n' >&3
+    done
+}
+
+prompt_admin_credentials() {
+    local _default="${1:-admin}"
+    prompt_text "Stalwart administrator username" "$_default"
+    ADMIN_USERNAME_RETVAL="$RETVAL"
+    prompt_secret "Stalwart administrator password or app password"
+    ADMIN_SECRET_RETVAL="$RETVAL"
+}
+
+prompt_secret() {
+    local _label="$1" _answer _saved_tty
+    while true; do
+        printf '%s: ' "$_label" >&3
+        _saved_tty="$(stty -g <&3)"
+        cleanup_tty_state="$_saved_tty"
+        stty -echo <&3
+        if ! IFS= read -r _answer <&3; then
+            stty "$_saved_tty" <&3
+            cleanup_tty_state=""
+            printf '\n' >&3
+            err "❌ Install failed: Interactive input ended before setup completed."
+        fi
+        stty "$_saved_tty" <&3
+        cleanup_tty_state=""
+        printf '\n' >&3
         if [ -n "$_answer" ]; then
             RETVAL="$_answer"
             return 0
@@ -496,9 +978,1577 @@ detect_public_ip() {
     esac
 }
 
+node_at_least_22_12() {
+    local _version _numbers _major _rest _minor _patch
+    _version="$("$1" --version 2>/dev/null)" || return 1
+    case "$_version" in
+        v*) _numbers="${_version#v}" ;;
+        *) return 1 ;;
+    esac
+    case "$_numbers" in
+        ''|.*|*.|*..*|*[!0-9.]*) return 1 ;;
+    esac
+    _major="${_numbers%%.*}"
+    _rest="${_numbers#*.}"
+    [ "$_rest" != "$_numbers" ] || return 1
+    _minor="${_rest%%.*}"
+    _patch="${_rest#*.}"
+    [ "$_patch" != "$_rest" ] || return 1
+    case "$_major:$_minor:$_patch" in
+        *[!0-9:]*) return 1 ;;
+    esac
+    [ "$_major" -gt 22 ] 2>/dev/null || \
+        { [ "$_major" -eq 22 ] 2>/dev/null && [ "$_minor" -ge 12 ] 2>/dev/null; }
+}
+
+prepare_node_runtime() {
+    local _tmp="$1" _candidate="" _arch="" _latest_sums _release_sums
+    local _archive_name="" _archive="" _archive_root="" _version=""
+    local _expected="" _actual="" _stage="" _destination="" _new_destination=""
+
+    if check_cmd node; then
+        _candidate="$(command -v node)"
+        case "$_candidate" in
+            /home/*|/root/*|/run/user/*) _candidate="" ;;
+            /*) ;;
+            *) _candidate="" ;;
+        esac
+    fi
+    if [ -n "$_candidate" ] && node_at_least_22_12 "$_candidate"; then
+        NODE_BIN="$_candidate"
+        NODE_VERSION="$("$NODE_BIN" --version)"
+        say "✅ Using Node.js ${NODE_VERSION} at ${NODE_BIN}."
+        return 0
+    fi
+
+    case "$(uname -m)" in
+        x86_64|amd64) _arch="x64" ;;
+        aarch64|arm64) _arch="arm64" ;;
+        armv7l) _arch="armv7l" ;;
+        ppc64le) _arch="ppc64le" ;;
+        s390x) _arch="s390x" ;;
+        *) err "❌ Install failed: No official Node.js 22 Linux binary is available for architecture $(uname -m). Install Node.js 22.12 or later and rerun the installer." ;;
+    esac
+
+    ensure_download_client
+    _latest_sums="${_tmp}/node-latest-SHASUMS256.txt"
+    say "📥 Node.js 22.12 or later was not found; downloading the official runtime..."
+    download_file "https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt" "$_latest_sums"
+    _archive_name="$(sed -n "s/^.*  \(node-v[^ ]*-linux-${_arch}\.tar\.gz\)$/\1/p" "$_latest_sums" | sed -n '1p')"
+    if [ -z "$_archive_name" ]; then
+        err "❌ Install failed: The Node.js release index has no Linux ${_arch} archive."
+    fi
+    case "$_archive_name" in
+        *[!A-Za-z0-9._-]*) err "❌ Install failed: The Node.js release index returned an unsafe archive name." ;;
+    esac
+    _version="$(printf '%s\n' "$_archive_name" | sed 's/^node-\(v[^-]*\)-.*/\1/')"
+    case "$_version" in
+        v22.*)
+            case "${_version#v}" in
+                .*|*.|*..*|*[!0-9.]*) err "❌ Install failed: The Node.js release index returned an invalid version (${_version})." ;;
+            esac
+            ;;
+        *) err "❌ Install failed: The Node.js release index returned an unexpected version (${_version})." ;;
+    esac
+
+    _release_sums="${_tmp}/node-${_version}-SHASUMS256.txt"
+    _archive="${_tmp}/${_archive_name}"
+    download_file "https://nodejs.org/dist/${_version}/SHASUMS256.txt" "$_release_sums"
+    download_file "https://nodejs.org/dist/${_version}/${_archive_name}" "$_archive"
+    _expected="$(sed -n "s/^\([0-9a-fA-F][0-9a-fA-F]*\)  ${_archive_name}$/\1/p" "$_release_sums" | sed -n '1p')"
+    if [ -z "$_expected" ]; then
+        err "❌ Install failed: The official checksum file does not contain ${_archive_name}."
+    fi
+    if [ "${#_expected}" -ne 64 ]; then
+        err "❌ Install failed: The official Node.js SHA-256 value has an invalid length."
+    fi
+    ensure_checksum_client
+    sha256_file "$_archive"
+    _actual="$RETVAL"
+    if [ "$_actual" != "$_expected" ]; then
+        err "❌ Install failed: The Node.js archive checksum did not match the official SHA-256 value."
+    fi
+
+    _archive_root="${_archive_name%.tar.gz}"
+    _stage="${_tmp}/node-runtime"
+    ensure mkdir -p "$_stage"
+    ensure tar --no-same-owner --no-same-permissions -xzf "$_archive" \
+        -C "$_stage" --strip-components=1 "${_archive_root}/bin/node"
+    if [ ! -x "${_stage}/bin/node" ] || ! node_at_least_22_12 "${_stage}/bin/node"; then
+        err "❌ Install failed: The downloaded Node.js runtime is missing, unusable, or older than 22.12."
+    fi
+    NODE_VERSION="$("${_stage}/bin/node" --version)"
+    if [ "$NODE_VERSION" != "$_version" ]; then
+        err "❌ Install failed: The downloaded Node.js runtime reports ${NODE_VERSION}, expected ${_version}."
+    fi
+
+    _destination="${NODE_INSTALL_ROOT}/${_version}/bin/node"
+    _new_destination="${_destination}.new.$$"
+    ensure install -d "${NODE_INSTALL_ROOT}/${_version}/bin"
+    ensure install -m 0755 "${_stage}/bin/node" "$_new_destination"
+    ensure mv -f "$_new_destination" "$_destination"
+    NODE_BIN="$_destination"
+    say "✅ Installed private Node.js ${NODE_VERSION} at ${NODE_BIN}."
+}
+
+ensure_download_client() {
+    if check_cmd curl || check_cmd wget; then
+        return 0
+    fi
+
+    say "📦 Installing curl so the official Node.js runtime can be downloaded..."
+    if check_cmd apt-get; then
+        ensure env DEBIAN_FRONTEND=noninteractive apt-get update
+        ensure env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl
+    elif check_cmd dnf; then
+        ensure dnf install -y ca-certificates curl
+    elif check_cmd microdnf; then
+        ensure microdnf install -y ca-certificates curl
+    elif check_cmd yum; then
+        ensure yum install -y ca-certificates curl
+    elif check_cmd zypper; then
+        ensure zypper --non-interactive install ca-certificates curl
+    elif check_cmd pacman; then
+        ensure pacman -S --needed --noconfirm ca-certificates curl
+    else
+        err "❌ Install failed: curl or wget is required to download Node.js, and no supported package manager was found. Install curl and rerun the installer."
+    fi
+
+    if ! check_cmd curl && ! check_cmd wget; then
+        err "❌ Install failed: A download client could not be installed."
+    fi
+}
+
+ensure_checksum_client() {
+    if check_cmd sha256sum || check_cmd shasum || check_cmd openssl; then
+        return 0
+    fi
+
+    say "📦 Installing coreutils so the Node.js download can be verified..."
+    if check_cmd apt-get; then
+        ensure env DEBIAN_FRONTEND=noninteractive apt-get update
+        ensure env DEBIAN_FRONTEND=noninteractive apt-get install -y coreutils
+    elif check_cmd dnf; then
+        ensure dnf install -y coreutils
+    elif check_cmd microdnf; then
+        ensure microdnf install -y coreutils
+    elif check_cmd yum; then
+        ensure yum install -y coreutils
+    elif check_cmd zypper; then
+        ensure zypper --non-interactive install coreutils
+    elif check_cmd pacman; then
+        ensure pacman -S --needed --noconfirm coreutils
+    else
+        err "❌ Install failed: A SHA-256 utility is required to verify Node.js, and no supported package manager was found. Install coreutils and rerun the installer."
+    fi
+
+    if ! check_cmd sha256sum && ! check_cmd shasum && ! check_cmd openssl; then
+        err "❌ Install failed: A SHA-256 utility could not be installed."
+    fi
+}
+
+ensure_caddy_available() {
+    if check_cmd caddy && systemctl cat caddy.service >/dev/null 2>&1; then
+        return 0
+    fi
+
+    say "📦 Installing the distribution Caddy package..."
+    if check_cmd apt-get; then
+        ensure env DEBIAN_FRONTEND=noninteractive apt-get update
+        ensure env DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+    elif check_cmd dnf; then
+        ensure dnf install -y caddy
+    elif check_cmd microdnf; then
+        ensure microdnf install -y caddy
+    elif check_cmd yum; then
+        ensure yum install -y caddy
+    elif check_cmd zypper; then
+        ensure zypper --non-interactive install caddy
+    elif check_cmd pacman; then
+        ensure pacman -S --needed --noconfirm caddy
+    else
+        err "❌ Install failed: Automatic HTTPS publishing needs Caddy and no supported package manager was found. Install the Caddy systemd package or choose operator-managed proxy mode."
+    fi
+
+    if ! check_cmd caddy || ! systemctl cat caddy.service >/dev/null 2>&1; then
+        err "❌ Install failed: Caddy and caddy.service are required for automatic HTTPS publishing. Install the distribution package or choose operator-managed proxy mode."
+    fi
+}
+
+ensure_openssl_available() {
+    if check_cmd openssl; then
+        return 0
+    fi
+
+    say "📦 Installing OpenSSL for certificate validation and synchronization..."
+    if check_cmd apt-get; then
+        ensure env DEBIAN_FRONTEND=noninteractive apt-get update
+        ensure env DEBIAN_FRONTEND=noninteractive apt-get install -y openssl
+    elif check_cmd dnf; then
+        ensure dnf install -y openssl
+    elif check_cmd microdnf; then
+        ensure microdnf install -y openssl
+    elif check_cmd yum; then
+        ensure yum install -y openssl
+    elif check_cmd zypper; then
+        ensure zypper --non-interactive install openssl
+    elif check_cmd pacman; then
+        ensure pacman -S --needed --noconfirm openssl
+    else
+        err "❌ Install failed: OpenSSL is required to synchronize Caddy certificates into Stalwart."
+    fi
+    need_cmd openssl
+}
+
+download_file() {
+    local _url="$1" _destination="$2"
+    if check_cmd curl; then
+        if ! curl --proto '=https' --tlsv1.2 --silent --show-error --fail \
+            --location --connect-timeout 10 --retry 3 --output "$_destination" "$_url"; then
+            err "❌ Install failed: Could not download ${_url}."
+        fi
+    elif check_cmd wget; then
+        if ! wget --https-only --quiet --timeout=30 --tries=3 \
+            --output-document="$_destination" "$_url"; then
+            err "❌ Install failed: Could not download ${_url}."
+        fi
+    else
+        err "❌ Install failed: curl or wget is required to download ${_url}."
+    fi
+}
+
+sha256_file() {
+    local _path="$1" _digest=""
+    if check_cmd sha256sum; then
+        _digest="$(sha256sum "$_path" | sed 's/[[:space:]].*$//')"
+    elif check_cmd shasum; then
+        _digest="$(shasum -a 256 "$_path" | sed 's/[[:space:]].*$//')"
+    elif check_cmd openssl; then
+        _digest="$(openssl dgst -sha256 "$_path" | sed 's/^.*= *//')"
+    else
+        err "❌ Install failed: sha256sum, shasum, or openssl is required to verify the Node.js download."
+    fi
+    case "$_digest" in
+        *[!0-9a-fA-F]*|'') err "❌ Install failed: Could not calculate the Node.js archive checksum." ;;
+    esac
+    RETVAL="$_digest"
+}
+
+normalize_https_origin() {
+    local _input="$1" _authority _hostname _port="" _label _remaining
+    case "$_input" in
+        https://*) _authority="${_input#https://}" ;;
+        *)
+            VALIDATION_ERROR="The public WebUI origin must use HTTPS, for example https://webmail.example.com."
+            return 1
+            ;;
+    esac
+    case "$_authority" in
+        ''|*/*|*\?*|*\#*|*@*|*:*:*)
+            VALIDATION_ERROR="The WebUI origin must be an exact HTTPS DNS origin without credentials, a path, a query, or a fragment."
+            return 1
+            ;;
+    esac
+    case "$_authority" in
+        *:*)
+            _hostname="${_authority%%:*}"
+            _port="${_authority#*:}"
+            case "$_port" in
+                *[!0-9]*|'')
+                    VALIDATION_ERROR="The WebUI origin contains an invalid port."
+                    return 1
+                    ;;
+            esac
+            _port="$(printf '%s\n' "$_port" | sed 's/^0*//')"
+            [ -n "$_port" ] || _port="0"
+            if [ "$_port" -lt 1 ] 2>/dev/null || [ "$_port" -gt 65535 ] 2>/dev/null; then
+                VALIDATION_ERROR="The WebUI origin port must be from 1 through 65535."
+                return 1
+            fi
+            ;;
+        *) _hostname="$_authority" ;;
+    esac
+    _hostname="$(printf '%s' "$_hostname" | tr '[:upper:]' '[:lower:]')"
+    case "$_hostname" in
+        .*|*.|*..*|*[!a-z0-9.-]*)
+            VALIDATION_ERROR="The public WebUI origin contains an invalid DNS hostname."
+            return 1
+            ;;
+        *[!0-9.]*) ;;
+        *)
+            VALIDATION_ERROR="The public WebUI origin must use a DNS hostname, not an IP address."
+            return 1
+            ;;
+    esac
+    case "$_hostname" in
+        *.*) ;;
+        *)
+            VALIDATION_ERROR="The public WebUI origin must contain a fully qualified DNS hostname."
+            return 1
+            ;;
+    esac
+    if [ "${#_hostname}" -gt 253 ]; then
+        VALIDATION_ERROR="The WebUI hostname is longer than 253 characters."
+        return 1
+    fi
+    _remaining="$_hostname"
+    while true; do
+        _label="${_remaining%%.*}"
+        case "$_label" in
+            ''|-*|*-|*[!a-z0-9-]*)
+                VALIDATION_ERROR="The WebUI origin contains an invalid DNS hostname."
+                return 1
+                ;;
+        esac
+        if [ "${#_label}" -gt 63 ]; then
+            VALIDATION_ERROR="A WebUI hostname label is longer than 63 characters."
+            return 1
+        fi
+        case "$_remaining" in
+            *.*) _remaining="${_remaining#*.}" ;;
+            *) break ;;
+        esac
+    done
+    if [ -n "$_port" ] && [ "$_port" != "443" ]; then
+        RETVAL="https://${_hostname}:${_port}"
+    else
+        RETVAL="https://${_hostname}"
+    fi
+}
+
+origin_hostname() {
+    local _authority
+    _authority="${1#https://}"
+    RETVAL="${_authority%%:*}"
+}
+
+validate_caddy_config_ownership() {
+    if [ -L "$CADDY_CONFIG_FILE" ]; then
+        err "❌ Install failed: ${CADDY_CONFIG_FILE} is a symbolic link. Choose the operator-managed proxy mode."
+    fi
+    if [ -e "$CADDY_CONFIG_FILE" ] && [ ! -f "$CADDY_CONFIG_FILE" ]; then
+        err "❌ Install failed: ${CADDY_CONFIG_FILE} is not a regular file. Choose the operator-managed proxy mode."
+    fi
+    if [ -f "$CADDY_CONFIG_FILE" ] && \
+        ! grep -F -q "$CADDY_MANAGED_MARKER" "$CADDY_CONFIG_FILE" && \
+        ! is_pristine_packaged_caddyfile "$CADDY_CONFIG_FILE"
+    then
+        err "❌ Install failed: ${CADDY_CONFIG_FILE} is not owned by this installer. Preserve it and rerun using the operator-managed proxy mode."
+    fi
+    if [ ! -e "$CADDY_CONFIG_FILE" ] && \
+        { check_cmd caddy || systemctl cat caddy.service >/dev/null 2>&1; }
+    then
+        err "❌ Install failed: A pre-existing Caddy installation was detected without this installer's managed Caddyfile. Rerun using the operator-managed proxy mode."
+    fi
+}
+
+is_pristine_packaged_caddyfile() {
+    local _path="$1" _expected="" _actual=""
+    if check_cmd dpkg-query && check_cmd md5sum; then
+        _expected="$(dpkg-query -W -f='${Conffiles}\n' caddy 2>/dev/null | \
+            sed -n 's|^[[:space:]]*/etc/caddy/Caddyfile[[:space:]]\([0-9a-fA-F][0-9a-fA-F]*\).*$|\1|p' | \
+            sed -n '1p')"
+        if [ -n "$_expected" ]; then
+            _actual="$(md5sum "$_path" 2>/dev/null | sed 's/[[:space:]].*$//' || true)"
+            [ "$_actual" = "$_expected" ] && return 0
+        fi
+    fi
+    return 1
+}
+
+webui_hostname_conflicts() {
+    local _mode="$1" _mail_hostname="$2" _mail_domain="$3" _webui_hostname="$4"
+    if [ "$_webui_hostname" = "$_mail_hostname" ]; then
+        return 0
+    fi
+    if [ "$_mode" = "caddy" ]; then
+        case "$_webui_hostname" in
+            "mta-sts.${_mail_domain}"|"ua-auto-config.${_mail_domain}"|\
+            "autoconfig.${_mail_domain}"|"autodiscover.${_mail_domain}") return 0 ;;
+        esac
+    fi
+    return 1
+}
+
+normalize_dns_name() {
+    local _input="$1" _normalized
+    if ! _normalized="$(DNS_NAME="$_input" "$NODE_BIN" -e '
+      const name = process.env.DNS_NAME.trim().toLowerCase().replace(/\.$/, "");
+      const labels = name.split(".");
+      if (name.length > 253 || labels.length < 2 || labels.some((label) =>
+        label.length < 1 || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))) {
+        throw new Error("expected a fully qualified DNS name");
+      }
+      console.log(name);
+    ' 2>&1)"; then
+        VALIDATION_ERROR="Invalid DNS name '${_input}': ${_normalized}"
+        return 1
+    fi
+    RETVAL="$_normalized"
+}
+
+paths_overlap() {
+    local _left="${1%/}" _right="${2%/}"
+    case "${_left}/" in "${_right}/"*) return 0 ;; esac
+    case "${_right}/" in "${_left}/"*) return 0 ;; esac
+    return 1
+}
+
+json_field() {
+    local _path="$1" _field="$2" _value
+    if ! _value="$(JSON_PATH="$_path" JSON_FIELD="$_field" "$NODE_BIN" -e '
+      const fs = require("node:fs");
+      let value = JSON.parse(fs.readFileSync(process.env.JSON_PATH, "utf8"));
+      for (const part of process.env.JSON_FIELD.split(".")) value = value?.[part];
+      if (value != null) process.stdout.write(String(value));
+    ')"; then
+        err "❌ Install failed: Could not read ${_field} from ${_path}."
+    fi
+    RETVAL="$_value"
+}
+
+wait_for_http() {
+    local _url="$1" _label="$2"
+    if ! HEALTH_URL="$_url" HEALTH_LABEL="$_label" "$NODE_BIN" -e '
+      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      (async () => {
+        let last = "no response";
+        for (let attempt = 0; attempt < 60; attempt++) {
+          try {
+            const response = await fetch(process.env.HEALTH_URL, { signal: AbortSignal.timeout(2000) });
+            if (response.ok) return;
+            last = `HTTP ${response.status}`;
+          } catch (error) { last = error.message; }
+          await delay(1000);
+        }
+        throw new Error(`${process.env.HEALTH_LABEL} did not become ready: ${last}`);
+      })().catch((error) => { console.error(error.message); process.exit(1); });
+    '; then
+        err "❌ Install failed: ${_label} did not pass its local readiness check."
+    fi
+}
+
+create_placeholder_certificate() {
+    local _directory="$1" _certificate="$2" _private_key="$3"
+    local _hostname="$4" _account="$5" _cert_public="" _key_public=""
+    local _new_certificate="${_certificate}.new.$$" _new_private_key="${_private_key}.new.$$"
+
+    ensure install -d -m 0750 -o root -g "$_account" "$_directory"
+    if [ -f "$_certificate" ] && [ -f "$_private_key" ]; then
+        _cert_public="$(openssl x509 -in "$_certificate" -pubkey -noout 2>/dev/null | \
+            openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null || true)"
+        _key_public="$(openssl pkey -in "$_private_key" -pubout -outform DER 2>/dev/null | \
+            openssl dgst -sha256 2>/dev/null || true)"
+        if [ -n "$_cert_public" ] && [ "$_cert_public" = "$_key_public" ] && \
+            openssl x509 -in "$_certificate" -noout -checkhost "$_hostname" >/dev/null 2>&1
+        then
+            ensure chown "root:${_account}" "$_certificate" "$_private_key"
+            ensure chmod 0640 "$_certificate" "$_private_key"
+            return 0
+        fi
+    fi
+
+    if ! openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 30 \
+        -subj "/CN=${_hostname}" -addext "subjectAltName=DNS:${_hostname}" \
+        -keyout "$_new_private_key" -out "$_new_certificate" >/dev/null 2>&1
+    then
+        rm -f "$_new_certificate" "$_new_private_key"
+        err "❌ Install failed: Could not create the temporary certificate used before Caddy finishes ACME issuance."
+    fi
+    ensure chown "root:${_account}" "$_new_certificate" "$_new_private_key"
+    ensure chmod 0640 "$_new_certificate" "$_new_private_key"
+    ensure mv -f "$_new_private_key" "$_private_key"
+    ensure mv -f "$_new_certificate" "$_certificate"
+}
+
+configure_stalwart_caddy_proxy() {
+    local _domain="$1" _certificate="$2" _private_key="$3"
+    local _username="$4" _secret="$5"
+    printf '%s' "$_secret" | \
+        STALWART_MAIL_DOMAIN="$_domain" STALWART_CERTIFICATE_PATH="$_certificate" \
+        STALWART_PRIVATE_KEY_PATH="$_private_key" STALWART_ADMIN_USERNAME="$_username" \
+        "$NODE_BIN" -e '
+          const fs = require("node:fs");
+          const username = process.env.STALWART_ADMIN_USERNAME;
+          const password = fs.readFileSync(0, "utf8");
+          const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+
+          async function call(method, args, tag) {
+            const response = await fetch("http://127.0.0.1:8080/jmap/", {
+              method: "POST",
+              headers: { Authorization: authorization, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                using: ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
+                methodCalls: [[method, args, tag]],
+              }),
+              signal: AbortSignal.timeout(15000),
+            });
+            const text = await response.text();
+            let body;
+            try { body = JSON.parse(text); } catch {
+              throw new Error(`${method} returned non-JSON (${response.status}): ${text.slice(0, 300)}`);
+            }
+            if (!response.ok) {
+              const err = new Error(`${method} was rejected (${response.status}): ${text.slice(0, 500)}`);
+              if (response.status === 401 || response.status === 403) err.authFailed = true;
+              throw err;
+            }
+            const result = (body.methodResponses ?? []).find((entry) => entry[2] === tag);
+            if (!result) throw new Error(`${method} returned no tagged response: ${text.slice(0, 500)}`);
+            if (result[0] === "error") {
+              const err = new Error(`${method} failed: ${JSON.stringify(result[1])}`);
+              if (/forbidden|unauthorized|authentication/i.test(String(result[1]?.type ?? ""))) err.authFailed = true;
+              throw err;
+            }
+            return result[1];
+          }
+
+          function assertSet(result, label) {
+            for (const field of ["notCreated", "notUpdated", "notDestroyed"]) {
+              if (Object.keys(result?.[field] ?? {}).length) {
+                throw new Error(`${label} failed: ${JSON.stringify(result[field])}`);
+              }
+            }
+          }
+
+          (async () => {
+            const listeners = await call("x:NetworkListener/get", {
+              properties: ["id", "name", "protocol", "bind", "tlsImplicit"],
+            }, "listeners");
+            const http = (listeners.list ?? []).find((listener) => listener.name === "http");
+            const https = (listeners.list ?? []).find((listener) => listener.name === "https");
+            if (!http || !https) {
+              throw new Error("The default Stalwart HTTP listeners named http and https were not found.");
+            }
+
+            const certificates = await call("x:Certificate/get", {
+              properties: ["id", "certificate"],
+            }, "certificates");
+            const certificatePath = process.env.STALWART_CERTIFICATE_PATH;
+            let certificateId = (certificates.list ?? []).find((certificate) =>
+              certificate.certificate?.["@type"] === "File" &&
+              certificate.certificate?.filePath === certificatePath)?.id;
+            if (!certificateId) {
+              const created = await call("x:Certificate/set", { create: { caddyMail: {
+                certificate: { "@type": "File", filePath: certificatePath },
+                privateKey: { "@type": "File", filePath: process.env.STALWART_PRIVATE_KEY_PATH },
+              } } }, "createCertificate");
+              assertSet(created, "Caddy-backed certificate creation");
+              certificateId = created.created?.caddyMail?.id;
+              if (!certificateId) throw new Error(`Certificate creation returned no id: ${JSON.stringify(created)}`);
+            } else {
+              const updated = await call("x:Certificate/set", { update: {
+                [certificateId]: {
+                  certificate: { "@type": "File", filePath: certificatePath },
+                  privateKey: { "@type": "File", filePath: process.env.STALWART_PRIVATE_KEY_PATH },
+                },
+              } }, "updateCertificate");
+              assertSet(updated, "Caddy-backed certificate update");
+            }
+
+            const domains = await call("x:Domain/query", {
+              filter: { name: process.env.STALWART_MAIL_DOMAIN },
+            }, "domainQuery");
+            if ((domains.ids ?? []).length !== 1) {
+              throw new Error(`Expected one primary mail domain, found ${(domains.ids ?? []).length}.`);
+            }
+            const domainId = domains.ids[0];
+
+            const domainUpdate = await call("x:Domain/set", { update: {
+              [domainId]: { certificateManagement: { "@type": "Manual" } },
+            } }, "domainUpdate");
+            assertSet(domainUpdate, "Domain certificate management update");
+
+            const listenerUpdate = await call("x:NetworkListener/set", { update: {
+              [http.id]: { bind: { "127.0.0.1:8080": true } },
+              [https.id]: { bind: { "127.0.0.1:8443": true } },
+            } }, "listenerUpdate");
+            assertSet(listenerUpdate, "HTTP listener update");
+
+            const systemUpdate = await call("x:SystemSettings/set", { update: {
+              singleton: { defaultCertificateId: certificateId },
+            } }, "systemUpdate");
+            assertSet(systemUpdate, "Default certificate update");
+
+            const httpUpdate = await call("x:Http/set", { update: {
+              singleton: { useXForwarded: true },
+            } }, "httpUpdate");
+            assertSet(httpUpdate, "Forwarded-header update");
+          })().catch((error) => {
+            console.error(error.message);
+            process.exit(error.authFailed ? 2 : 1);
+          });
+        ' || return $?
+}
+
+install_stalwart_public_url_dropin() {
+    local _path="$1" _hostname="$2" _directory
+    _directory="$(dirname "$_path")"
+    ensure install -d -m 0755 "$_directory"
+    cat > "$_path" <<EOF
+# Managed by the Stalwart combined installer.
+[Service]
+Environment="STALWART_HOSTNAME=${_hostname}"
+Environment="STALWART_PUBLIC_URL=https://${_hostname}"
+EOF
+    ensure chmod 0644 "$_path"
+}
+
+write_caddy_configuration_file() {
+    local _path="$1" _mail_hostname="$2" _mail_domain="$3"
+    local _webui_hostname="$4" _webui_port="$5" _hosts _candidate
+    _hosts="$_mail_hostname"
+    for _candidate in \
+        "mta-sts.${_mail_domain}" \
+        "ua-auto-config.${_mail_domain}" \
+        "autoconfig.${_mail_domain}" \
+        "autodiscover.${_mail_domain}"
+    do
+        case ",${_hosts}," in
+            *",${_candidate},"*) ;;
+            *) _hosts="${_hosts},${_candidate}" ;;
+        esac
+    done
+    _hosts="$(printf '%s' "$_hosts" | sed 's/,/, /g')"
+
+    cat > "$_path" <<EOF
+${CADDY_MANAGED_MARKER}
+# Public HTTPS routing for Stalwart protocol discovery and administration.
+${_hosts} {
+    reverse_proxy 127.0.0.1:8080
+}
+
+# Mail and Calendar WebUI. This is intentionally a separate upstream.
+${_webui_hostname} {
+    reverse_proxy 127.0.0.1:${_webui_port}
+}
+EOF
+}
+
+install_caddy_configuration() {
+    local _tmp="$1" _mail_hostname="$2" _mail_domain="$3"
+    local _webui_hostname="$4" _webui_port="$5" _stage
+    _stage="${_tmp}/Caddyfile.stalwart"
+    write_caddy_configuration_file \
+        "$_stage" "$_mail_hostname" "$_mail_domain" "$_webui_hostname" "$_webui_port"
+    if ! caddy fmt --overwrite "$_stage"; then
+        err "❌ Install failed: Caddy could not format the generated reverse-proxy configuration."
+    fi
+    if ! caddy validate --config "$_stage" --adapter caddyfile; then
+        err "❌ Install failed: Caddy rejected the generated reverse-proxy configuration."
+    fi
+    ensure install -d -m 0755 "$(dirname "$CADDY_CONFIG_FILE")"
+    ensure install -m 0644 "$_stage" "$CADDY_CONFIG_FILE"
+}
+
+write_caddy_certificate_sync_script() {
+    local _path="$1" _hostname="$2" _certificate="$3" _private_key="$4" _account="$5"
+    cat > "$_path" <<EOF
+#!/usr/bin/env sh
+set -eu
+
+mail_hostname='${_hostname}'
+caddy_cert_root='${CADDY_CERT_ROOT}'
+stalwart_certificate='${_certificate}'
+stalwart_private_key='${_private_key}'
+stalwart_group='${_account}'
+
+selected_certificate=''
+selected_private_key=''
+for candidate in "\${caddy_cert_root}"/*/"\${mail_hostname}"/"\${mail_hostname}.crt"; do
+    [ -f "\${candidate}" ] || continue
+    candidate_key="\${candidate%.crt}.key"
+    [ -f "\${candidate_key}" ] || continue
+    openssl x509 -in "\${candidate}" -noout -checkhost "\${mail_hostname}" >/dev/null 2>&1 || continue
+    certificate_public_key="\$(openssl x509 -in "\${candidate}" -pubkey -noout 2>/dev/null | \
+        openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null)" || continue
+    private_public_key="\$(openssl pkey -in "\${candidate_key}" -pubout -outform DER 2>/dev/null | \
+        openssl dgst -sha256 2>/dev/null)" || continue
+    [ -n "\${certificate_public_key}" ] && [ "\${certificate_public_key}" = "\${private_public_key}" ] || continue
+    if [ -z "\${selected_certificate}" ] || [ "\${candidate}" -nt "\${selected_certificate}" ]; then
+        selected_certificate="\${candidate}"
+        selected_private_key="\${candidate_key}"
+    fi
+done
+
+if [ -z "\${selected_certificate}" ]; then
+    printf '%s\n' "Caddy certificate for \${mail_hostname} is not available yet; retrying on the next timer run." >&2
+    exit 0
+fi
+if cmp -s "\${selected_certificate}" "\${stalwart_certificate}" && \
+    cmp -s "\${selected_private_key}" "\${stalwart_private_key}"
+then
+    exit 0
+fi
+
+certificate_new="\${stalwart_certificate}.new.\$$"
+private_key_new="\${stalwart_private_key}.new.\$$"
+trap 'rm -f "\${certificate_new}" "\${private_key_new}"' EXIT HUP INT TERM
+install -m 0640 -o root -g "\${stalwart_group}" "\${selected_certificate}" "\${certificate_new}"
+install -m 0640 -o root -g "\${stalwart_group}" "\${selected_private_key}" "\${private_key_new}"
+mv -f "\${private_key_new}" "\${stalwart_private_key}"
+mv -f "\${certificate_new}" "\${stalwart_certificate}"
+trap - EXIT HUP INT TERM
+systemctl restart stalwart.service
+printf '%s\n' "Imported Caddy certificate for \${mail_hostname} and restarted Stalwart."
+EOF
+}
+
+install_caddy_certificate_sync() {
+    local _hostname="$1" _certificate="$2" _private_key="$3" _account="$4"
+    local _new_script="${CADDY_CERT_SYNC_SCRIPT}.new.$$"
+    ensure install -d -m 0755 "$(dirname "$CADDY_CERT_SYNC_SCRIPT")"
+    write_caddy_certificate_sync_script \
+        "$_new_script" "$_hostname" "$_certificate" "$_private_key" "$_account"
+    ensure chmod 0755 "$_new_script"
+    ensure mv -f "$_new_script" "$CADDY_CERT_SYNC_SCRIPT"
+
+    cat > "$CADDY_CERT_SYNC_SERVICE" <<EOF
+[Unit]
+Description=Synchronize Caddy's mail certificate into Stalwart
+After=caddy.service
+
+[Service]
+Type=oneshot
+ExecStart=${CADDY_CERT_SYNC_SCRIPT}
+EOF
+    cat > "$CADDY_CERT_SYNC_TIMER" <<'EOF'
+[Unit]
+Description=Periodically synchronize Caddy's mail certificate into Stalwart
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=stalwart-caddy-cert-sync.service
+
+[Install]
+WantedBy=timers.target
+EOF
+    ensure chmod 0644 "$CADDY_CERT_SYNC_SERVICE" "$CADDY_CERT_SYNC_TIMER"
+}
+
+configure_stalwart_cors() {
+    local _origin="$1" _username="$2" _secret="$3"
+    printf '%s' "$_secret" | \
+        STALWART_WEBUI_ORIGIN="$_origin" STALWART_ADMIN_USERNAME="$_username" \
+        "$NODE_BIN" -e '
+          const fs = require("node:fs");
+          const origin = process.env.STALWART_WEBUI_ORIGIN;
+          const username = process.env.STALWART_ADMIN_USERNAME;
+          const password = fs.readFileSync(0, "utf8");
+          const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+          const headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, X-Requested-With",
+            "Access-Control-Allow-Methods": "POST, GET, PATCH, PUT, DELETE, HEAD, OPTIONS",
+            "Vary": "Origin",
+          };
+          const payload = {
+            using: ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
+            methodCalls: [
+              ["x:Http/set", { update: { singleton: {
+                usePermissiveCors: false,
+                "responseHeaders/Access-Control-Allow-Origin": headers["Access-Control-Allow-Origin"],
+                "responseHeaders/Access-Control-Allow-Headers": headers["Access-Control-Allow-Headers"],
+                "responseHeaders/Access-Control-Allow-Methods": headers["Access-Control-Allow-Methods"],
+                "responseHeaders/Vary": headers.Vary,
+              } } }, "cors"],
+              ["x:Action/set", { create: { reload: { "@type": "ReloadSettings" } } }, "reload"],
+            ],
+          };
+          const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          (async () => {
+            const response = await fetch("http://127.0.0.1:8080/jmap/", {
+              method: "POST",
+              headers: { Authorization: authorization, "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(10000),
+            });
+            const text = await response.text();
+            let body;
+            try { body = JSON.parse(text); } catch { throw new Error(`Stalwart returned non-JSON (${response.status}): ${text.slice(0, 200)}`); }
+            if (!response.ok) {
+              const err = new Error(`Stalwart rejected the CORS update (${response.status}): ${text.slice(0, 500)}`);
+              if (response.status === 401 || response.status === 403) err.authFailed = true;
+              throw err;
+            }
+            for (const method of body.methodResponses ?? []) {
+              if (method[0] === "error") {
+                const err = new Error(`Stalwart CORS update failed: ${JSON.stringify(method[1])}`);
+                if (/forbidden|unauthorized|authentication/i.test(String(method[1]?.type ?? ""))) err.authFailed = true;
+                throw err;
+              }
+            }
+            const http = (body.methodResponses ?? []).find((method) => method[2] === "cors")?.[1];
+            const reload = (body.methodResponses ?? []).find((method) => method[2] === "reload")?.[1];
+            if (!http?.updated || !("singleton" in http.updated) || Object.keys(http.notUpdated ?? {}).length) {
+              throw new Error(`HTTP settings were not updated: ${JSON.stringify(http)}`);
+            }
+            if (!reload?.created?.reload || Object.keys(reload.notCreated ?? {}).length) {
+              throw new Error(`Stalwart settings were not reloaded: ${JSON.stringify(reload)}`);
+            }
+            let last = "no response";
+            for (let attempt = 0; attempt < 30; attempt++) {
+              try {
+                const check = await fetch("http://127.0.0.1:8080/jmap/", {
+                  method: "OPTIONS",
+                  headers: {
+                    Origin: origin,
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "authorization,content-type",
+                  },
+                  signal: AbortSignal.timeout(2000),
+                });
+                const mismatch = Object.entries(headers).find(([name, value]) => check.headers.get(name) !== value);
+                if (check.ok && !mismatch) return;
+                last = mismatch ? `${mismatch[0]} was ${check.headers.get(mismatch[0])}` : `HTTP ${check.status}`;
+              } catch (error) { last = error.message; }
+              await delay(500);
+            }
+            throw new Error(`CORS verification failed: ${last}`);
+          })().catch((error) => {
+            console.error(error.message);
+            process.exit(error.authFailed ? 2 : 1);
+          });
+        ' || return $?
+}
+
+configure_optional_mailjet_relay() {
+    local _username="$1" _admin_secret="$2" _mail_domain="$3"
+    local _host _port _api_key _secret _status _errfile
+    RETVAL="false"
+    say ""
+    say "Outbound SMTP relay"
+    say "-------------------"
+    say "Google Cloud blocks outbound TCP port 25, so this server cannot deliver"
+    say "mail directly to other MX hosts. A Mailjet SMTP relay on port 587 or 465"
+    say "avoids that block. Stalwart uses SMTP, not Mailjet's HTTP Send API."
+    say ""
+    if ! prompt_yes_no "Use a Mailjet SMTP relay for outbound mail" "yes"; then
+        return 0
+    fi
+    say ""
+    say "In the Mailjet app, complete these steps, then return here with the SMTP"
+    say "API key and secret key (not the Mailjet website login):"
+    say "  1. Create an account at https://app.mailjet.com/"
+    say "  2. Account settings → Senders & Domains → add domain ${_mail_domain}"
+    say "  3. Publish Mailjet's domain-ownership TXT, then SPF/DKIM as shown there"
+    say "  4. Account settings → SMTP and SEND API settings"
+    say "     https://app.mailjet.com/account/relay"
+    say "  Host is in-v3.mailjet.com. Username is the API key. Password is the"
+    say "  secret key (shown once). Merge include:spf.mailjet.com into the existing"
+    say "  SPF record; keep Stalwart's DKIM selector and add Mailjet's separately."
+    say "  See docs/MAILJET_SMTP_RELAY.md for the full walkthrough."
+    say ""
+    prompt_dns_name "Mailjet SMTP host" "in-v3.mailjet.com"
+    _host="$RETVAL"
+    prompt_mailjet_port "Mailjet SMTP port" "587"
+    _port="$RETVAL"
+    prompt_text "Mailjet API key (SMTP username)" ""
+    _api_key="$RETVAL"
+    prompt_secret "Mailjet secret key (SMTP password)"
+    _secret="$RETVAL"
+    say "🔐 Configuring Stalwart to relay outbound mail through Mailjet..."
+    _errfile="$(mktemp)"
+    while true; do
+        _status=0
+        configure_stalwart_mailjet_relay \
+            "$_username" "$_admin_secret" "$_api_key" "$_secret" "$_host" "$_port" \
+            2>"$_errfile" || _status=$?
+        if [ -s "$_errfile" ]; then
+            sed 's/^/  /' "$_errfile" >&3
+        fi
+        if [ "$_status" -eq 0 ]; then
+            rm -f "$_errfile"
+            RETVAL="true"
+            return 0
+        fi
+        if [ "$_status" -eq 2 ]; then
+            printf '  Stalwart rejected those administrator credentials. Enter them again.\n' >&3
+            prompt_admin_credentials "$_username"
+            _username="$ADMIN_USERNAME_RETVAL"
+            _admin_secret="$ADMIN_SECRET_RETVAL"
+            continue
+        fi
+        printf '  Stalwart could not apply the Mailjet SMTP relay. Enter the API key and secret key again.\n' >&3
+        prompt_text "Mailjet API key (SMTP username)" ""
+        _api_key="$RETVAL"
+        prompt_secret "Mailjet secret key (SMTP password)"
+        _secret="$RETVAL"
+    done
+}
+
+configure_stalwart_mailjet_relay() {
+    local _username="$1" _admin_secret="$2" _api_key="$3" _secret="$4"
+    local _host="$5" _port="$6" _implicit_tls="false"
+    case "$_port" in
+        465) _implicit_tls="true" ;;
+    esac
+    printf '%s\n%s' "$_admin_secret" "$_secret" | \
+        STALWART_ADMIN_USERNAME="$_username" \
+        MAILJET_API_KEY="$_api_key" \
+        MAILJET_HOST="$_host" \
+        MAILJET_PORT="$_port" \
+        MAILJET_IMPLICIT_TLS="$_implicit_tls" \
+        "$NODE_BIN" -e '
+          const fs = require("node:fs");
+          const raw = fs.readFileSync(0, "utf8");
+          const nl = raw.indexOf("\n");
+          const adminPassword = nl === -1 ? raw : raw.slice(0, nl);
+          const mailjetSecret = nl === -1 ? "" : raw.slice(nl + 1).replace(/^\n/, "").replace(/\n$/, "");
+          const username = process.env.STALWART_ADMIN_USERNAME;
+          const apiKey = process.env.MAILJET_API_KEY;
+          const host = process.env.MAILJET_HOST;
+          const port = Number(process.env.MAILJET_PORT);
+          const implicitTls = process.env.MAILJET_IMPLICIT_TLS === "true";
+          const authorization = `Basic ${Buffer.from(`${username}:${adminPassword}`).toString("base64")}`;
+          const using = ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"];
+
+          async function jmap(methodCalls) {
+            const response = await fetch("http://127.0.0.1:8080/jmap/", {
+              method: "POST",
+              headers: { Authorization: authorization, "Content-Type": "application/json" },
+              body: JSON.stringify({ using, methodCalls }),
+              signal: AbortSignal.timeout(15000),
+            });
+            const text = await response.text();
+            let body;
+            try { body = JSON.parse(text); } catch {
+              throw new Error(`Stalwart returned non-JSON (${response.status}): ${text.slice(0, 200)}`);
+            }
+            if (!response.ok) {
+              const err = new Error(`JMAP HTTP ${response.status}: ${text.slice(0, 500)}`);
+              if (response.status === 401 || response.status === 403) err.authFailed = true;
+              throw err;
+            }
+            for (const method of body.methodResponses ?? []) {
+              if (method[0] === "error") {
+                const err = new Error(`JMAP error: ${JSON.stringify(method[1])}`);
+                if (/forbidden|unauthorized|authentication/i.test(String(method[1]?.type ?? ""))) err.authFailed = true;
+                throw err;
+              }
+            }
+            return Object.fromEntries((body.methodResponses ?? []).map((m) => [m[2], m[1]]));
+          }
+
+          function assertSet(result, kind) {
+            const failed = Object.keys(result?.notCreated ?? {}).length
+              || Object.keys(result?.notUpdated ?? {}).length
+              || Object.keys(result?.notDestroyed ?? {}).length;
+            if (failed) throw new Error(`${kind} failed: ${JSON.stringify(result)}`);
+          }
+
+          const relayFields = {
+            address: host,
+            port,
+            protocol: "smtp",
+            authUsername: apiKey,
+            authSecret: { "@type": "Value", secret: mailjetSecret },
+            implicitTls,
+            allowInvalidCerts: false,
+            description: "Mailjet SMTP relay",
+          };
+
+          async function listRoutes() {
+            const listed = await jmap([
+              ["x:MtaRoute/get", { properties: ["id", "name", "@type"] }, "routes"],
+            ]);
+            const rows = listed.routes?.list;
+            return Array.isArray(rows) ? rows : [];
+          }
+
+          (async () => {
+            let existing = (await listRoutes()).find((row) => row.name === "mailjet");
+            if (existing?.id) {
+              const updated = await jmap([
+                ["x:MtaRoute/set", { update: { [existing.id]: relayFields } }, "route"],
+              ]);
+              assertSet(updated.route, "MtaRoute");
+            } else {
+              const created = await jmap([
+                ["x:MtaRoute/set", { create: { mailjet: { "@type": "Relay", name: "mailjet", ...relayFields } } }, "route"],
+              ]);
+              const conflict = created.route?.notCreated?.mailjet;
+              if (conflict) {
+                existing = (await listRoutes()).find((row) => row.name === "mailjet");
+                if (!existing?.id) throw new Error(`MtaRoute failed: ${JSON.stringify(created.route)}`);
+                const updated = await jmap([
+                  ["x:MtaRoute/set", { update: { [existing.id]: relayFields } }, "route"],
+                ]);
+                assertSet(updated.route, "MtaRoute");
+              } else {
+                assertSet(created.route, "MtaRoute");
+              }
+            }
+
+            const strategy = await jmap([
+              ["x:MtaOutboundStrategy/set", { update: { singleton: {
+                "route/else": String.fromCharCode(39) + "mailjet" + String.fromCharCode(39),
+                "route/match/0/if": "is_local_domain(rcpt_domain)",
+                "route/match/0/then": String.fromCharCode(39) + "local" + String.fromCharCode(39),
+              } } }, "strategy"],
+            ]);
+            assertSet(strategy.strategy, "MtaOutboundStrategy");
+
+            const reload = await jmap([
+              ["x:Action/set", { create: { reload: { "@type": "ReloadSettings" } } }, "reload"],
+            ]);
+            if (!reload.reload?.created?.reload) {
+              throw new Error(`ReloadSettings failed: ${JSON.stringify(reload.reload)}`);
+            }
+          })().catch((error) => {
+            console.error(error.message);
+            process.exit(error.authFailed ? 2 : 1);
+          });
+        ' || return $?
+}
+
+publish_optional_namecom_dns() {
+    local _state="$1" _webui_hostname="$2" _mail_domain="$3" _mailjet_relay="$4"
+    local _zone _username _token
+    RETVAL="false"
+    say ""
+    say "Authoritative DNS"
+    say "-----------------"
+    say "The WebUI and public HTTPS certificates need the printed A/AAAA (and mail)"
+    say "records to resolve to this server. If they are already in the zone, skip"
+    say "the name.com API. Otherwise the installer can publish them for you."
+    say ""
+    if prompt_yes_no "Have you already published the printed forward-DNS records" "no"; then
+        return 0
+    fi
+    say ""
+    say "Create a production API token at name.com: Account Settings → API Tokens."
+    say "Use the account username and token. Two-step verification must allow API"
+    say "access. The domain's nameservers must be name.com's. If old records"
+    say "conflict with the Stalwart table, they are listed and replaced only after"
+    say "confirmation. The installer never stores the token in installer-state.json."
+    say ""
+    prompt_dns_name "name.com domain (DNS zone)" "$_mail_domain"
+    _zone="$RETVAL"
+    prompt_text "name.com API username" ""
+    _username="$RETVAL"
+    prompt_secret "name.com API token"
+    _token="$RETVAL"
+    say "🌐 Publishing forward-DNS records through the name.com API..."
+    while true; do
+        if printf '%s' "$_token" | \
+            publish_dns_via_namecom "$_state" "$_webui_hostname" "$_zone" "$_mailjet_relay" "$_username"
+        then
+            if [ "$RETVAL" = "true" ]; then
+                return 0
+            fi
+            say "Name.com publishing was skipped. Add or replace the printed DNS rows by hand."
+            RETVAL="false"
+            return 0
+        fi
+        printf '  name.com rejected that request. Enter the username and token again, or\n' >&3
+        printf '  confirm the domain is in this name.com account.\n' >&3
+        prompt_dns_name "name.com domain (DNS zone)" "$_zone"
+        _zone="$RETVAL"
+        prompt_text "name.com API username" "$_username"
+        _username="$RETVAL"
+        prompt_secret "name.com API token"
+        _token="$RETVAL"
+    done
+}
+
+combined_forward_dns_records_js() {
+    cat <<'EOF'
+      const fs = require("node:fs");
+      const state = JSON.parse(fs.readFileSync(process.env.INSTALLER_STATE_PATH, "utf8"));
+      const records = (state.dnsRecords ?? []).filter((record) =>
+        String(record.recordType).toUpperCase() !== "PTR");
+      const webHost = process.env.WEBUI_HOSTNAME;
+      records.push({ recordType: "A", host: webHost, answer: state.publicIpv4 || "<PUBLIC_IPV4_NOT_DETECTED>", ttl: 3600, priority: null });
+      if (state.publicIpv6) records.push({ recordType: "AAAA", host: webHost, answer: state.publicIpv6, ttl: 3600, priority: null });
+      const unique = records.filter((record, index, all) => index === all.findIndex((other) =>
+        other.recordType === record.recordType && other.host === record.host && other.answer === record.answer));
+EOF
+}
+
+build_namecom_dns_plan() {
+    local _state="$1" _webui_hostname="$2" _zone="$3" _mailjet_relay="$4"
+    INSTALLER_STATE_PATH="$_state" WEBUI_HOSTNAME="$_webui_hostname" \
+        NAMECOM_ZONE="$_zone" MERGE_MAILJET_SPF="$_mailjet_relay" \
+        "$NODE_BIN" -e "
+$(combined_forward_dns_records_js)
+          const zone = process.env.NAMECOM_ZONE.replace(/\\.\$/, '').toLowerCase();
+          const mergeSpf = process.env.MERGE_MAILJET_SPF === 'true';
+          const supported = new Set(['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'SRV']);
+          const relativeHost = (fqdn) => {
+            const name = String(fqdn || '').replace(/\\.\$/, '').toLowerCase();
+            if (!name || name === '<public_ipv4_not_detected>') return null;
+            if (name === zone) return '';
+            if (name.endsWith('.' + zone)) return name.slice(0, -(zone.length + 1));
+            return null;
+          };
+          const mergeMailjetSpf = (answer) => {
+            if (!/^v=spf1(?:\\s|\$)/i.test(answer)) return answer;
+            if (/include:spf\\.mailjet\\.com/i.test(answer)) return answer;
+            if (/\\s(?:-|~|\\?|\\+)?all\\s*\$/i.test(answer)) {
+              return answer.replace(/\\s((?:-|~|\\?|\\+)?all)\\s*\$/i, ' include:spf.mailjet.com \$1');
+            }
+            return \`\${answer} include:spf.mailjet.com\`;
+          };
+          const plan = [];
+          const skipped = [];
+          for (const record of unique) {
+            const type = String(record.recordType).toUpperCase();
+            const host = relativeHost(record.host);
+            const answer = String(record.answer ?? '').replace(/\\.\$/, '');
+            if (host === null) {
+              skipped.push(\`\${type} \${record.host} is outside zone \${zone}\`);
+              continue;
+            }
+            if (!supported.has(type)) {
+              skipped.push(\`\${type} \${record.host} is not published by the name.com v4 API\`);
+              continue;
+            }
+            if (!answer || answer === '<PUBLIC_IPV4_NOT_DETECTED>') {
+              skipped.push(\`\${type} \${record.host} has no publishable answer\`);
+              continue;
+            }
+            plan.push({
+              host,
+              type,
+              answer: mergeSpf && type === 'TXT' ? mergeMailjetSpf(answer) : answer,
+              ttl: Math.max(300, Number(record.ttl) || 3600),
+              priority: record.priority == null ? undefined : Number(record.priority),
+            });
+          }
+          process.stdout.write(JSON.stringify({ zone, plan, skipped }));
+        "
+}
+
+namecom_reconcile_js() {
+    cat <<'EOF'
+      const fs = require("node:fs");
+      const normHost = (value) => String(value ?? "").replace(/\.$/, "").replace(/^@$/, "").toLowerCase();
+      const normAnswer = (value) => String(value ?? "").replace(/\.$/, "").replace(/\s+/g, " ").trim();
+      const recType = (row) => String(row.type || row.recordType || "").toUpperCase();
+      const txtClass = (answer) => {
+        const text = String(answer || "").trim();
+        if (/^v=spf1(?:\s|$)/i.test(text)) return "spf";
+        if (/^v=dmarc1(?:\s|;|$)/i.test(text)) return "dmarc";
+        if (/^v=stsv1(?:\s|;|$)/i.test(text)) return "sts";
+        if (/^v=tlsrptv1(?:\s|;|$)/i.test(text)) return "tlsrpt";
+        if (/^v=dkim1(?:\s|;|$)/i.test(text)) return "dkim";
+        return "other";
+      };
+      const describe = (row) => {
+        const host = normHost(row.host) || "@";
+        const priority = row.priority == null || row.priority === "" ? "" : ` prio=${row.priority}`;
+        return `${recType(row)} ${host} -> ${row.answer}${priority}`;
+      };
+      const exclusiveKey = (row) => {
+        const type = recType(row);
+        const host = normHost(row.host);
+        if (["A", "AAAA", "CNAME", "ANAME", "MX", "SRV"].includes(type)) return `${type}|${host}`;
+        if (type === "TXT") {
+          const cls = txtClass(row.answer);
+          if (cls !== "other") return `TXT|${host}|${cls}`;
+        }
+        return null;
+      };
+      const answersEqual = (left, right) => {
+        if (normAnswer(left.answer) !== normAnswer(right.answer)) return false;
+        if (right.priority == null || right.priority === "") return true;
+        return Number(left.priority) === Number(right.priority);
+      };
+      const payloadOf = (row) => {
+        const payload = { host: row.host, type: recType(row), answer: row.answer, ttl: row.ttl };
+        if (row.priority != null && row.priority !== "") payload.priority = Number(row.priority);
+        return payload;
+      };
+
+      function reconcileNamecomActions(existing, wanted) {
+        const destroyIds = new Set();
+        const conflicts = [];
+        const create = [];
+        const update = [];
+        const unchanged = [];
+        const live = (existing || []).filter((row) => recType(row) !== "NS");
+
+        const markDestroy = (row, reason, wantedRow) => {
+          if (row.id == null || destroyIds.has(row.id) || recType(row) === "NS") return;
+          destroyIds.add(row.id);
+          conflicts.push({
+            action: "delete",
+            reason,
+            existing: describe(row),
+            wanted: wantedRow ? describe(wantedRow) : "",
+          });
+        };
+
+        for (const wantedRow of wanted) {
+          const host = normHost(wantedRow.host);
+          if (wantedRow.type === "CNAME") {
+            for (const row of live) {
+              if (normHost(row.host) !== host || recType(row) === "CNAME" || recType(row) === "NS") continue;
+              markDestroy(row, "CNAME cannot coexist with other records at this host", wantedRow);
+            }
+          } else {
+            for (const row of live) {
+              if (normHost(row.host) !== host) continue;
+              if (recType(row) === "CNAME" || recType(row) === "ANAME") {
+                markDestroy(row, `${wantedRow.type} conflicts with existing ${recType(row)}`, wantedRow);
+              }
+            }
+          }
+        }
+
+        const wantedGroups = new Map();
+        for (const wantedRow of wanted) {
+          const key = exclusiveKey(wantedRow)
+            || `TXT|${normHost(wantedRow.host)}|other|${normAnswer(wantedRow.answer)}`;
+          if (!wantedGroups.has(key)) wantedGroups.set(key, []);
+          wantedGroups.get(key).push(wantedRow);
+        }
+        const existingByKey = new Map();
+        for (const row of live) {
+          if (destroyIds.has(row.id)) continue;
+          const key = exclusiveKey(row);
+          if (!key) continue;
+          if (!existingByKey.has(key)) existingByKey.set(key, []);
+          existingByKey.get(key).push(row);
+        }
+
+        for (const [key, wantedRows] of wantedGroups) {
+          const otherTxt = key.startsWith("TXT|") && key.split("|")[2] === "other";
+          if (otherTxt) {
+            const wantedRow = wantedRows[0];
+            const match = live.find((row) => recType(row) === "TXT"
+              && !destroyIds.has(row.id)
+              && normHost(row.host) === normHost(wantedRow.host)
+              && normAnswer(row.answer) === normAnswer(wantedRow.answer));
+            if (!match) create.push(payloadOf(wantedRow));
+            else if (Number(match.ttl) !== Number(wantedRow.ttl)) {
+              update.push({ id: match.id, record: payloadOf(wantedRow), existing: describe(match) });
+            } else unchanged.push(describe(wantedRow));
+            continue;
+          }
+
+          const remaining = (existingByKey.get(key) || []).filter((row) => !destroyIds.has(row.id));
+          for (const wantedRow of wantedRows) {
+            const matchIndex = remaining.findIndex((row) => answersEqual(row, wantedRow));
+            if (matchIndex >= 0) {
+              const match = remaining.splice(matchIndex, 1)[0];
+              if (Number(match.ttl) !== Number(wantedRow.ttl)) {
+                update.push({ id: match.id, record: payloadOf(wantedRow), existing: describe(match) });
+              } else unchanged.push(describe(wantedRow));
+            } else if (remaining.length) {
+              const match = remaining.shift();
+              conflicts.push({
+                action: "replace",
+                reason: "existing record differs from the Stalwart DNS table",
+                existing: describe(match),
+                wanted: describe(wantedRow),
+              });
+              update.push({ id: match.id, record: payloadOf(wantedRow), existing: describe(match) });
+            } else {
+              create.push(payloadOf(wantedRow));
+            }
+          }
+          for (const extra of remaining) {
+            markDestroy(extra, "extra record at this host is not in the Stalwart DNS table", wantedRows[0]);
+          }
+        }
+
+        return {
+          conflicts,
+          create,
+          update,
+          unchanged,
+          destroy: live.filter((row) => destroyIds.has(row.id)).map((row) => ({
+            id: row.id,
+            existing: describe(row),
+          })),
+        };
+      }
+EOF
+}
+
+reconcile_namecom_actions() {
+    local _existing="$1" _plan="$2"
+    NAMECOM_EXISTING_PATH="$_existing" NAMECOM_PLAN_PATH="$_plan" "$NODE_BIN" -e "
+$(namecom_reconcile_js)
+      const existing = JSON.parse(fs.readFileSync(process.env.NAMECOM_EXISTING_PATH, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(process.env.NAMECOM_PLAN_PATH, 'utf8'));
+      const actions = reconcileNamecomActions(existing, parsed.plan || []);
+      actions.zone = parsed.zone;
+      actions.skipped = parsed.skipped || [];
+      process.stdout.write(JSON.stringify(actions));
+    "
+}
+
+print_namecom_conflicts() {
+    local _actions="$1"
+    NAMECOM_ACTIONS_PATH="$_actions" "$NODE_BIN" -e '
+      const fs = require("node:fs");
+      const actions = JSON.parse(fs.readFileSync(process.env.NAMECOM_ACTIONS_PATH, "utf8"));
+      if (!(actions.conflicts || []).length) process.exit(0);
+      console.log("Existing name.com records conflict with the Stalwart DNS table:");
+      for (const conflict of actions.conflicts) {
+        if (conflict.action === "replace") {
+          console.log(`  replace: ${conflict.existing}`);
+          console.log(`      with: ${conflict.wanted}`);
+        } else {
+          console.log(`  delete:  ${conflict.existing}`);
+          if (conflict.reason) console.log(`      (${conflict.reason})`);
+        }
+      }
+    '
+}
+
+namecom_request_js() {
+    cat <<'EOF'
+      const fs = require("node:fs");
+      async function namecomRequest(method, url, body) {
+        const response = await fetch(url, {
+          method,
+          headers: {
+            Authorization: process.env.NAMECOM_AUTH,
+            "Content-Type": "application/json",
+          },
+          body: body ? JSON.stringify(body) : undefined,
+          signal: AbortSignal.timeout(20000),
+        });
+        const text = await response.text();
+        let json = {};
+        try { json = text ? JSON.parse(text) : {}; } catch { json = { message: text.slice(0, 200) }; }
+        if (!response.ok) {
+          const detail = json.details || json.message || text.slice(0, 300);
+          throw new Error(`name.com ${method} ${url} failed (${response.status}): ${detail}`);
+        }
+        return json;
+      }
+EOF
+}
+
+publish_dns_via_namecom() {
+    local _state="$1" _webui_hostname="$2" _zone="$3" _mailjet_relay="$4" _username="$5"
+    local _plan _token _plan_file _existing_file _actions_file _auth
+    RETVAL="false"
+    _token="$(cat)"
+    if ! _plan="$(build_namecom_dns_plan "$_state" "$_webui_hostname" "$_zone" "$_mailjet_relay")"; then
+        return 1
+    fi
+    _plan_file="$(mktemp)"
+    _existing_file="$(mktemp)"
+    _actions_file="$(mktemp)"
+    printf '%s' "$_plan" > "$_plan_file"
+    chmod 0600 "$_plan_file" "$_existing_file" "$_actions_file"
+    _auth="$(printf '%s:%s' "$_username" "$_token" | "$NODE_BIN" -e 'process.stdout.write("Basic " + Buffer.from(require("fs").readFileSync(0)).toString("base64"));')"
+    if ! NAMECOM_AUTH="$_auth" NAMECOM_ZONE="$_zone" NAMECOM_EXISTING_PATH="$_existing_file" \
+        "$NODE_BIN" -e "
+$(namecom_request_js)
+          const zone = process.env.NAMECOM_ZONE;
+          const base = 'https://api.name.com/v4/domains/' + encodeURIComponent(zone);
+          (async () => {
+            await namecomRequest('GET', base);
+            const existing = [];
+            let page = 1;
+            while (true) {
+              const listed = await namecomRequest('GET', \`\${base}/records?perPage=1000&page=\${page}\`);
+              existing.push(...(listed.records || []));
+              if (!listed.nextPage) break;
+              page = listed.nextPage;
+            }
+            fs.writeFileSync(process.env.NAMECOM_EXISTING_PATH, JSON.stringify(existing));
+          })().catch((error) => { console.error(error.message); process.exit(1); });
+        "
+    then
+        rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+        return 1
+    fi
+    if ! reconcile_namecom_actions "$_existing_file" "$_plan_file" > "$_actions_file"; then
+        rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+        return 1
+    fi
+    NAMECOM_ACTIONS_PATH="$_actions_file" "$NODE_BIN" -e '
+      const fs = require("node:fs");
+      const actions = JSON.parse(fs.readFileSync(process.env.NAMECOM_ACTIONS_PATH, "utf8"));
+      for (const warning of actions.skipped || []) console.log(`  skipped: ${warning}`);
+      if (!(actions.create || []).length && !(actions.update || []).length && !(actions.destroy || []).length) {
+        console.log("  name.com DNS: all published records already match.");
+      }
+    '
+    if NAMECOM_ACTIONS_PATH="$_actions_file" "$NODE_BIN" -e '
+      const fs = require("node:fs");
+      const actions = JSON.parse(fs.readFileSync(process.env.NAMECOM_ACTIONS_PATH, "utf8"));
+      process.exit((actions.conflicts || []).length ? 0 : 1);
+    '
+    then
+        print_namecom_conflicts "$_actions_file"
+        if ! prompt_yes_no "Replace the conflicting name.com records with the Stalwart DNS table" "yes"; then
+            rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+            RETVAL="false"
+            return 0
+        fi
+    fi
+    if ! NAMECOM_AUTH="$_auth" NAMECOM_ZONE="$_zone" NAMECOM_ACTIONS_PATH="$_actions_file" \
+        "$NODE_BIN" -e "
+$(namecom_request_js)
+          const actions = JSON.parse(fs.readFileSync(process.env.NAMECOM_ACTIONS_PATH, 'utf8'));
+          const zone = process.env.NAMECOM_ZONE;
+          const base = 'https://api.name.com/v4/domains/' + encodeURIComponent(zone);
+          (async () => {
+            let created = 0;
+            let updated = 0;
+            let destroyed = 0;
+            for (const row of actions.destroy || []) {
+              await namecomRequest('DELETE', \`\${base}/records/\${row.id}\`);
+              destroyed += 1;
+            }
+            for (const row of actions.update || []) {
+              await namecomRequest('PUT', \`\${base}/records/\${row.id}\`, row.record);
+              updated += 1;
+            }
+            for (const row of actions.create || []) {
+              await namecomRequest('POST', \`\${base}/records\`, row);
+              created += 1;
+            }
+            console.log(\`  name.com DNS: \${created} created, \${updated} updated, \${destroyed} replaced/removed, \${(actions.unchanged || []).length} unchanged.\`);
+          })().catch((error) => { console.error(error.message); process.exit(1); });
+        "
+    then
+        rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+        return 1
+    fi
+    rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+    RETVAL="true"
+    return 0
+}
+
+write_installer_state() {
+    local _setup_result="$1" _state="$2" _hostname="$3" _domain="$4"
+    local _ipv4="$5" _ipv6="$6" _origin="$7" _webui_hostname="$8"
+    local _proxy_mode="$9"
+    SETUP_RESULT_PATH="$_setup_result" INSTALLER_STATE_PATH="$_state" \
+        MAIL_HOSTNAME="$_hostname" MAIL_DOMAIN="$_domain" PUBLIC_IPV4="$_ipv4" \
+        PUBLIC_IPV6="$_ipv6" WEBUI_ORIGIN="$_origin" WEBUI_HOSTNAME="$_webui_hostname" \
+        PROXY_MODE="$_proxy_mode" \
+        "$NODE_BIN" -e '
+          const fs = require("node:fs");
+          const setupPath = process.env.SETUP_RESULT_PATH;
+          const statePath = process.env.INSTALLER_STATE_PATH;
+          let state = {};
+          const isFresh = fs.existsSync(setupPath);
+          const source = isFresh ? setupPath : (fs.existsSync(statePath) ? statePath : null);
+          if (source) state = JSON.parse(fs.readFileSync(source, "utf8"));
+          delete state.administrator;
+          state.version = 1;
+          state.serverHostname = process.env.MAIL_HOSTNAME;
+          state.defaultDomain = process.env.MAIL_DOMAIN;
+          state.publicIpv4 = isFresh
+            ? (state.publicIpv4 || process.env.PUBLIC_IPV4 || null)
+            : (process.env.PUBLIC_IPV4 || state.publicIpv4 || null);
+          state.publicIpv6 = isFresh
+            ? (state.publicIpv6 || process.env.PUBLIC_IPV6 || null)
+            : (process.env.PUBLIC_IPV6 || state.publicIpv6 || null);
+          state.dnsRecords ||= [];
+          state.webuiOrigin = process.env.WEBUI_ORIGIN;
+          state.webuiHostname = process.env.WEBUI_HOSTNAME;
+          state.proxyMode = process.env.PROXY_MODE;
+          const webHost = process.env.WEBUI_HOSTNAME;
+          const ipv4 = state.publicIpv4;
+          const ipv6 = state.publicIpv6;
+          const hasRecord = (type, host, answer) => state.dnsRecords.some((record) =>
+            String(record.recordType).toUpperCase() === type &&
+            record.host === host &&
+            record.answer === answer);
+          if (webHost && ipv4 && ipv4 !== "<PUBLIC_IPV4_NOT_DETECTED>" && !hasRecord("A", webHost, ipv4)) {
+            state.dnsRecords.push({ recordType: "A", host: webHost, answer: ipv4, ttl: 3600, priority: null });
+          }
+          if (webHost && ipv6 && !hasRecord("AAAA", webHost, ipv6)) {
+            state.dnsRecords.push({ recordType: "AAAA", host: webHost, answer: ipv6, ttl: 3600, priority: null });
+          }
+          fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+        '
+}
+
+print_combined_dns_table() {
+    local _state="$1" _webui_hostname="$2"
+    INSTALLER_STATE_PATH="$_state" WEBUI_HOSTNAME="$_webui_hostname" "$NODE_BIN" -e '
+      const fs = require("node:fs");
+      const state = JSON.parse(fs.readFileSync(process.env.INSTALLER_STATE_PATH, "utf8"));
+      const records = (state.dnsRecords ?? []).filter((record) =>
+        String(record.recordType).toUpperCase() !== "PTR");
+      const webHost = process.env.WEBUI_HOSTNAME;
+      records.push({ recordType: "A", host: webHost, answer: state.publicIpv4 || "<PUBLIC_IPV4_NOT_DETECTED>", ttl: 3600, priority: null });
+      if (state.publicIpv6) records.push({ recordType: "AAAA", host: webHost, answer: state.publicIpv6, ttl: 3600, priority: null });
+      const unique = records.filter((record, index, all) => index === all.findIndex((other) =>
+        other.recordType === record.recordType && other.host === record.host && other.answer === record.answer));
+      const width = (values, minimum, maximum) => Math.min(maximum, Math.max(minimum, ...values.map((value) => String(value ?? "").length)));
+      const widths = {
+        type: width(unique.map((r) => r.recordType), 4, 8),
+        host: width(unique.map((r) => r.host), 4, 38),
+        answer: width(unique.map((r) => r.answer), 6, 56),
+        ttl: width(unique.map((r) => r.ttl), 3, 10),
+        prio: width(unique.map((r) => r.priority ?? "-"), 4, 8),
+      };
+      const pad = (value, size, right = false) => right ? String(value).padStart(size) : String(value).padEnd(size);
+      const row = (type, host, answer, ttl, prio) =>
+        `${pad(type, widths.type)} | ${pad(host, widths.host)} | ${pad(answer, widths.answer)} | ${pad(ttl, widths.ttl, true)} | ${pad(prio, widths.prio, true)}`;
+      console.log(row("TYPE", "HOST", "ANSWER", "TTL", "PRIO"));
+      console.log(`${"-".repeat(widths.type)}-+-${"-".repeat(widths.host)}-+-${"-".repeat(widths.answer)}-+-${"-".repeat(widths.ttl)}-+-${"-".repeat(widths.prio)}`);
+      const chunks = (value, size) => String(value).match(new RegExp(`.{1,${size}}`, "g")) || [""];
+      for (const record of unique) {
+        const hosts = chunks(record.host, widths.host);
+        const answers = chunks(record.answer, widths.answer);
+        for (let line = 0; line < Math.max(hosts.length, answers.length); line++) {
+          console.log(row(
+            line ? "" : record.recordType,
+            hosts[line] ?? "",
+            answers[line] ?? "",
+            line ? "" : record.ttl,
+            line ? "" : (record.priority ?? "-"),
+          ));
+        }
+      }
+      console.log("\nTTL values are seconds. PRIO is used by MX and SRV records.");
+
+      console.log("\nForward DNS guidance");
+      console.log("  Manual DNS: add every row above in the authoritative zone for your domain.");
+      console.log("  Automatic DNS management: verify the Stalwart DNS task. Stalwart manages");
+      console.log("  supported mail-domain records, but the mail and WebUI A/AAAA rows shown");
+      console.log("  above must still resolve to this server.");
+
+      console.log("\nReverse DNS guidance (not part of your domain DNS zone)");
+      const reverseAddresses = [state.publicIpv4, state.publicIpv6].filter(Boolean);
+      if (reverseAddresses.length) {
+        console.log("  Recommended for reliable direct outbound-mail delivery:");
+        for (const address of reverseAddresses) {
+          console.log(`  ${address} -> ${state.serverHostname}`);
+        }
+        console.log("  If your server or VPS provider offers a reverse-DNS setting, configure");
+        console.log("  the mapping there. Do not add a PTR row to your domain DNS zone.");
+      } else {
+        console.log("  No public address was detected, so no reverse-DNS mapping is shown.");
+      }
+      console.log("  Reverse DNS is not required to open the Stalwart admin or WebUI URLs.");
+      if (!(state.dnsRecords ?? []).length) {
+        console.log("Warning: Stalwart DNS rows were unavailable because this was an existing installation without installer state.");
+      }
+    '
+}
+
 cleanup() {
+    if [ -n "${cleanup_tty_state:-}" ]; then
+        stty "$cleanup_tty_state" <&3 2>/dev/null || true
+        cleanup_tty_state=""
+    fi
+    if [ "${cleanup_restart_caddy:-}" = "true" ]; then
+        systemctl start caddy.service >/dev/null 2>&1 || true
+        cleanup_restart_caddy=""
+    fi
     if [ -n "${cleanup_dir:-}" ] && [ -d "$cleanup_dir" ]; then
-        rm -rf "$cleanup_dir"
+        case "$cleanup_dir" in
+            /|/home|/root|/usr|/var|/opt) err "Refusing to clean unsafe temporary path: ${cleanup_dir}" ;;
+            *) rm -rf -- "$cleanup_dir" ;;
+        esac
     fi
     cleanup_dir=""
 }
@@ -539,40 +2589,23 @@ EOF
 }
 
 create_account() {
-    local _os="$1"
-    local _account="$2"
+    local _account="$1"
     if id -u "$_account" > /dev/null 2>&1; then
         return 0
     fi
     say "🖥️  Creating '${_account}' account..."
-    if [ "$_os" = "macos" ]; then
-        local _last_uid _last_gid _uid _gid
-        _last_uid="$(dscacheutil -q user | grep uid | awk '{print $2}' | sort -n | tail -n 1)"
-        _last_gid="$(dscacheutil -q group | grep gid | awk '{print $2}' | sort -n | tail -n 1)"
-        _uid="$((_last_uid+1))"
-        _gid="$((_last_gid+1))"
+    ensure useradd "$_account" -s /usr/sbin/nologin -M -r -U
+}
 
-        ensure dscl /Local/Default -create Groups/_stalwart
-        ensure dscl /Local/Default -create Groups/_stalwart Password \*
-        ensure dscl /Local/Default -create Groups/_stalwart PrimaryGroupID $_gid
-        ensure dscl /Local/Default -create Groups/_stalwart RealName "Stalwart service"
-        ensure dscl /Local/Default -create Groups/_stalwart RecordName _stalwart stalwart
-
-        ensure dscl /Local/Default -create Users/_stalwart
-        ensure dscl /Local/Default -create Users/_stalwart NFSHomeDirectory /var/empty
-        ensure dscl /Local/Default -create Users/_stalwart Password \*
-        ensure dscl /Local/Default -create Users/_stalwart PrimaryGroupID $_gid
-        ensure dscl /Local/Default -create Users/_stalwart RealName "Stalwart service"
-        ensure dscl /Local/Default -create Users/_stalwart RecordName _stalwart stalwart
-        ensure dscl /Local/Default -create Users/_stalwart UniqueID $_uid
-        ensure dscl /Local/Default -create Users/_stalwart UserShell /usr/bin/false
-
-        ensure dscl /Local/Default -delete /Users/_stalwart AuthenticationAuthority
-        ensure dscl /Local/Default -delete /Users/_stalwart PasswordPolicyOptions
-    elif [ "$_os" = "freebsd" ]; then
-        ensure pw useradd -n "$_account" -c "Stalwart service" -d /nonexistent -s /usr/sbin/nologin -w no
-    else
-        ensure useradd "$_account" -s /usr/sbin/nologin -M -r -U
+install_executable_atomically() {
+    local _source="$1" _destination="$2" _staged="${2}.new.$$"
+    if ! install -m 0755 "$_source" "$_staged"; then
+        rm -f "$_staged"
+        err "❌ Install failed: Could not stage the Stalwart binary at ${_staged}."
+    fi
+    if ! mv -f "$_staged" "$_destination"; then
+        rm -f "$_staged"
+        err "❌ Install failed: Could not atomically replace ${_destination}."
     fi
 }
 
@@ -606,486 +2639,6 @@ EOF
     systemctl restart stalwart.service
 }
 
-create_service_linux_initd() {
-    local _bin="$1" _config="$2" _env="$3" _user="$4"
-    cat > /etc/init.d/stalwart <<EOF
-#!/bin/sh
-### BEGIN INIT INFO
-# Provides:          stalwart
-# Required-Start:    \$network
-# Required-Stop:     \$network
-# Default-Start:     2 3 4 5
-# Default-Stop:      0 1 6
-# Short-Description: Stalwart Server
-# Description:       Starts and stops the Stalwart Server
-# Conflicts:         postfix sendmail
-### END INIT INFO
-
-PATH=/sbin:/usr/sbin:/bin:/usr/bin
-
-. /lib/init/vars.sh
-. /lib/lsb/init-functions
-
-DAEMON=${_bin}
-DAEMON_ARGS="--config=${_config}"
-ENV_FILE=${_env}
-PIDFILE=/var/run/stalwart.pid
-ULIMIT_NOFILE=65536
-
-[ -x "\$DAEMON" ] || exit 0
-
-if [ -r "\$ENV_FILE" ]; then
-    set -a
-    . "\$ENV_FILE"
-    set +a
-fi
-
-ulimit -n \$ULIMIT_NOFILE
-
-do_start()
-{
-    start-stop-daemon --start --quiet --pidfile \$PIDFILE --exec \$DAEMON --test > /dev/null \\
-        || return 1
-    start-stop-daemon --start --quiet --pidfile \$PIDFILE --exec \$DAEMON \\
-        --background --make-pidfile --chuid ${_user}:${_user} \\
-        -- \$DAEMON_ARGS \\
-        || return 2
-}
-
-do_stop()
-{
-    start-stop-daemon --stop --quiet --retry=INT/30/KILL/5 --pidfile \$PIDFILE --name stalwart
-    RETVAL="\$?"
-    [ "\$RETVAL" = 2 ] && return 2
-    start-stop-daemon --stop --quiet --oknodo --retry=0/30/KILL/5 --exec \$DAEMON
-    [ "\$?" = 2 ] && return 2
-    rm -f \$PIDFILE
-    return "\$RETVAL"
-}
-
-case "\$1" in
-  start)
-    [ "\$VERBOSE" != no ] && log_daemon_msg "Starting Stalwart Server" "stalwart"
-    do_start
-    case "\$?" in
-        0|1) [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
-        2)   [ "\$VERBOSE" != no ] && log_end_msg 1 ;;
-    esac
-    ;;
-  stop)
-    [ "\$VERBOSE" != no ] && log_daemon_msg "Stopping Stalwart Server" "stalwart"
-    do_stop
-    case "\$?" in
-        0|1) [ "\$VERBOSE" != no ] && log_end_msg 0 ;;
-        2)   [ "\$VERBOSE" != no ] && log_end_msg 1 ;;
-    esac
-    ;;
-  status)
-    status_of_proc "\$DAEMON" "stalwart" && exit 0 || exit \$?
-    ;;
-  restart)
-    log_daemon_msg "Restarting Stalwart Server" "stalwart"
-    do_stop
-    case "\$?" in
-      0|1)
-        do_start
-        case "\$?" in
-            0) log_end_msg 0 ;;
-            *) log_end_msg 1 ;;
-        esac
-        ;;
-      *)
-        log_end_msg 1
-        ;;
-    esac
-    ;;
-  *)
-    echo "Usage: /etc/init.d/stalwart {start|stop|status|restart}" >&2
-    exit 3
-    ;;
-esac
-
-exit 0
-EOF
-    chmod +x /etc/init.d/stalwart
-    update-rc.d stalwart defaults
-    service stalwart start
-}
-
-create_service_macos() {
-    local _bin="$1" _config="$2" _env="$3" _user="$4"
-    local _plist="/Library/LaunchDaemons/stalwart.plist"
-
-    # Remove any legacy LaunchDaemons from a prior install
-    if [ -f "$_plist" ]; then
-        launchctl bootout system/ "$_plist" 2>/dev/null || true
-        rm -f "$_plist"
-    fi
-
-    # launchd has no EnvironmentFile equivalent — wrap with sh to source the env file
-    cat > "$_plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN"
-    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-    <dict>
-        <key>Label</key>
-        <string>stalwart</string>
-        <key>ServiceDescription</key>
-        <string>Stalwart</string>
-        <key>UserName</key>
-        <string>${_user}</string>
-        <key>GroupName</key>
-        <string>${_user}</string>
-        <key>ProgramArguments</key>
-        <array>
-            <string>/bin/sh</string>
-            <string>-c</string>
-            <string>set -a; if [ -r "${_env}" ]; then . "${_env}"; fi; set +a; exec "${_bin}" --config="${_config}"</string>
-        </array>
-        <key>RunAtLoad</key>
-        <true/>
-        <key>KeepAlive</key>
-        <true/>
-    </dict>
-</plist>
-EOF
-    chmod 0644 "$_plist"
-    chown root:wheel "$_plist"
-    launchctl bootout system/ "$_plist" 2>/dev/null || true
-    launchctl bootstrap system/ "$_plist"
-}
-
-create_service_freebsd() {
-    local _bin="$1" _config="$2" _env="$3" _user="$4" _log_dir="$5"
-    ensure mkdir -p /usr/local/etc/rc.d
-    cat > /usr/local/etc/rc.d/stalwart <<EOF
-#!/bin/sh
-
-# PROVIDE: stalwart
-# REQUIRE: NETWORKING LOGIN
-# KEYWORD: shutdown
-
-. /etc/rc.subr
-
-name="stalwart"
-rcvar="stalwart_enable"
-desc="Stalwart Server"
-
-load_rc_config \$name
-
-: \${stalwart_enable:="NO"}
-: \${stalwart_runas_user:="${_user}"}
-: \${stalwart_runas_group:="${_user}"}
-: \${stalwart_config:="${_config}"}
-: \${stalwart_envfile:="${_env}"}
-: \${stalwart_logfile:="${_log_dir}/stalwart.log"}
-: \${stalwart_fdlimit:="65536"}
-
-pidfile="/var/run/stalwart.pid"
-procname="${_bin}"
-command="/usr/sbin/daemon"
-command_args="-f -o \${stalwart_logfile} -p \${pidfile} ${_bin} --config=\${stalwart_config}"
-sig_stop="INT"
-start_precmd="stalwart_precmd"
-
-stalwart_precmd()
-{
-    # daemon(8) passes its environment through to the service
-    if [ -r "\${stalwart_envfile}" ]; then
-        set -a
-        . "\${stalwart_envfile}"
-        set +a
-    fi
-
-    # Stalwart binds its listeners as root, then setuid()s to this account
-    export RUN_AS_USER="\${stalwart_runas_user}"
-    export RUN_AS_GROUP="\${stalwart_runas_group}"
-
-    ulimit -n "\${stalwart_fdlimit}"
-}
-
-run_rc_command "\$1"
-EOF
-    chmod +x /usr/local/etc/rc.d/stalwart
-    sysrc stalwart_enable=YES
-    service stalwart stop > /dev/null 2>&1 || true
-    service stalwart start
-}
-
-
-get_architecture() {
-    local _ostype _cputype _bitness _arch _clibtype
-    _ostype="$(uname -s)"
-    _cputype="$(uname -m)"
-    _clibtype="gnu"
-
-    if [ "$_ostype" = Linux ]; then
-        if [ "$(uname -o)" = Android ]; then
-            _ostype=Android
-        fi
-        if ldd --version 2>&1 | grep -q 'musl'; then
-            _clibtype="musl"
-        fi
-    fi
-
-    if [ "$_ostype" = Darwin ] && [ "$_cputype" = i386 ]; then
-        # Darwin `uname -m` lies
-        if sysctl hw.optional.x86_64 | grep -q ': 1'; then
-            _cputype=x86_64
-        fi
-    fi
-
-    if [ "$_ostype" = SunOS ]; then
-        # Both Solaris and illumos presently announce as "SunOS" in "uname -s"
-        # so use "uname -o" to disambiguate.  We use the full path to the
-        # system uname in case the user has coreutils uname first in PATH,
-        # which has historically sometimes printed the wrong value here.
-        if [ "$(/usr/bin/uname -o)" = illumos ]; then
-            _ostype=illumos
-        fi
-
-        # illumos systems have multi-arch userlands, and "uname -m" reports the
-        # machine hardware name; e.g., "i86pc" on both 32- and 64-bit x86
-        # systems.  Check for the native (widest) instruction set on the
-        # running kernel:
-        if [ "$_cputype" = i86pc ]; then
-            _cputype="$(isainfo -n)"
-        fi
-    fi
-
-    case "$_ostype" in
-
-        Android)
-            _ostype=linux-android
-            ;;
-
-        Linux)
-            check_proc
-            _ostype=unknown-linux-$_clibtype
-            _bitness=$(get_bitness)
-            ;;
-
-        FreeBSD)
-            _ostype=unknown-freebsd
-            ;;
-
-        NetBSD)
-            _ostype=unknown-netbsd
-            ;;
-
-        DragonFly)
-            _ostype=unknown-dragonfly
-            ;;
-
-        Darwin)
-            _ostype=apple-darwin
-            ;;
-
-        illumos)
-            _ostype=unknown-illumos
-            ;;
-
-        MINGW* | MSYS* | CYGWIN* | Windows_NT)
-            _ostype=pc-windows-gnu
-            ;;
-
-        *)
-            err "unrecognized OS type: $_ostype"
-            ;;
-
-    esac
-
-    case "$_cputype" in
-
-        i386 | i486 | i686 | i786 | x86)
-            _cputype=i686
-            ;;
-
-        xscale | arm)
-            _cputype=arm
-            if [ "$_ostype" = "linux-android" ]; then
-                _ostype=linux-androideabi
-            fi
-            ;;
-
-        armv6l)
-            _cputype=arm
-            if [ "$_ostype" = "linux-android" ]; then
-                _ostype=linux-androideabi
-            else
-                _ostype="${_ostype}eabihf"
-            fi
-            ;;
-
-        armv7l | armv8l)
-            _cputype=armv7
-            if [ "$_ostype" = "linux-android" ]; then
-                _ostype=linux-androideabi
-            else
-                _ostype="${_ostype}eabihf"
-            fi
-            ;;
-
-        aarch64 | arm64)
-            _cputype=aarch64
-            ;;
-
-        x86_64 | x86-64 | x64 | amd64)
-            _cputype=x86_64
-            ;;
-
-        mips)
-            _cputype=$(get_endianness mips '' el)
-            ;;
-
-        mips64)
-            if [ "$_bitness" -eq 64 ]; then
-                # only n64 ABI is supported for now
-                _ostype="${_ostype}abi64"
-                _cputype=$(get_endianness mips64 '' el)
-            fi
-            ;;
-
-        ppc)
-            _cputype=powerpc
-            ;;
-
-        ppc64)
-            _cputype=powerpc64
-            ;;
-
-        ppc64le)
-            _cputype=powerpc64le
-            ;;
-
-        s390x)
-            _cputype=s390x
-            ;;
-        riscv64)
-            _cputype=riscv64gc
-            ;;
-        *)
-            err "unknown CPU type: $_cputype"
-
-    esac
-
-    # Detect 64-bit linux with 32-bit userland
-    if [ "${_ostype}" = unknown-linux-gnu ] && [ "${_bitness}" -eq 32 ]; then
-        case $_cputype in
-            x86_64)
-                if [ -n "${RUSTUP_CPUTYPE:-}" ]; then
-                    _cputype="$RUSTUP_CPUTYPE"
-                else {
-                    # 32-bit executable for amd64 = x32
-                    if is_host_amd64_elf; then {
-                         echo "This host is running an x32 userland; as it stands, x32 support is poor," 1>&2
-                         echo "and there isn't a native toolchain -- you will have to install" 1>&2
-                         echo "multiarch compatibility with i686 and/or amd64, then select one" 1>&2
-                         echo "by re-running this script with the RUSTUP_CPUTYPE environment variable" 1>&2
-                         echo "set to i686 or x86_64, respectively." 1>&2
-                         echo 1>&2
-                         echo "You will be able to add an x32 target after installation by running" 1>&2
-                         echo "  rustup target add x86_64-unknown-linux-gnux32" 1>&2
-                         exit 1
-                    }; else
-                        _cputype=i686
-                    fi
-                }; fi
-                ;;
-            mips64)
-                _cputype=$(get_endianness mips '' el)
-                ;;
-            powerpc64)
-                _cputype=powerpc
-                ;;
-            aarch64)
-                _cputype=armv7
-                if [ "$_ostype" = "linux-android" ]; then
-                    _ostype=linux-androideabi
-                else
-                    _ostype="${_ostype}eabihf"
-                fi
-                ;;
-            riscv64gc)
-                err "riscv64 with 32-bit userland unsupported"
-                ;;
-        esac
-    fi
-
-    # Detect armv7 but without the CPU features Rust needs in that build,
-    # and fall back to arm.
-    # See https://github.com/rust-lang/rustup.rs/issues/587.
-    if [ "$_ostype" = "unknown-linux-gnueabihf" ] && [ "$_cputype" = armv7 ]; then
-        if ensure grep '^Features' /proc/cpuinfo | grep -q -v neon; then
-            # At least one processor does not have NEON.
-            _cputype=arm
-        fi
-    fi
-
-    _arch="${_cputype}-${_ostype}"
-
-    RETVAL="$_arch"
-}
-
-check_proc() {
-    # Check for /proc by looking for the /proc/self/exe link
-    # This is only run on Linux
-    if ! test -L /proc/self/exe ; then
-        err "fatal: Unable to find /proc/self/exe.  Is /proc mounted?  Installation cannot proceed without /proc."
-    fi
-}
-
-get_bitness() {
-    need_cmd head
-    # Architecture detection without dependencies beyond coreutils.
-    # ELF files start out "\x7fELF", and the following byte is
-    #   0x01 for 32-bit and
-    #   0x02 for 64-bit.
-    # The printf builtin on some shells like dash only supports octal
-    # escape sequences, so we use those.
-    local _current_exe_head
-    _current_exe_head=$(head -c 5 /proc/self/exe )
-    if [ "$_current_exe_head" = "$(printf '\177ELF\001')" ]; then
-        echo 32
-    elif [ "$_current_exe_head" = "$(printf '\177ELF\002')" ]; then
-        echo 64
-    else
-        err "unknown platform bitness"
-    fi
-}
-
-is_host_amd64_elf() {
-    need_cmd head
-    need_cmd tail
-    # ELF e_machine detection without dependencies beyond coreutils.
-    # Two-byte field at offset 0x12 indicates the CPU,
-    # but we're interested in it being 0x3E to indicate amd64, or not that.
-    local _current_exe_machine
-    _current_exe_machine=$(head -c 19 /proc/self/exe | tail -c 1)
-    [ "$_current_exe_machine" = "$(printf '\076')" ]
-}
-
-get_endianness() {
-    local cputype=$1
-    local suffix_eb=$2
-    local suffix_el=$3
-
-    # detect endianness without od/hexdump, like get_bitness() does.
-    need_cmd head
-    need_cmd tail
-
-    local _current_exe_endianness
-    _current_exe_endianness="$(head -c 6 /proc/self/exe | tail -c 1)"
-    if [ "$_current_exe_endianness" = "$(printf '\001')" ]; then
-        echo "${cputype}${suffix_el}"
-    elif [ "$_current_exe_endianness" = "$(printf '\002')" ]; then
-        echo "${cputype}${suffix_eb}"
-    else
-        err "unknown platform endianness"
-    fi
-}
-
 say() {
     printf '%s\n' "$1"
 }
@@ -1105,10 +2658,6 @@ check_cmd() {
     command -v "$1" > /dev/null 2>&1
 }
 
-assert_nz() {
-    if [ -z "$1" ]; then err "assert_nz $2"; fi
-}
-
 # Run a command that should never fail. If the command fails execution
 # will immediately terminate with an error showing the failing
 # command.
@@ -1116,244 +2665,4 @@ ensure() {
     if ! "$@"; then err "command failed: $*"; fi
 }
 
-# This wraps curl or wget. Try curl first, if not installed,
-# use wget instead.
-downloader() {
-    local _dld
-    local _ciphersuites
-    local _err
-    local _status
-    local _retry
-    if check_cmd curl; then
-        _dld=curl
-    elif check_cmd wget; then
-        _dld=wget
-    else
-        _dld='curl or wget' # to be used in error message of need_cmd
-    fi
-
-    if [ "$1" = --check ]; then
-        need_cmd "$_dld"
-    elif [ "$_dld" = curl ]; then
-        check_curl_for_retry_support
-        _retry="$RETVAL"
-        get_ciphersuites_for_curl
-        _ciphersuites="$RETVAL"
-        if [ -n "$_ciphersuites" ]; then
-            _err=$(curl $_retry --proto '=https' --tlsv1.2 --ciphers "$_ciphersuites" --silent --show-error --fail --location "$1" --output "$2" 2>&1)
-            _status=$?
-        else
-            echo "Warning: Not enforcing strong cipher suites for TLS, this is potentially less secure"
-            if ! check_help_for "$3" curl --proto --tlsv1.2; then
-                echo "Warning: Not enforcing TLS v1.2, this is potentially less secure"
-                _err=$(curl $_retry --silent --show-error --fail --location "$1" --output "$2" 2>&1)
-                _status=$?
-            else
-                _err=$(curl $_retry --proto '=https' --tlsv1.2 --silent --show-error --fail --location "$1" --output "$2" 2>&1)
-                _status=$?
-            fi
-        fi
-        if [ -n "$_err" ]; then
-            if echo "$_err" | grep -q 404; then
-                err "❌  Binary for platform '$3' not found, this platform may be unsupported."
-            else
-                echo "$_err" >&2
-            fi
-        fi
-        return $_status
-    elif [ "$_dld" = wget ]; then
-        if [ "$(wget -V 2>&1|head -2|tail -1|cut -f1 -d" ")" = "BusyBox" ]; then
-            echo "Warning: using the BusyBox version of wget.  Not enforcing strong cipher suites for TLS or TLS v1.2, this is potentially less secure"
-            _err=$(wget "$1" -O "$2" 2>&1)
-            _status=$?
-        else
-            get_ciphersuites_for_wget
-            _ciphersuites="$RETVAL"
-            if [ -n "$_ciphersuites" ]; then
-                _err=$(wget --https-only --secure-protocol=TLSv1_2 --ciphers "$_ciphersuites" "$1" -O "$2" 2>&1)
-                _status=$?
-            else
-                echo "Warning: Not enforcing strong cipher suites for TLS, this is potentially less secure"
-                if ! check_help_for "$3" wget --https-only --secure-protocol; then
-                    echo "Warning: Not enforcing TLS v1.2, this is potentially less secure"
-                    _err=$(wget "$1" -O "$2" 2>&1)
-                    _status=$?
-                else
-                    _err=$(wget --https-only --secure-protocol=TLSv1_2 "$1" -O "$2" 2>&1)
-                    _status=$?
-                fi
-            fi
-        fi
-        if [ -n "$_err" ]; then
-            if echo "$_err" | grep -q ' 404 Not Found'; then
-                err "❌  Binary for platform '$3' not found, this platform may be unsupported."
-            else
-                echo "$_err" >&2
-            fi
-        fi
-        return $_status
-    else
-        err "Unknown downloader"   # should not reach here
-    fi
-}
-
-# Check if curl supports the --retry flag, then pass it to the curl invocation.
-check_curl_for_retry_support() {
-  local _retry_supported=""
-  # "unspecified" is for arch, allows for possibility old OS using macports, homebrew, etc.
-  if check_help_for "notspecified" "curl" "--retry"; then
-    _retry_supported="--retry 3"
-  fi
-
-  RETVAL="$_retry_supported"
-
-}
-
-check_help_for() {
-    local _arch
-    local _cmd
-    local _arg
-    _arch="$1"
-    shift
-    _cmd="$1"
-    shift
-
-    local _category
-    if "$_cmd" --help | grep -q 'For all options use the manual or "--help all".'; then
-      _category="all"
-    else
-      _category=""
-    fi
-
-    case "$_arch" in
-
-        *darwin*)
-        if check_cmd sw_vers; then
-            case $(sw_vers -productVersion) in
-                10.*)
-                    # If we're running on macOS, older than 10.13, then we always
-                    # fail to find these options to force fallback
-                    if [ "$(sw_vers -productVersion | cut -d. -f2)" -lt 13 ]; then
-                        # Older than 10.13
-                        echo "Warning: Detected macOS platform older than 10.13"
-                        return 1
-                    fi
-                    ;;
-                11.*)
-                    # We assume Big Sur will be OK for now
-                    ;;
-                *)
-                    # Unknown product version, warn and continue
-                    echo "Warning: Detected unknown macOS major version: $(sw_vers -productVersion)"
-                    echo "Warning TLS capabilities detection may fail"
-                    ;;
-            esac
-        fi
-        ;;
-
-    esac
-
-    for _arg in "$@"; do
-        if ! "$_cmd" --help $_category | grep -q -- "$_arg"; then
-            return 1
-        fi
-    done
-
-    true # not strictly needed
-}
-
-# Return cipher suite string specified by user, otherwise return strong TLS 1.2-1.3 cipher suites
-# if support by local tools is detected. Detection currently supports these curl backends:
-# GnuTLS and OpenSSL (possibly also LibreSSL and BoringSSL). Return value can be empty.
-get_ciphersuites_for_curl() {
-    if [ -n "${RUSTUP_TLS_CIPHERSUITES-}" ]; then
-        # user specified custom cipher suites, assume they know what they're doing
-        RETVAL="$RUSTUP_TLS_CIPHERSUITES"
-        return
-    fi
-
-    local _openssl_syntax="no"
-    local _gnutls_syntax="no"
-    local _backend_supported="yes"
-    if curl -V | grep -q ' OpenSSL/'; then
-        _openssl_syntax="yes"
-    elif curl -V | grep -iq ' LibreSSL/'; then
-        _openssl_syntax="yes"
-    elif curl -V | grep -iq ' BoringSSL/'; then
-        _openssl_syntax="yes"
-    elif curl -V | grep -iq ' GnuTLS/'; then
-        _gnutls_syntax="yes"
-    else
-        _backend_supported="no"
-    fi
-
-    local _args_supported="no"
-    if [ "$_backend_supported" = "yes" ]; then
-        # "unspecified" is for arch, allows for possibility old OS using macports, homebrew, etc.
-        if check_help_for "notspecified" "curl" "--tlsv1.2" "--ciphers" "--proto"; then
-            _args_supported="yes"
-        fi
-    fi
-
-    local _cs=""
-    if [ "$_args_supported" = "yes" ]; then
-        if [ "$_openssl_syntax" = "yes" ]; then
-            _cs=$(get_strong_ciphersuites_for "openssl")
-        elif [ "$_gnutls_syntax" = "yes" ]; then
-            _cs=$(get_strong_ciphersuites_for "gnutls")
-        fi
-    fi
-
-    RETVAL="$_cs"
-}
-
-# Return cipher suite string specified by user, otherwise return strong TLS 1.2-1.3 cipher suites
-# if support by local tools is detected. Detection currently supports these wget backends:
-# GnuTLS and OpenSSL (possibly also LibreSSL and BoringSSL). Return value can be empty.
-get_ciphersuites_for_wget() {
-    if [ -n "${RUSTUP_TLS_CIPHERSUITES-}" ]; then
-        # user specified custom cipher suites, assume they know what they're doing
-        RETVAL="$RUSTUP_TLS_CIPHERSUITES"
-        return
-    fi
-
-    local _cs=""
-    if wget -V | grep -q '\-DHAVE_LIBSSL'; then
-        # "unspecified" is for arch, allows for possibility old OS using macports, homebrew, etc.
-        if check_help_for "notspecified" "wget" "TLSv1_2" "--ciphers" "--https-only" "--secure-protocol"; then
-            _cs=$(get_strong_ciphersuites_for "openssl")
-        fi
-    elif wget -V | grep -q '\-DHAVE_LIBGNUTLS'; then
-        # "unspecified" is for arch, allows for possibility old OS using macports, homebrew, etc.
-        if check_help_for "notspecified" "wget" "TLSv1_2" "--ciphers" "--https-only" "--secure-protocol"; then
-            _cs=$(get_strong_ciphersuites_for "gnutls")
-        fi
-    fi
-
-    RETVAL="$_cs"
-}
-
-# Return strong TLS 1.2-1.3 cipher suites in OpenSSL or GnuTLS syntax. TLS 1.2
-# excludes non-ECDHE and non-AEAD cipher suites. DHE is excluded due to bad
-# DH params often found on servers (see RFC 7919). Sequence matches or is
-# similar to Firefox 68 ESR with weak cipher suites disabled via about:config.
-# $1 must be openssl or gnutls.
-get_strong_ciphersuites_for() {
-    if [ "$1" = "openssl" ]; then
-        # OpenSSL is forgiving of unknown values, no problems with TLS 1.3 values on versions that don't support it yet.
-        echo "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
-    elif [ "$1" = "gnutls" ]; then
-        # GnuTLS isn't forgiving of unknown values, so this may require a GnuTLS version that supports TLS 1.3 even if wget doesn't.
-        # Begin with SECURE128 (and higher) then remove/add to build cipher suites. Produces same 9 cipher suites as OpenSSL but in slightly different order.
-        echo "SECURE128:-VERS-SSL3.0:-VERS-TLS1.0:-VERS-TLS1.1:-VERS-DTLS-ALL:-CIPHER-ALL:-MAC-ALL:-KX-ALL:+AEAD:+ECDHE-ECDSA:+ECDHE-RSA:+AES-128-GCM:+CHACHA20-POLY1305:+AES-256-GCM"
-    fi
-}
-
-# This is just for indicating that commands' results are being
-# intentionally ignored. Usually, because it's being executed
-# as part of error handling.
-ignore() {
-    "$@"
-}
-
-main "$@" || exit 1
+main "$@"
