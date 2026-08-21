@@ -69,11 +69,17 @@ export function findCalendarInvitationPart(email: Pick<Email, "attachments" | "t
 }
 
 export async function patchEmail(client: JmapClient, id: string, patch: Record<string, unknown>): Promise<void> {
+  await patchEmails(client, [id], patch);
+}
+
+export async function patchEmails(client: JmapClient, ids: string[], patch: Record<string, unknown>): Promise<void> {
+  if (!ids.length) return;
   const result = await client.call<SetResult>(CAPABILITIES.mail, "Email/set", {
     accountId: client.mailAccountId,
-    update: { [id]: patch },
+    update: Object.fromEntries(ids.map((id) => [id, patch])),
   });
-  if (result.notUpdated?.[id]) throw new JmapError(String(result.notUpdated[id].description ?? "The message could not be updated."), String(result.notUpdated[id].type ?? "notUpdated"));
+  const failed = ids.find((id) => result.notUpdated?.[id]);
+  if (failed) throw new JmapError(String(result.notUpdated?.[failed]?.description ?? "The messages could not be updated."), String(result.notUpdated?.[failed]?.type ?? "notUpdated"));
 }
 
 export async function destroyEmail(client: JmapClient, id: string): Promise<void> {

@@ -148,6 +148,7 @@
   .sidebar nav a { display: flex; align-items: center; gap: 11px; min-height: 40px; border-radius: 8px; padding: 0 13px; color: #aebdc1; font-weight: 650; }
   .sidebar nav a:hover, .sidebar nav a.active { background: var(--nav-soft); color: white; }
   .sidebar nav a.active { box-shadow: inset 3px 0 var(--coral); }
+  .sidebar nav .unread-count { margin-left: auto; min-width: 20px; border-radius: 999px; padding: 1px 6px; background: var(--coral); color: white; font-size: 10px; font-weight: 800; text-align: center; }
   .sidebar-foot { margin-top: auto; border-top: 1px solid rgba(255,255,255,.09); padding-top: 12px; }
   .account-button { display: flex; align-items: center; gap: 10px; width: 100%; border-radius: 8px; padding: 8px; color: #d9e1e1; text-align: left; }
   .account-button:hover { background: var(--nav-soft); }
@@ -175,12 +176,18 @@
   .search-box:focus-within { border-color: var(--teal); }
   .search-box input { width: 100%; border: 0; outline: 0; background: transparent; }
   .search-box button { color: var(--teal); font-size: 11px; font-weight: 700; }
-  .list-meta { display: flex; justify-content: space-between; padding: 10px 22px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+  .list-meta { display: flex; justify-content: space-between; align-items: center; padding: 10px 22px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+  .select-all { display: flex; align-items: center; gap: 10px; text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--ink-soft); }
+  .select-all input, .email-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--teal); }
+  .mail-bulk-bar { display: flex; align-items: center; gap: 8px; padding: 8px 22px; border-bottom: 1px solid var(--line-soft); background: var(--teal-pale); color: var(--teal); font-size: 12px; font-weight: 700; }
+  .mail-bulk-bar button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; border-radius: 7px; padding: 0 10px; color: var(--ink); background: var(--paper-strong); }
+  .mail-bulk-bar button:hover { background: var(--paper); }
   .email-list { min-height: 200px; }
-  .email-row { display: grid; min-height: 82px; grid-template-columns: 28px minmax(0,1fr) auto auto 22px; align-items: center; gap: 9px; border-bottom: 1px solid var(--line-soft); padding: 11px 17px; cursor: pointer; position: relative; }
+  .email-row { display: grid; min-height: 82px; grid-template-columns: 22px 28px minmax(0,1fr) auto auto 22px; align-items: center; gap: 9px; border-bottom: 1px solid var(--line-soft); padding: 11px 17px; cursor: pointer; position: relative; }
   .email-row:hover { background: var(--canvas); }
   .email-row.unread { background: color-mix(in srgb, var(--teal-pale) 24%, var(--paper)); box-shadow: inset 3px 0 var(--teal); }
   .email-row.unread:hover { background: color-mix(in srgb, var(--teal-pale) 42%, var(--paper)); }
+  .email-row.selected { background: color-mix(in srgb, var(--teal-pale) 55%, var(--paper)); }
   .star-button { display: grid; width: 28px; height: 28px; place-items: center; color: #a5afb0; }
   .star-button.selected { color: #d79a35; }
   .star-button.selected svg { fill: currentColor; }
@@ -412,7 +419,7 @@
     .page-header h1, .calendar-header h1 { font-size: 24px; }
     .mail-header { display: grid; gap: 15px; }
     .search-box { width: 100%; }
-    .email-row { min-height: 76px; grid-template-columns: 22px minmax(0,1fr) auto; padding-inline: 11px; }
+    .email-row { min-height: 76px; grid-template-columns: 18px 22px minmax(0,1fr) auto; padding-inline: 11px; }
     .email-markers { display: none; }
     .row-actions { display: none !important; }
     .row-chevron { display: block; }

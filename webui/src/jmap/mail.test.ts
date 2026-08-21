@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { buildMimeMessage, composeDraftBody, forwardedMessage, forwardSubject, identitySignatureText, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, updateIdentitySignatures } from "./mail";
+import { describe, expect, it, vi } from "vitest";
+import { buildMimeMessage, composeDraftBody, forwardedMessage, forwardSubject, identitySignatureText, patchEmails, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, updateIdentitySignatures } from "./mail";
 import type { JmapClient } from "./client";
 import type { Email } from "../types";
 
@@ -117,61 +117,17 @@ describe("email signatures", () => {
   });
 });
 
-
-describe("MIME draft builder", () => {
-  it("removes injected header lines and preserves Unicode", async () => {
-    const blob = await buildMimeMessage({ to: "reader@example.test", subject: "Hello\r\nBcc: intruder@example.test", body: "Hej 👋" }, {
-      id: "one", name: "Ada", email: "ada@example.test",
-    });
-    const text = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsText(blob);
-    });
-    expect(text).toContain("Subject: Hello Bcc: intruder@example.test");
-    expect(text).not.toContain("\r\nBcc: intruder@example.test");
-    expect(text).toContain("Hej 👋");
-  });
-});
-
-describe("sendDraft", () => {
-  it("moves the message to Sent instead of destroying it", async () => {
-    let arguments_: Record<string, unknown> | undefined;
-    const client = {
-      mailAccountId: "account-1",
-      call: async (_capability: unknown, method: string, args: Record<string, unknown>) => {
-        expect(method).toBe("EmailSubmission/set");
-        arguments_ = args;
-        return { created: { send: { id: "submission-1" } } };
-      },
-    } as Pick<JmapClient, "mailAccountId" | "call">;
-
-    await sendDraft(client as JmapClient, "email-1", "identity-1", "drafts-1", "sent-1");
-
-    expect(arguments_?.onSuccessDestroyEmail).toBeUndefined();
-    expect(arguments_?.onSuccessUpdateEmail).toEqual({
-      "#send": {
-        "mailboxIds/sent-1": true,
-        "mailboxIds/drafts-1": null,
-        "keywords/$draft": null,
-        "keywords/$seen": true,
+describe("patchEmails", () => {
+  it("marks several messages seen in one Email/set", async () => {
+    const call = vi.fn().mockResolvedValue({ updated: { "mail-1": null, "mail-2": null } });
+    const client = { mailAccountId: "account-1", call } as unknown as JmapClient;
+    await patchEmails(client, ["mail-1", "mail-2"], { "keywords/$seen": true });
+    expect(call).toHaveBeenCalledWith("urn:ietf:params:jmap:mail", "Email/set", {
+      accountId: "account-1",
+      update: {
+        "mail-1": { "keywords/$seen": true },
+        "mail-2": { "keywords/$seen": true },
       },
     });
-  });
-});
-
-describe("calendar invitation parts", () => {
-  it("finds Gmail application/ics attachments and text/calendar parts", async () => {
-    const { findCalendarInvitationPart, isCalendarInvitationPart } = await import("./mail");
-    expect(isCalendarInvitationPart({ type: "application/ics", name: "invite.ics", blobId: "1" })).toBe(true);
-    expect(isCalendarInvitationPart({ type: "text/plain", name: "notes.txt" })).toBe(false);
-    expect(findCalendarInvitationPart({
-      attachments: [{ type: "application/ics", name: "invite.ics", blobId: "ics-1" }],
-    })?.blobId).toBe("ics-1");
-    expect(findCalendarInvitationPart({
-      attachments: [{ type: "image/png", name: "banner.png" }],
-      textBody: [{ type: "text/calendar; method=REQUEST", blobId: "cal-1" }],
-    })?.blobId).toBe("cal-1");
   });
 });

@@ -80,7 +80,7 @@ function EventPill({ event, identities, onClick, expanded = false }: { event: Ca
 function EventDialog({ event, initialDate, onClose, onChanged }: { event?: CalendarEvent; initialDate?: Date; onClose(): void; onChanged(): Promise<void> }) {
   const { client, calendars, identities, participantIdentities, username, notify } = useApp();
   const initialStart = event ? eventDate(event) : withHour(initialDate ?? new Date(), new Date().getHours() + 1);
-  const initialEnd = event ? eventEnd(event) : new Date(initialStart.getTime() + 3_600_000);
+  const initialEnd = event ? eventEnd(event) : new Date(initialStart.getTime() + 30 * 60_000);
   const [input, setInput] = useState<EventInput>({ title: event?.title ?? "", start: toInputValue(initialStart, event?.showWithoutTime), end: toInputValue(initialEnd, event?.showWithoutTime), allDay: event?.showWithoutTime ?? false, calendarId: Object.keys(event?.calendarIds ?? {})[0] ?? calendars[0]?.id ?? "", description: event?.description ?? "", location: Object.values(event?.locations ?? {})[0]?.name ?? "" });
   const [guestText, setGuestText] = useState(() => event ? eventGuestAddresses(event, participantIdentities).join(", ") : "");
   const [guestError, setGuestError] = useState("");
@@ -157,7 +157,14 @@ function EventDialog({ event, initialDate, onClose, onChanged }: { event?: Calen
         )}
         <label>Title<input autoFocus required value={input.title} onChange={(change) => update("title", change.target.value)} placeholder="Event title" /></label>
         <div className="event-time-row">
-          <label><Clock3 size={16} /> Starts<input type={input.allDay ? "date" : "datetime-local"} required value={input.start} onChange={(change) => update("start", change.target.value)} /></label>
+          <label><Clock3 size={16} /> Starts<input type={input.allDay ? "date" : "datetime-local"} required value={input.start} onChange={(change) => {
+            const start = change.target.value;
+            setInput((current) => ({
+              ...current,
+              start,
+              end: event || current.allDay ? current.end : shiftStartByMinutes(start, 30),
+            }));
+          }} /></label>
           <label>Ends<input type={input.allDay ? "date" : "datetime-local"} required value={input.end} onChange={(change) => update("end", change.target.value)} /></label>
         </div>
         <label className="checkbox-label"><input type="checkbox" checked={input.allDay} onChange={(change) => update("allDay", change.target.checked)} /> All-day event</label>
@@ -197,6 +204,12 @@ function MiniMonth({ anchor, selected, onSelect }: { anchor: Date; selected: Dat
 function eventPatch(input: EventInput): Record<string, unknown> { const start = new Date(input.start); const end = new Date(input.end); return { title: input.title, start: input.allDay ? input.start.slice(0, 10) : toJmapLocal(start), duration: isoDuration(Math.max(60_000, end.getTime() - start.getTime())), showWithoutTime: input.allDay, calendarIds: { [input.calendarId]: true }, timeZone: input.allDay ? null : Intl.DateTimeFormat().resolvedOptions().timeZone, description: input.description || null, locations: input.location ? { location: { "@type": "Location", name: input.location } } : null }; }
 function isoDuration(milliseconds: number): string { const minutes = Math.round(milliseconds / 60_000); const days = Math.floor(minutes / 1440); const hours = Math.floor((minutes % 1440) / 60); const mins = minutes % 60; return days && !hours && !mins ? `P${days}D` : `P${days ? `${days}D` : ""}T${hours ? `${hours}H` : ""}${mins ? `${mins}M` : ""}`; }
 function eventDate(event: CalendarEvent): Date { return new Date(event.start.length === 10 ? `${event.start}T00:00:00` : event.start); }
+function shiftStartByMinutes(value: string, minutes: number): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  date.setMinutes(date.getMinutes() + minutes);
+  return toInputValue(date);
+}
 function startOfDay(date: Date): Date { return new Date(date.getFullYear(), date.getMonth(), date.getDate()); }
 function startOfWeek(date: Date): Date { const next = startOfDay(date); next.setDate(next.getDate() - next.getDay()); return next; }
 function addDays(date: Date, amount: number): Date { const next = new Date(date); next.setDate(next.getDate() + amount); return next; }

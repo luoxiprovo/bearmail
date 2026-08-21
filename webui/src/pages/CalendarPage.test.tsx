@@ -32,6 +32,8 @@ describe("calendar event dialog", () => {
 
     render(<CalendarPage />);
     fireEvent.click(screen.getAllByRole("button", { name: "New event" })[0]);
+    fireEvent.change(screen.getByLabelText("Starts"), { target: { value: "2026-08-21T14:00" } });
+    expect(screen.getByLabelText("Ends")).toHaveValue("2026-08-21T14:30");
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Planning" } });
     fireEvent.change(screen.getByLabelText("Guests"), { target: { value: "not-an-address" } });
     fireEvent.click(screen.getByRole("button", { name: "Save event" }));
