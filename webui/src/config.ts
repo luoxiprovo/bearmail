@@ -1,7 +1,7 @@
 import type { RuntimeConfig } from "./types";
 
 export const defaultConfig: RuntimeConfig = {
-  appName: "Stalwart Mail",
+  appName: "BearMail",
   defaultServerUrl: "",
   allowCustomServers: true,
   allowBasicAuth: true,

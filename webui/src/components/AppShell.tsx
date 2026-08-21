@@ -12,7 +12,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Primary navigation">
-        <div className="brand"><span className="brand-mark">S</span><span>{config?.appName}</span></div>
+        <div className="brand"><span className="brand-mark">B</span><span>{config?.appName}</span></div>
         {client?.has("urn:ietf:params:jmap:submission") && <NavLink to="/mail/compose" className="compose-nav"><MailPlus size={19} /> Compose</NavLink>}
         <nav>
           <NavLink to="/mail"><Inbox size={18} /> Mail{unreadMail ? <b className="unread-count" aria-label={`${unreadMail} unread`}>{formatUnread(unreadMail)}</b> : null}</NavLink>

@@ -1,8 +1,14 @@
-# How to install Stalwart and the Mail/Calendar WebUI
+# How to install BearMail
 
-This guide installs Stalwart and the standalone Mail/Calendar WebUI on one
-Linux server. When you finish, Stalwart and the WebUI will run as separate
-systemd services, and users will access them through two HTTPS hostnames.
+BearMail is a one-shot install of mail, calendar, and webmail on one Linux
+server. When you finish, two systemd services and two HTTPS hostnames are
+live: the mail engine (Stalwart) on `mail.example.com`, and BearMail on
+`https://webmail.example.com`.
+
+Create the **name.com** domain/account and **Mailjet** account **before** you
+run `install.sh`. The installer will ask for those credentials; it does not
+register the vendors for you. Details and every prompt are in the
+[BearMail README](../README.md).
 
 The combined installer is interactive. It does not download or build either
 application. Prepare the Stalwart binary and WebUI archive first, then copy
@@ -10,6 +16,16 @@ them to the target server with `install.sh`. The installer handles its Node.js
 runtime automatically.
 
 ## Before you begin
+
+### Accounts to create first
+
+| Prepare | Why the installer needs it |
+| --- | --- |
+| name.com domain on name.com nameservers | Zone for `mail.` and `webmail.` plus the printed MX/SPF/DKIM rows |
+| name.com production API token | Optional auto-publish of that DNS table |
+| Mailjet account, sender domain, SMTP API key and secret | Outbound mail when the VPS blocks TCP 25 |
+
+### Server
 
 Use a build machine to create the artifacts and a target server to run them.
 The build machine and target server may be the same machine.
@@ -46,11 +62,11 @@ The build machine needs:
 - Node.js 22.12 or later with npm; and
 - a checkout of this repository.
 
-Choose these values before starting:
+Choose these hostnames before starting. They must live in the name.com zone:
 
 | Value | Example | Requirement |
 | --- | --- | --- |
-| Stalwart hostname | `mail.example.com` | Fully qualified DNS name |
+| Mail hostname | `mail.example.com` | Fully qualified DNS name |
 | Primary mail domain | `example.com` | Domain used for email addresses |
 | Public WebUI origin | `https://webmail.example.com` | Exact HTTPS origin with no path |
 | WebUI local port | `8081` | Unused port from 1 through 65535; not `8080` |
@@ -519,7 +535,7 @@ sudo systemctl start stalwart-caddy-cert-sync.service
 
 ## Related documentation
 
-- [Project overview](../README.md)
+- [BearMail overview and installer options](../README.md)
 - [Installer behavior specification](../CLI_SETUP_SPEC.md)
 - [Installer test plan](../CLI_SETUP_TEST_PLAN.md)
 - [Mailjet SMTP relay](MAILJET_SMTP_RELAY.md)

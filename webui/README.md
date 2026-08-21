@@ -1,6 +1,6 @@
-# Stalwart Mail & Calendar Web UI
+# BearMail web app
 
-A standalone browser client for Stalwart. It uses the authenticated JMAP session as its source of truth and does not add a second mail or calendar database.
+The browser client for BearMail. It uses the authenticated JMAP session as its source of truth and does not add a second mail or calendar database.
 
 ## What works
 

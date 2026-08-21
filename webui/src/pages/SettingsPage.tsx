@@ -40,7 +40,7 @@ export function SettingsPage({ diagnostics = false }: { diagnostics?: boolean })
           <h2>Account</h2>
           <dl>
             <div><dt>Signed in as</dt><dd>{username}</dd></div>
-            <div><dt>Stalwart server</dt><dd>{serverOrigin}</dd></div>
+            <div><dt>Mail server</dt><dd>{serverOrigin}</dd></div>
             <div><dt>Connection</dt><dd><span className={`status-dot ${online ? "online" : ""}`} />{online ? "Online" : "Offline"}</dd></div>
             <div><dt>Last refresh</dt><dd>{lastSync?.toLocaleString() ?? "Not yet"}</dd></div>
           </dl>

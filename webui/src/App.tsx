@@ -12,7 +12,7 @@ import { useEffect } from "react";
 export default function App() {
   const { config, client, sessionReady } = useApp();
   const path = usePath();
-  if (!config || !sessionReady) return <div className="boot"><span className="brand-mark">S</span><span>Opening your workspace…</span></div>;
+  if (!config || !sessionReady) return <div className="boot"><span className="brand-mark">B</span><span>Opening your workspace…</span></div>;
   if (!client) return <ConnectionPage />;
   let page;
   if (path.startsWith("/mail/message/")) page = <MessagePage emailId={decodeURIComponent(path.slice("/mail/message/".length))} />;

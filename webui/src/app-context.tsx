@@ -125,7 +125,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [applySession]);
 
   const connectOAuth = useCallback(async (server: string) => {
-    await beginOAuth(server, config?.appName ?? "Stalwart Mail");
+    await beginOAuth(server, config?.appName ?? "BearMail");
   }, [config?.appName]);
 
   useEffect(() => {

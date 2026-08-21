@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
 #
 
-# Stalwart install script -- based on the rustup installation script.
+# BearMail install script (Stalwart engine + WebUI) -- based on the rustup installation script.
 
 set -e
 set -u
@@ -73,7 +73,7 @@ main() {
     fi
 
     if [ "$(uname)" != "Linux" ]; then
-        err "❌ Install failed: The combined Stalwart and WebUI installer currently requires Linux with systemd."
+        err "❌ Install failed: The BearMail installer currently requires Linux with systemd."
     fi
     if ! systemctl --version >/dev/null 2>&1; then
         err "❌ Install failed: systemd is required for the two-service installation."
@@ -83,8 +83,14 @@ main() {
 
     say ""
     say "┌─────────────────────────────────────────────────────────┐"
-    say "│        Stalwart + Mail and Calendar WebUI Installer     │"
+    say "│          BearMail — one-shot mail installer             │"
     say "└─────────────────────────────────────────────────────────┘"
+    say ""
+    say "Prepare before the later prompts (the installer does not create these"
+    say "vendor accounts for you):"
+    say "  • name.com domain on name.com nameservers, plus a production API token"
+    say "  • Mailjet account: sender domain, SMTP API key, and secret key"
+    say "You can still install without them, then add DNS and the relay later."
     say ""
 
     # Select the filesystem layout interactively.
@@ -154,8 +160,8 @@ main() {
 
     say ""
     say "Installation summary"
-    say "  Stalwart artifact: ${_source_binary}"
-    say "  Stalwart binary:   ${_bin_file}"
+    say "  Mail engine artifact: ${_source_binary}"
+    say "  Mail engine binary:   ${_bin_file}"
     say "  Configuration:     ${_config_file}"
     say "  Data:              ${_data_dir}"
     say "  Logs:              ${_log_dir}"
@@ -166,8 +172,8 @@ main() {
     if [ "$_proxy_mode" = "caddy" ]; then
         say "  HTTPS publishing:  installer-managed Caddy on ports 80 and 443"
         say ""
-        say "Caddy will route the two public hostnames by Host header. Stalwart's"
-        say "HTTP listeners and the WebUI will be restricted to localhost."
+        say "Caddy will route the two public hostnames by Host header. The mail"
+        say "HTTP listeners and BearMail will be restricted to localhost."
     else
         say "  HTTPS publishing:  operator-managed reverse proxy"
         say ""
@@ -471,7 +477,7 @@ main() {
     fi
 
     say ""
-    say "Forward DNS records for Stalwart and the WebUI"
+    say "Forward DNS records for BearMail"
     say "------------------------------------------------"
     print_combined_dns_table "$_installer_state" "$_webui_hostname"
 
@@ -493,15 +499,15 @@ main() {
     say ""
     say "🎉 Installation complete!"
     say ""
-    say "  Stalwart admin: https://${_mail_hostname}/admin/"
-    say "  Mail/Calendar:  ${_webui_origin}/"
+    say "  BearMail admin: https://${_mail_hostname}/admin/"
+    say "  BearMail web:   ${_webui_origin}/"
     say "  WebUI upstream: http://127.0.0.1:${_webui_port}"
     say ""
     if [ "$_proxy_mode" = "caddy" ]; then
-        say "Caddy now routes ${_mail_hostname} to Stalwart and ${_webui_hostname}"
-        say "to the WebUI. Allow inbound TCP 80/443; Caddy obtains HTTPS certificates"
-        say "once the mail and WebUI hostnames resolve here. The installed timer"
-        say "synchronizes its mail-host certificate into Stalwart for IMAPS/SMTPS."
+        say "Caddy now routes ${_mail_hostname} to the mail engine and ${_webui_hostname}"
+        say "to BearMail. Allow inbound TCP 80/443; Caddy obtains HTTPS certificates"
+        say "once the mail and webmail hostnames resolve here. The installed timer"
+        say "synchronizes its mail-host certificate into the engine for IMAPS/SMTPS."
     else
         say "Configure your HTTPS reverse proxy to send ${_webui_origin} to the WebUI"
         say "upstream above, and keep the WebUI port private."
@@ -515,12 +521,12 @@ main() {
     fi
     if [ "$_mailjet_relay" = "true" ]; then
         say "Outbound mail uses the Mailjet SMTP relay. After DNS resolves, create a"
-        say "user in the Stalwart admin panel and send from the WebUI with that"
+        say "user in the BearMail admin panel and send from the web app with that"
         say "account. Finish Mailjet domain verification and Mailjet's DKIM record"
         say "in the Mailjet dashboard if those are still pending."
     else
-        say "Then create an account in the Stalwart admin panel. The user can sign in to"
-        say "the WebUI with the full email address (or account name) and its password."
+        say "Then create an account in the BearMail admin panel. The user can sign in to"
+        say "the web app with the full email address (or account name) and its password."
         say "Direct MX delivery needs outbound TCP 25, which Google Cloud blocks."
     fi
     say ""
@@ -535,16 +541,20 @@ print_usage() {
     cat <<'EOF'
 Usage: install.sh
 
-Interactively install a local Stalwart binary and a prebuilt standalone WebUI,
-configure Stalwart, add the exact WebUI CORS origin, and start two services.
+Interactively install BearMail: a local Stalwart mail engine binary and a
+prebuilt webmail/calendar UI, then configure CORS and start two services.
 
-No installation or setup answer is accepted as a command-line parameter. The
-installer asks for paths and public values. Quick setup asks only for the
+Prepare a name.com domain (nameservers at name.com) and a Mailjet account
+before you run this. The installer asks for the name.com API token and the
+Mailjet SMTP API key later. No installation or setup answer is accepted as a
+command-line parameter.
+
+The installer asks for paths and public values. Quick setup asks only for the
 public mail hostname (example: mail.example.com) and primary mail domain
 (example: example.com). Do not use this computer's cloud hostname, such as a
 name ending in .internal. Quick setup keeps all other defaults and uses
 best-effort detected public IPs.
-Advanced setup exposes the complete WebUI bootstrap form in the terminal,
+Advanced setup exposes the complete bootstrap form in the terminal,
 including nested storage, directory, logging, and DNS-provider settings.
 
 Place these artifacts beside this script (or choose another path when asked):
@@ -561,9 +571,9 @@ After setup, combined DNS records are printed in aligned TYPE, HOST, ANSWER,
 TTL, and PRIO columns. The installer then asks whether to send outbound mail
 through a Mailjet SMTP relay, and whether the printed DNS rows are already in
 the zone. If they are not, it can publish them through the name.com DNS API.
-The recommended publishing mode installs Caddy, routes the Stalwart and WebUI
+The recommended publishing mode installs Caddy, routes the mail and BearMail
 hostnames to separate localhost upstreams, obtains HTTPS certificates, and
-synchronizes the mail-host certificate into Stalwart. An explicit
+synchronizes the mail-host certificate into the engine. An explicit
 operator-managed mode leaves reverse-proxy configuration untouched.
 
 Options:
@@ -1823,7 +1833,8 @@ configure_optional_mailjet_relay() {
     say "-------------------"
     say "Google Cloud blocks outbound TCP port 25, so this server cannot deliver"
     say "mail directly to other MX hosts. A Mailjet SMTP relay on port 587 or 465"
-    say "avoids that block. Stalwart uses SMTP, not Mailjet's HTTP Send API."
+    say "avoids that block. BearMail uses SMTP, not Mailjet's HTTP Send API."
+    say "Have the Mailjet API key and secret ready from app.mailjet.com."
     say ""
     if ! prompt_yes_no "Use a Mailjet SMTP relay for outbound mail" "yes"; then
         return 0
@@ -2011,9 +2022,10 @@ publish_optional_namecom_dns() {
     say ""
     say "Authoritative DNS"
     say "-----------------"
-    say "The WebUI and public HTTPS certificates need the printed A/AAAA (and mail)"
-    say "records to resolve to this server. If they are already in the zone, skip"
-    say "the name.com API. Otherwise the installer can publish them for you."
+    say "BearMail and public HTTPS certificates need the printed A/AAAA (and mail)"
+    say "records to resolve to this server. Prepare a name.com API username and"
+    say "production token if the rows are not already in the zone. If they are"
+    say "already published, skip the name.com API."
     say ""
     if prompt_yes_no "Have you already published the printed forward-DNS records" "no"; then
         return 0

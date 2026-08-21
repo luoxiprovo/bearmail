@@ -1,7 +1,7 @@
 {
-  "name": "Stalwart Mail & Calendar",
-  "short_name": "Stalwart",
-  "description": "A private, standalone mail and calendar client for Stalwart",
+  "name": "BearMail",
+  "short_name": "BearMail",
+  "description": "Private mail and calendar on a domain you control",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f3f1eb",
