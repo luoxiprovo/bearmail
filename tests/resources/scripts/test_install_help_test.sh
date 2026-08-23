@@ -17,8 +17,8 @@ sh -n "$TEST_INSTALL" || fail "test_install.sh is not valid POSIX sh"
 help_out="$(sh "$TEST_INSTALL" --help)"
 printf '%s\n' "$help_out" | grep -q 'no enterprise features' || \
     fail "help does not say enterprise is excluded"
-printf '%s\n' "$help_out" | grep -q 'Mailjet SMTP relay' || \
-    fail "help does not mention Mailjet SMTP relay"
+printf '%s\n' "$help_out" | grep -q 'SMTP relay' || \
+    fail "help does not mention SMTP relay"
 printf '%s\n' "$help_out" | grep -q 'name.com' || \
     fail "help does not mention name.com DNS publish"
 printf '%s\n' "$help_out" | grep -q 'install.sh' || \
@@ -38,8 +38,8 @@ printf '%s\n' "$dry_out" | grep -q -- '--release --locked' || \
     fail "default dry-run is not a release customer-style build"
 printf '%s\n' "$dry_out" | grep -q 'exec sh .*/install.sh' || \
     fail "dry-run does not exec install.sh"
-printf '%s\n' "$dry_out" | grep -q 'Mailjet SMTP relay' || \
-    fail "dry-run does not mention Mailjet"
+printf '%s\n' "$dry_out" | grep -q 'SMTP relay' || \
+    fail "dry-run does not mention SMTP relay"
 printf '%s\n' "$dry_out" | grep -q 'name.com DNS' || \
     fail "dry-run does not mention name.com DNS"
 

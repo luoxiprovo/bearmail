@@ -175,15 +175,18 @@ DNS management; the mail and WebUI address records must resolve in either mode.
 
 After printing the table, the installer asks:
 
-- whether to send outbound mail through a Mailjet SMTP relay (default yes).
-  Choosing yes prints the Mailjet account steps, then asks for the SMTP host
-  (default `in-v3.mailjet.com`), port (default 587), API key, and secret key.
-  It creates or updates a named `mailjet` MTA relay route over the local JMAP
-  management API, keeps local-domain delivery local, and reloads settings. If
-  Stalwart rejects the administrator credentials, or the Mailjet keys cannot be
-  applied, the installer asks for those values again instead of exiting. The
-  administrator and Mailjet secrets are streamed on standard input to the
-  updater; they are never command arguments or persistent installer state.
+- which outbound SMTP relay to use (Brevo by default, Mailjet, or skip).
+  Choosing Brevo prints the Brevo account steps, then asks for the SMTP host
+  (default `smtp-relay.brevo.com`), port (default 587), SMTP login, and SMTP
+  key. Choosing Mailjet prints the Mailjet account steps, then asks for the
+  SMTP host (default `in-v3.mailjet.com`), port (default 587), API key, and
+  secret key. It creates or updates a named `brevo` or `mailjet` MTA relay
+  route over the local JMAP management API, keeps local-domain delivery local,
+  and reloads settings. If Stalwart rejects the administrator credentials, or
+  the relay keys cannot be applied, the installer asks for those values again
+  instead of exiting. The administrator and relay secrets are streamed on
+  standard input to the updater; they are never command arguments or
+  persistent installer state.
 - whether the printed forward-DNS rows are already in the authoritative zone.
   If they are not, it asks for a name.com API username, token, and DNS zone
   (default: the mail domain) and creates, updates, or replaces supported
@@ -191,16 +194,18 @@ After printing the table, the installer asks:
   host (old A/AAAA addresses, extra MX targets, SPF/DKIM/DMARC TXT, and
   CNAME/ANAME that cannot coexist with an address record) are listed and,
   after confirmation (default yes), deleted or updated. Unrelated verification
-  TXT records and NS records are left unchanged. When a Mailjet relay was just
-  configured, SPF TXT answers gain `include:spf.mailjet.com`. CAA, TLSA, NS,
+  TXT records and NS records are left unchanged. When a Brevo relay was just
+  configured, SPF TXT answers gain `include:spf.brevo.com`. When a Mailjet
+  relay was just configured, they gain `include:spf.mailjet.com`. CAA, TLSA, NS,
   and PTR are not published. Invalid name.com credentials are explained and
   the questions repeat.
 
 The completion message shows the Stalwart admin URL, WebUI public URL, localhost
 WebUI upstream, HTTPS publishing status, and the account flow: create a user
 in the Stalwart admin panel, then sign in to the WebUI with the full email
-address/account name and password or app password. When Mailjet and DNS are in
-place, that user can send mail from the WebUI after public DNS resolves.
+address/account name and password or app password. When the selected SMTP
+relay and DNS are in place, that user can send mail from the WebUI after
+public DNS resolves.
 
 ## Acceptance criteria
 
@@ -225,9 +230,9 @@ place, that user can send mail from the WebUI after public DNS resolves.
     terminating the installer.
 14. Automatic mode never overwrites an operator-owned Caddyfile, keeps ports
     8080/8081 private, and installs an active certificate synchronization timer.
-15. Choosing Mailjet SMTP relay creates or updates a named `mailjet` route and
-    remote outbound strategy without placing Mailjet secrets in arguments or
-    installer state.
+15. Choosing Brevo or Mailjet SMTP relay creates or updates a named `brevo`
+    or `mailjet` route and remote outbound strategy without placing relay
+    secrets in arguments or installer state.
 16. When forward DNS is not already published, name.com credentials are accepted
     interactively and only supported record types are created or updated.
     Conflicting records at the same host are listed and replaced only after

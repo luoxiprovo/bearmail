@@ -89,7 +89,8 @@ main() {
     say "Prepare before the later prompts (the installer does not create these"
     say "vendor accounts for you):"
     say "  • name.com domain on name.com nameservers, plus a production API token"
-    say "  • Mailjet account: sender domain, SMTP API key, and secret key"
+    say "  • SMTP relay account (Brevo recommended, Mailjet also supported):"
+    say "    sender domain plus SMTP login and SMTP key"
     say "You can still install without them, then add DNS and the relay later."
     say ""
 
@@ -481,14 +482,12 @@ main() {
     say "------------------------------------------------"
     print_combined_dns_table "$_installer_state" "$_webui_hostname"
 
-    local _mailjet_relay="false" _dns_published="false"
-    configure_optional_mailjet_relay \
+    local _smtp_relay="" _dns_published="false"
+    configure_optional_smtp_relay \
         "$_admin_username" "$_admin_secret" "$_mail_domain"
-    if [ "$RETVAL" = "true" ]; then
-        _mailjet_relay="true"
-    fi
+    _smtp_relay="$RETVAL"
     publish_optional_namecom_dns \
-        "$_installer_state" "$_webui_hostname" "$_mail_domain" "$_mailjet_relay"
+        "$_installer_state" "$_webui_hostname" "$_mail_domain" "$_smtp_relay"
     if [ "$RETVAL" = "true" ]; then
         _dns_published="true"
     fi
@@ -515,11 +514,16 @@ main() {
     if [ "$_dns_published" = "true" ]; then
         say "Name.com now has the forward-DNS rows for ${_mail_domain}. Wait for"
         say "propagation before testing the public URLs."
-    elif [ "$_mailjet_relay" != "true" ]; then
+    elif [ -z "$_smtp_relay" ]; then
         say "If the printed forward-DNS rows are not yet in the authoritative zone,"
         say "add them before public login."
     fi
-    if [ "$_mailjet_relay" = "true" ]; then
+    if [ "$_smtp_relay" = "brevo" ]; then
+        say "Outbound mail uses the Brevo SMTP relay. After DNS resolves, create a"
+        say "user in the BearMail admin panel and send from the web app with that"
+        say "account. Finish Brevo domain authentication (Brevo code and DKIM) in"
+        say "the Brevo dashboard if those are still pending."
+    elif [ "$_smtp_relay" = "mailjet" ]; then
         say "Outbound mail uses the Mailjet SMTP relay. After DNS resolves, create a"
         say "user in the BearMail admin panel and send from the web app with that"
         say "account. Finish Mailjet domain verification and Mailjet's DKIM record"
@@ -544,10 +548,10 @@ Usage: install.sh
 Interactively install BearMail: a local Stalwart mail engine binary and a
 prebuilt webmail/calendar UI, then configure CORS and start two services.
 
-Prepare a name.com domain (nameservers at name.com) and a Mailjet account
-before you run this. The installer asks for the name.com API token and the
-Mailjet SMTP API key later. No installation or setup answer is accepted as a
-command-line parameter.
+Prepare a name.com domain (nameservers at name.com) and an SMTP relay account
+(Brevo recommended, Mailjet also supported) before you run this. The installer
+asks for the name.com API token and the relay SMTP login later. No installation
+or setup answer is accepted as a command-line parameter.
 
 The installer asks for paths and public values. Quick setup asks only for the
 public mail hostname (example: mail.example.com) and primary mail domain
@@ -568,9 +572,10 @@ installer downloads the latest official Node.js 22 Linux binary, verifies its
 SHA-256 checksum, and installs a private runtime under /opt/stalwart-node/.
 
 After setup, combined DNS records are printed in aligned TYPE, HOST, ANSWER,
-TTL, and PRIO columns. The installer then asks whether to send outbound mail
-through a Mailjet SMTP relay, and whether the printed DNS rows are already in
-the zone. If they are not, it can publish them through the name.com DNS API.
+TTL, and PRIO columns. The installer then asks which outbound SMTP relay to
+use (Brevo by default, Mailjet, or skip), and whether the printed DNS rows
+are already in the zone. If they are not, it can publish them through the
+name.com DNS API.
 The recommended publishing mode installs Caddy, routes the mail and BearMail
 hostnames to separate localhost upstreams, obtains HTTPS certificates, and
 synchronizes the mail-host certificate into the engine. An explicit
@@ -885,7 +890,7 @@ print_server_identity_help() {
     say ""
 }
 
-prompt_mailjet_port() {
+prompt_relay_port() {
     local _label="$1" _default="$2"
     while true; do
         prompt_port "$_label" "$_default"
@@ -894,6 +899,10 @@ prompt_mailjet_port() {
         esac
         printf '  Enter 587 (STARTTLS) or 465 (implicit TLS). 588 and 2525 are also accepted.\n' >&3
     done
+}
+
+prompt_mailjet_port() {
+    prompt_relay_port "$@"
 }
 
 prompt_admin_credentials() {
@@ -1345,11 +1354,8 @@ validate_caddy_config_ownership() {
     then
         err "❌ Install failed: ${CADDY_CONFIG_FILE} is not owned by this installer. Preserve it and rerun using the operator-managed proxy mode."
     fi
-    if [ ! -e "$CADDY_CONFIG_FILE" ] && \
-        { check_cmd caddy || systemctl cat caddy.service >/dev/null 2>&1; }
-    then
-        err "❌ Install failed: A pre-existing Caddy installation was detected without this installer's managed Caddyfile. Rerun using the operator-managed proxy mode."
-    fi
+    # A packaged Caddy with no Caddyfile is safe to claim. The installer writes
+    # its managed file later. Only refuse when an unmarked file already exists.
 }
 
 is_pristine_packaged_caddyfile() {
@@ -1824,55 +1830,90 @@ configure_stalwart_cors() {
         ' || return $?
 }
 
-configure_optional_mailjet_relay() {
+configure_optional_smtp_relay() {
     local _username="$1" _admin_secret="$2" _mail_domain="$3"
-    local _host _port _api_key _secret _status _errfile
-    RETVAL="false"
+    local _provider="" _host _port _smtp_user _smtp_secret _status _errfile
+    local _user_label _secret_label
+    RETVAL=""
     say ""
     say "Outbound SMTP relay"
     say "-------------------"
     say "Google Cloud blocks outbound TCP port 25, so this server cannot deliver"
-    say "mail directly to other MX hosts. A Mailjet SMTP relay on port 587 or 465"
-    say "avoids that block. BearMail uses SMTP, not Mailjet's HTTP Send API."
-    say "Have the Mailjet API key and secret ready from app.mailjet.com."
+    say "mail directly to other MX hosts. An authenticated SMTP relay on port 587"
+    say "or 465 avoids that block. BearMail uses SMTP, not the vendor HTTP Send API."
+    say "Brevo is the default. Mailjet remains available. Have the SMTP login and"
+    say "SMTP key ready (not the website password)."
     say ""
-    if ! prompt_yes_no "Use a Mailjet SMTP relay for outbound mail" "yes"; then
-        return 0
+    prompt_menu "Outbound SMTP relay" 1 \
+        "Brevo (recommended)" \
+        "Mailjet" \
+        "Skip (direct MX; needs outbound TCP 25)"
+    case "$RETVAL" in
+        1) _provider="brevo" ;;
+        2) _provider="mailjet" ;;
+        *) RETVAL=""; return 0 ;;
+    esac
+    say ""
+    if [ "$_provider" = "brevo" ]; then
+        say "In the Brevo app, complete these steps, then return here with the SMTP"
+        say "login and SMTP key (not the Brevo website password, and not the REST API"
+        say "key):"
+        say "  1. Create an account at https://app.brevo.com/"
+        say "  2. Settings → Senders, domains & dedicated IPs → add domain ${_mail_domain}"
+        say "  3. Publish Brevo's domain-ownership TXT (Brevo code) and DKIM as shown"
+        say "  4. Settings → SMTP & API → SMTP tab"
+        say "     https://app.brevo.com/settings/keys/smtp"
+        say "  Host is smtp-relay.brevo.com. Username is the SMTP login"
+        say "  (often xxx@smtp-brevo.com). Password is the SMTP key."
+        say "  Merge include:spf.brevo.com into the existing SPF record; keep the"
+        say "  mail engine's DKIM selector and add Brevo's separately."
+        say "  See https://developers.brevo.com/docs/smtp-integration and"
+        say "  docs/BREVO_SMTP_RELAY.md for the full walkthrough."
+        say ""
+        prompt_dns_name "Brevo SMTP host" "smtp-relay.brevo.com"
+        _host="$RETVAL"
+        prompt_relay_port "Brevo SMTP port" "587"
+        _port="$RETVAL"
+        _user_label="Brevo SMTP login (username)"
+        _secret_label="Brevo SMTP key (password)"
+    else
+        say "In the Mailjet app, complete these steps, then return here with the SMTP"
+        say "API key and secret key (not the Mailjet website login):"
+        say "  1. Create an account at https://app.mailjet.com/"
+        say "  2. Account settings → Senders & Domains → add domain ${_mail_domain}"
+        say "  3. Publish Mailjet's domain-ownership TXT, then SPF/DKIM as shown there"
+        say "  4. Account settings → SMTP and SEND API settings"
+        say "     https://app.mailjet.com/account/relay"
+        say "  Host is in-v3.mailjet.com. Username is the API key. Password is the"
+        say "  secret key (shown once). Merge include:spf.mailjet.com into the existing"
+        say "  SPF record; keep Stalwart's DKIM selector and add Mailjet's separately."
+        say "  See docs/MAILJET_SMTP_RELAY.md for the full walkthrough."
+        say ""
+        prompt_dns_name "Mailjet SMTP host" "in-v3.mailjet.com"
+        _host="$RETVAL"
+        prompt_relay_port "Mailjet SMTP port" "587"
+        _port="$RETVAL"
+        _user_label="Mailjet API key (SMTP username)"
+        _secret_label="Mailjet secret key (SMTP password)"
     fi
-    say ""
-    say "In the Mailjet app, complete these steps, then return here with the SMTP"
-    say "API key and secret key (not the Mailjet website login):"
-    say "  1. Create an account at https://app.mailjet.com/"
-    say "  2. Account settings → Senders & Domains → add domain ${_mail_domain}"
-    say "  3. Publish Mailjet's domain-ownership TXT, then SPF/DKIM as shown there"
-    say "  4. Account settings → SMTP and SEND API settings"
-    say "     https://app.mailjet.com/account/relay"
-    say "  Host is in-v3.mailjet.com. Username is the API key. Password is the"
-    say "  secret key (shown once). Merge include:spf.mailjet.com into the existing"
-    say "  SPF record; keep Stalwart's DKIM selector and add Mailjet's separately."
-    say "  See docs/MAILJET_SMTP_RELAY.md for the full walkthrough."
-    say ""
-    prompt_dns_name "Mailjet SMTP host" "in-v3.mailjet.com"
-    _host="$RETVAL"
-    prompt_mailjet_port "Mailjet SMTP port" "587"
-    _port="$RETVAL"
-    prompt_text "Mailjet API key (SMTP username)" ""
-    _api_key="$RETVAL"
-    prompt_secret "Mailjet secret key (SMTP password)"
-    _secret="$RETVAL"
-    say "🔐 Configuring Stalwart to relay outbound mail through Mailjet..."
+    prompt_text "$_user_label" ""
+    _smtp_user="$RETVAL"
+    prompt_secret "$_secret_label"
+    _smtp_secret="$RETVAL"
+    say "🔐 Configuring Stalwart to relay outbound mail through ${_provider}..."
     _errfile="$(mktemp)"
     while true; do
         _status=0
-        configure_stalwart_mailjet_relay \
-            "$_username" "$_admin_secret" "$_api_key" "$_secret" "$_host" "$_port" \
+        configure_stalwart_smtp_relay \
+            "$_username" "$_admin_secret" "$_smtp_user" "$_smtp_secret" \
+            "$_host" "$_port" "$_provider" \
             2>"$_errfile" || _status=$?
         if [ -s "$_errfile" ]; then
             sed 's/^/  /' "$_errfile" >&3
         fi
         if [ "$_status" -eq 0 ]; then
             rm -f "$_errfile"
-            RETVAL="true"
+            RETVAL="$_provider"
             return 0
         fi
         if [ "$_status" -eq 2 ]; then
@@ -1882,37 +1923,43 @@ configure_optional_mailjet_relay() {
             _admin_secret="$ADMIN_SECRET_RETVAL"
             continue
         fi
-        printf '  Stalwart could not apply the Mailjet SMTP relay. Enter the API key and secret key again.\n' >&3
-        prompt_text "Mailjet API key (SMTP username)" ""
-        _api_key="$RETVAL"
-        prompt_secret "Mailjet secret key (SMTP password)"
-        _secret="$RETVAL"
+        printf '  Stalwart could not apply the %s SMTP relay. Enter the SMTP login and key again.\n' "$_provider" >&3
+        prompt_text "$_user_label" ""
+        _smtp_user="$RETVAL"
+        prompt_secret "$_secret_label"
+        _smtp_secret="$RETVAL"
     done
 }
 
 configure_stalwart_mailjet_relay() {
-    local _username="$1" _admin_secret="$2" _api_key="$3" _secret="$4"
-    local _host="$5" _port="$6" _implicit_tls="false"
+    configure_stalwart_smtp_relay "$1" "$2" "$3" "$4" "$5" "$6" "mailjet"
+}
+
+configure_stalwart_smtp_relay() {
+    local _username="$1" _admin_secret="$2" _smtp_user="$3" _smtp_secret="$4"
+    local _host="$5" _port="$6" _route_name="$7" _implicit_tls="false"
     case "$_port" in
         465) _implicit_tls="true" ;;
     esac
-    printf '%s\n%s' "$_admin_secret" "$_secret" | \
+    printf '%s\n%s' "$_admin_secret" "$_smtp_secret" | \
         STALWART_ADMIN_USERNAME="$_username" \
-        MAILJET_API_KEY="$_api_key" \
-        MAILJET_HOST="$_host" \
-        MAILJET_PORT="$_port" \
-        MAILJET_IMPLICIT_TLS="$_implicit_tls" \
+        RELAY_USERNAME="$_smtp_user" \
+        RELAY_HOST="$_host" \
+        RELAY_PORT="$_port" \
+        RELAY_IMPLICIT_TLS="$_implicit_tls" \
+        RELAY_NAME="$_route_name" \
         "$NODE_BIN" -e '
           const fs = require("node:fs");
           const raw = fs.readFileSync(0, "utf8");
           const nl = raw.indexOf("\n");
           const adminPassword = nl === -1 ? raw : raw.slice(0, nl);
-          const mailjetSecret = nl === -1 ? "" : raw.slice(nl + 1).replace(/^\n/, "").replace(/\n$/, "");
+          const relaySecret = nl === -1 ? "" : raw.slice(nl + 1).replace(/^\n/, "").replace(/\n$/, "");
           const username = process.env.STALWART_ADMIN_USERNAME;
-          const apiKey = process.env.MAILJET_API_KEY;
-          const host = process.env.MAILJET_HOST;
-          const port = Number(process.env.MAILJET_PORT);
-          const implicitTls = process.env.MAILJET_IMPLICIT_TLS === "true";
+          const smtpUser = process.env.RELAY_USERNAME;
+          const host = process.env.RELAY_HOST;
+          const port = Number(process.env.RELAY_PORT);
+          const implicitTls = process.env.RELAY_IMPLICIT_TLS === "true";
+          const routeName = process.env.RELAY_NAME;
           const authorization = `Basic ${Buffer.from(`${username}:${adminPassword}`).toString("base64")}`;
           const using = ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"];
 
@@ -1954,11 +2001,11 @@ configure_stalwart_mailjet_relay() {
             address: host,
             port,
             protocol: "smtp",
-            authUsername: apiKey,
-            authSecret: { "@type": "Value", secret: mailjetSecret },
+            authUsername: smtpUser,
+            authSecret: { "@type": "Value", secret: relaySecret },
             implicitTls,
             allowInvalidCerts: false,
-            description: "Mailjet SMTP relay",
+            description: routeName === "brevo" ? "Brevo SMTP relay" : "Mailjet SMTP relay",
           };
 
           async function listRoutes() {
@@ -1970,7 +2017,7 @@ configure_stalwart_mailjet_relay() {
           }
 
           (async () => {
-            let existing = (await listRoutes()).find((row) => row.name === "mailjet");
+            let existing = (await listRoutes()).find((row) => row.name === routeName);
             if (existing?.id) {
               const updated = await jmap([
                 ["x:MtaRoute/set", { update: { [existing.id]: relayFields } }, "route"],
@@ -1978,11 +2025,11 @@ configure_stalwart_mailjet_relay() {
               assertSet(updated.route, "MtaRoute");
             } else {
               const created = await jmap([
-                ["x:MtaRoute/set", { create: { mailjet: { "@type": "Relay", name: "mailjet", ...relayFields } } }, "route"],
+                ["x:MtaRoute/set", { create: { [routeName]: { "@type": "Relay", name: routeName, ...relayFields } } }, "route"],
               ]);
-              const conflict = created.route?.notCreated?.mailjet;
+              const conflict = created.route?.notCreated?.[routeName];
               if (conflict) {
-                existing = (await listRoutes()).find((row) => row.name === "mailjet");
+                existing = (await listRoutes()).find((row) => row.name === routeName);
                 if (!existing?.id) throw new Error(`MtaRoute failed: ${JSON.stringify(created.route)}`);
                 const updated = await jmap([
                   ["x:MtaRoute/set", { update: { [existing.id]: relayFields } }, "route"],
@@ -1995,7 +2042,7 @@ configure_stalwart_mailjet_relay() {
 
             const strategy = await jmap([
               ["x:MtaOutboundStrategy/set", { update: { singleton: {
-                "route/else": String.fromCharCode(39) + "mailjet" + String.fromCharCode(39),
+                "route/else": String.fromCharCode(39) + routeName + String.fromCharCode(39),
                 "route/match/0/if": "is_local_domain(rcpt_domain)",
                 "route/match/0/then": String.fromCharCode(39) + "local" + String.fromCharCode(39),
               } } }, "strategy"],
@@ -2016,7 +2063,7 @@ configure_stalwart_mailjet_relay() {
 }
 
 publish_optional_namecom_dns() {
-    local _state="$1" _webui_hostname="$2" _mail_domain="$3" _mailjet_relay="$4"
+    local _state="$1" _webui_hostname="$2" _mail_domain="$3" _smtp_relay="$4"
     local _zone _username _token
     RETVAL="false"
     say ""
@@ -2046,7 +2093,7 @@ publish_optional_namecom_dns() {
     say "🌐 Publishing forward-DNS records through the name.com API..."
     while true; do
         if printf '%s' "$_token" | \
-            publish_dns_via_namecom "$_state" "$_webui_hostname" "$_zone" "$_mailjet_relay" "$_username"
+            publish_dns_via_namecom "$_state" "$_webui_hostname" "$_zone" "$_smtp_relay" "$_username"
         then
             if [ "$RETVAL" = "true" ]; then
                 return 0
@@ -2081,13 +2128,14 @@ EOF
 }
 
 build_namecom_dns_plan() {
-    local _state="$1" _webui_hostname="$2" _zone="$3" _mailjet_relay="$4"
+    local _state="$1" _webui_hostname="$2" _zone="$3" _smtp_relay="$4"
     INSTALLER_STATE_PATH="$_state" WEBUI_HOSTNAME="$_webui_hostname" \
-        NAMECOM_ZONE="$_zone" MERGE_MAILJET_SPF="$_mailjet_relay" \
+        NAMECOM_ZONE="$_zone" RELAY_PROVIDER="$_smtp_relay" \
         "$NODE_BIN" -e "
 $(combined_forward_dns_records_js)
           const zone = process.env.NAMECOM_ZONE.replace(/\\.\$/, '').toLowerCase();
-          const mergeSpf = process.env.MERGE_MAILJET_SPF === 'true';
+          const spfIncludes = { brevo: 'include:spf.brevo.com', mailjet: 'include:spf.mailjet.com' };
+          const spfInclude = spfIncludes[process.env.RELAY_PROVIDER] || '';
           const supported = new Set(['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'SRV']);
           const relativeHost = (fqdn) => {
             const name = String(fqdn || '').replace(/\\.\$/, '').toLowerCase();
@@ -2096,13 +2144,13 @@ $(combined_forward_dns_records_js)
             if (name.endsWith('.' + zone)) return name.slice(0, -(zone.length + 1));
             return null;
           };
-          const mergeMailjetSpf = (answer) => {
-            if (!/^v=spf1(?:\\s|\$)/i.test(answer)) return answer;
-            if (/include:spf\\.mailjet\\.com/i.test(answer)) return answer;
+          const mergeRelaySpf = (answer) => {
+            if (!spfInclude || !/^v=spf1(?:\\s|\$)/i.test(answer)) return answer;
+            if (answer.toLowerCase().includes(spfInclude.toLowerCase())) return answer;
             if (/\\s(?:-|~|\\?|\\+)?all\\s*\$/i.test(answer)) {
-              return answer.replace(/\\s((?:-|~|\\?|\\+)?all)\\s*\$/i, ' include:spf.mailjet.com \$1');
+              return answer.replace(/\\s((?:-|~|\\?|\\+)?all)\\s*\$/i, ' ' + spfInclude + ' \$1');
             }
-            return \`\${answer} include:spf.mailjet.com\`;
+            return \`\${answer} \${spfInclude}\`;
           };
           const plan = [];
           const skipped = [];
@@ -2125,7 +2173,7 @@ $(combined_forward_dns_records_js)
             plan.push({
               host,
               type,
-              answer: mergeSpf && type === 'TXT' ? mergeMailjetSpf(answer) : answer,
+              answer: type === 'TXT' ? mergeRelaySpf(answer) : answer,
               ttl: Math.max(300, Number(record.ttl) || 3600),
               priority: record.priority == null ? undefined : Number(record.priority),
             });
@@ -2340,11 +2388,11 @@ EOF
 }
 
 publish_dns_via_namecom() {
-    local _state="$1" _webui_hostname="$2" _zone="$3" _mailjet_relay="$4" _username="$5"
+    local _state="$1" _webui_hostname="$2" _zone="$3" _smtp_relay="$4" _username="$5"
     local _plan _token _plan_file _existing_file _actions_file _auth
     RETVAL="false"
     _token="$(cat)"
-    if ! _plan="$(build_namecom_dns_plan "$_state" "$_webui_hostname" "$_zone" "$_mailjet_relay")"; then
+    if ! _plan="$(build_namecom_dns_plan "$_state" "$_webui_hostname" "$_zone" "$_smtp_relay")"; then
         return 1
     fi
     _plan_file="$(mktemp)"

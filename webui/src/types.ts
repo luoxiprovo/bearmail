@@ -4,6 +4,7 @@ export const CAPABILITIES = {
   submission: "urn:ietf:params:jmap:submission",
   calendars: "urn:ietf:params:jmap:calendars",
   calendarsParse: "urn:ietf:params:jmap:calendars:parse",
+  stalwart: "urn:stalwart:jmap",
 } as const;
 
 export interface RuntimeConfig {

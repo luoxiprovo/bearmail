@@ -81,8 +81,20 @@ error. Do not select **Discard**. Correct the problem and try again.
 Select **Sign out** at the bottom of the sidebar. On a small screen, open
 **Settings** and select **Sign out**.
 
-Passwords and app passwords remain only in the current browser tab and are not
-written to browser storage. Always sign out when using a shared device.
+## Change your password
+
+1. Open **Settings**.
+2. Under **Password**, enter your current password, a new password, and the new
+   password again.
+3. Select **Change password**.
+
+The new password must be at least 8 characters; the server may require a
+stronger one. After a successful change you stay signed in on this device. If
+the account is stored in an external directory such as LDAP, password changes
+are not available here — ask your administrator.
+
+If you stay signed in, this device keeps your sign-in so you do not have to
+enter it after a refresh. Always sign out when using a shared device.
 
 ## Troubleshooting
 

@@ -89,10 +89,10 @@ credentials produce `4.7.8 authentication failed` or relay denied.
 
 ## 5. Point Stalwart at Mailjet
 
-The combined installer asks whether to use a Mailjet SMTP relay after it prints
-the DNS table. If you answer yes, it prompts for the host, port, API key, and
-secret key, then creates the `mailjet` route and reloads settings. If those
-credentials are rejected, it asks again instead of ending the install.
+The combined installer asks which outbound SMTP relay to use after it prints
+the DNS table. If you choose Mailjet, it prompts for the host, port, API key,
+and secret key, then creates the `mailjet` route and reloads settings. If
+those credentials are rejected, it asks again instead of ending the install.
 
 To apply the same change later, run this script on the GCP host with the two
 keys. It talks to Stalwart's local JMAP management API (the same path

@@ -66,8 +66,12 @@ export async function discoverSession(serverInput: string, auth: AuthProvider): 
 export class JmapClient {
   constructor(
     readonly session: JmapSession,
-    private readonly auth: AuthProvider,
+    private auth: AuthProvider,
   ) {}
+
+  replaceAuth(auth: AuthProvider): void {
+    this.auth = auth;
+  }
 
   get mailAccountId(): string {
     return this.session.primaryAccounts[CAPABILITIES.mail] ?? this.firstAccountId;

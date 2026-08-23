@@ -5,9 +5,10 @@ server. When you finish, two systemd services and two HTTPS hostnames are
 live: the mail engine (Stalwart) on `mail.example.com`, and BearMail on
 `https://webmail.example.com`.
 
-Create the **name.com** domain/account and **Mailjet** account **before** you
-run `install.sh`. The installer will ask for those credentials; it does not
-register the vendors for you. Details and every prompt are in the
+Create the **name.com** domain/account and an **SMTP relay** account (**Brevo**
+recommended, Mailjet also supported) **before** you run `install.sh`. The
+installer will ask for those credentials; it does not register the vendors
+for you. Details and every prompt are in the
 [BearMail README](../README.md).
 
 The combined installer is interactive. It does not download or build either
@@ -23,7 +24,7 @@ runtime automatically.
 | --- | --- |
 | name.com domain on name.com nameservers | Zone for `mail.` and `webmail.` plus the printed MX/SPF/DKIM rows |
 | name.com production API token | Optional auto-publish of that DNS table |
-| Mailjet account, sender domain, SMTP API key and secret | Outbound mail when the VPS blocks TCP 25 |
+| Brevo account (default), SMTP login and SMTP key; or Mailjet API key and secret | Outbound mail when the VPS blocks TCP 25 |
 
 ### Server
 
@@ -228,7 +229,7 @@ The installer then:
    `127.0.0.1:8080` and `127.0.0.1:8443`, publishes both hostnames on 80/443,
    and installs a certificate synchronization timer;
 6. prints the URLs and combined DNS table;
-7. asks whether to send outbound mail through a Mailjet SMTP relay; and
+7. asks which outbound SMTP relay to use (Brevo by default, Mailjet, or skip); and
 8. if the printed DNS rows are not already in the zone, can publish them
    through the name.com DNS API.
 
@@ -271,11 +272,31 @@ admin or WebUI URLs.
 
 Wait for public DNS resolution before testing the public URLs.
 
-## 7. Optional Mailjet SMTP relay
+## 7. Optional SMTP relay
 
 Google Cloud blocks outbound TCP 25. After the DNS table, the installer asks
-whether to use a Mailjet SMTP relay (default yes). If you choose yes, it walks
-through the Mailjet account steps and asks for:
+which outbound SMTP relay to use. **Brevo is the default.** Mailjet remains
+available. Skip only if this host can deliver on TCP 25.
+
+### Brevo (default)
+
+| Prompt | Brevo value |
+| --- | --- |
+| SMTP host | `smtp-relay.brevo.com` |
+| SMTP port | `587` (STARTTLS) or `465` (implicit TLS) |
+| SMTP login | SMTP username (often `xxx@smtp-brevo.com`) |
+| SMTP key | SMTP password (echo disabled). Not the REST API key. |
+
+The installer then creates or updates a Stalwart `MtaRoute` named `brevo` and
+points remote outbound routing at it while keeping local-domain delivery local.
+Secrets are not command-line arguments. See
+[How to set up a Brevo SMTP relay](BREVO_SMTP_RELAY.md).
+
+If you also publish DNS through name.com after choosing Brevo, the installer
+merges `include:spf.brevo.com` into existing SPF TXT rows. Add Brevo's DKIM
+selector from the Brevo dashboard separately.
+
+### Mailjet
 
 | Prompt | Mailjet value |
 | --- | --- |
@@ -284,14 +305,10 @@ through the Mailjet account steps and asks for:
 | API key | SMTP username |
 | Secret key | SMTP password (echo disabled) |
 
-The installer then creates or updates a Stalwart `MtaRoute` named `mailjet` and
-points remote outbound routing at it while keeping local-domain delivery local.
-Secrets are not command-line arguments. See
-[How to set up a Mailjet SMTP relay for Stalwart](MAILJET_SMTP_RELAY.md).
-
-If you also publish DNS through name.com after choosing Mailjet, the installer
-merges `include:spf.mailjet.com` into existing SPF TXT rows. Add Mailjet's DKIM
-selector from the Mailjet dashboard separately.
+The installer creates or updates an `MtaRoute` named `mailjet` and points
+remote outbound routing at it. See
+[How to set up a Mailjet SMTP relay](MAILJET_SMTP_RELAY.md).
+Name.com publishing merges `include:spf.mailjet.com` into SPF.
 
 After DNS resolves and you create a user in the Stalwart admin panel, that user
 can sign in to the WebUI and send mail.
@@ -499,15 +516,18 @@ rejected, the installer asks again instead of exiting. Confirm that Stalwart
 is healthy on `127.0.0.1:8080` if the prompt keeps repeating after a correct
 password.
 
-### Mailjet SMTP relay configuration fails
+### SMTP relay configuration fails
 
-Confirm the values are the SMTP API key and secret key from
+For Brevo, confirm the values are the SMTP login and SMTP key from
+[SMTP & API](https://app.brevo.com/settings/keys/smtp), not the Brevo website
+password and not a REST API key. For Mailjet, confirm the SMTP API key and
+secret key from
 [SMTP and SEND API settings](https://app.mailjet.com/account/relay), not the
 Mailjet website login. Port 25 is rejected. If Stalwart rejects the
 administrator credentials, or the relay update fails, the installer asks for
 those values again instead of exiting. After a successful configuration,
-create a user and send from the WebUI only after the domain is verified in
-Mailjet.
+create a user and send from the WebUI only after the domain is authenticated
+in the selected relay.
 
 ### name.com DNS publishing fails
 
@@ -538,6 +558,7 @@ sudo systemctl start stalwart-caddy-cert-sync.service
 - [BearMail overview and installer options](../README.md)
 - [Installer behavior specification](../CLI_SETUP_SPEC.md)
 - [Installer test plan](../CLI_SETUP_TEST_PLAN.md)
+- [Brevo SMTP relay](BREVO_SMTP_RELAY.md)
 - [Mailjet SMTP relay](MAILJET_SMTP_RELAY.md)
-- [Mailjet relay and name.com DNS test plan](INSTALLER_RELAY_DNS_TEST_PLAN.md)
+- [SMTP relay and name.com DNS test plan](INSTALLER_RELAY_DNS_TEST_PLAN.md)
 - [WebUI documentation](../webui/README.md)

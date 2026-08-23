@@ -1,8 +1,9 @@
-# Test plan: Mailjet relay and name.com DNS in the combined installer
+# Test plan: SMTP relay and name.com DNS in the combined installer
 
-This plan verifies the end-of-install Mailjet SMTP relay and name.com DNS
-publishing added to `install.sh`. Automated checks run without root, Mailjet,
-or name.com. Live account steps need a disposable Linux VM.
+This plan verifies the end-of-install Brevo (default) or Mailjet SMTP relay
+and name.com DNS publishing added to `install.sh`. Automated checks run
+without root, a relay account, or name.com. Live account steps need a
+disposable Linux VM.
 
 Related: [CLI_SETUP_TEST_PLAN.md](../CLI_SETUP_TEST_PLAN.md),
 [CLI_SETUP_SPEC.md](../CLI_SETUP_SPEC.md),
@@ -45,14 +46,15 @@ git diff --check
 | `install_prompt_retry_test.sh` | `PASS: invalid installer answers are explained and re-prompted` |
 | `install_dns_output_test.sh` | `PASS: installer separates forward-zone records from reverse DNS guidance` |
 | `install_proxy_config_test.sh` | `PASS: installer renders isolated Caddy routes and certificate synchronization` |
-| `install_namecom_plan_test.sh` | two PASS lines: zone-relative Mailjet SPF merge, and conflict reconciliation |
+| `install_namecom_plan_test.sh` | three PASS lines: zone-relative Brevo SPF merge, Mailjet SPF merge, and conflict reconciliation |
 
 ### Coverage those scripts must prove
 
-1. Mailjet SMTP port `25` is rejected; `587` is accepted after a retry.
+1. Relay SMTP port `25` is rejected; `587` is accepted after a retry.
 2. Combined DNS table includes mail and WebUI A rows, excludes PTR.
 3. name.com plan uses zone-relative hosts (`mail`, `webmail`, `@` as `""`).
-4. Choosing Mailjet merges `include:spf.mailjet.com` into SPF TXT rows.
+4. Choosing Brevo merges `include:spf.brevo.com` into SPF TXT rows; choosing
+   Mailjet merges `include:spf.mailjet.com`.
 5. CAA and out-of-zone hosts are skipped, not published.
 6. Conflicting live records are reconciled as:
    - old mail `A` reused/updated to the new address;
@@ -67,34 +69,34 @@ git diff --check
 
 Inspect `install.sh` (no execution as root):
 
-- Mailjet secret and name.com token are not passed as command-line arguments.
+- Relay secrets and name.com token are not passed as command-line arguments.
 - `installer-state.json` writing still deletes `administrator`.
-- Completion asks Mailjet relay (default yes) after the DNS table, then asks
-  whether DNS is already published (default no).
+- Completion asks which SMTP relay to use (Brevo default) after the DNS table,
+  then asks whether DNS is already published (default no).
 - Conflicting name.com records print a replace/delete list and prompt
   `Replace the conflicting name.com records with the Stalwart DNS table`.
 - Declining that prompt skips publishing without treating it as a credential
   failure.
 
-## C. Live Mailjet + name.com (disposable VM)
+## C. Live Brevo + name.com (disposable VM)
 
 Requires: systemd Linux VM, public IPv4, interactive TTY, `install.sh`,
 `stalwart`, `stalwart-webui.tar.gz`, a name.com domain on name.com nameservers,
-and a Mailjet account.
+and a Brevo account.
 
 ### C1. Happy path
 
 1. Run `sudo sh ./install.sh` (quick setup, automatic Caddy).
-2. After the DNS table, answer **yes** to Mailjet relay.
-3. Enter `in-v3.mailjet.com`, port `587`, API key, secret key.
+2. After the DNS table, accept **Brevo** as the outbound SMTP relay.
+3. Enter `smtp-relay.brevo.com`, port `587`, SMTP login, SMTP key.
 4. Answer **no** to already-published DNS.
 5. Enter name.com zone, username, and token.
 6. If conflicts are listed, answer **yes** to replace them.
 7. Create a user in Stalwart admin. After DNS/TLS, send mail from the WebUI to
-   an external inbox. Confirm the message in Mailjet activity.
+   an external inbox. Confirm the message in Brevo activity.
 
-Pass: services healthy, `mailjet` MTA route present, remote outbound uses that
-route, name.com has Stalwart A/MX/SPF (with Mailjet include) and WebUI A,
+Pass: services healthy, `brevo` MTA route present, remote outbound uses that
+route, name.com has Stalwart A/MX/SPF (with Brevo include) and WebUI A,
 WebUI can send.
 
 ### C2. Conflicting old DNS
@@ -112,7 +114,7 @@ Rerun C1 through the name.com prompt. Confirm the conflict list shows replace
 and delete rows, then accept replacement.
 
 Pass: parking A/CNAME gone, one `mail` A to this server, one MX to the
-Stalwart hostname, SPF includes Mailjet and not only Google, verification TXT
+Stalwart hostname, SPF includes Brevo and not only Google, verification TXT
 and NS still present, WebUI A created.
 
 ### C3. Decline replacement
@@ -122,24 +124,25 @@ Same preload as C2. At the replace prompt, answer **no**.
 Pass: installer completes without name.com mutations, tells the operator to
 publish by hand, does not re-ask name.com credentials as if auth failed.
 
-### C4. Skip Mailjet, skip name.com
+### C4. Skip relay, skip name.com
 
-Answer **no** to Mailjet, **yes** to already-published DNS.
+Choose **Skip** for the SMTP relay, then **yes** to already-published DNS.
 
-Pass: no Mailjet route, no name.com API calls, completion still prints URLs
-and warns that outbound TCP 25 may be blocked.
+Pass: no `brevo` or `mailjet` route, no name.com API calls, completion still
+prints URLs and warns that outbound TCP 25 may be blocked.
 
 ### C5. Failure paths
 
-- Wrong administrator secret at CORS or Mailjet: installer re-prompts instead
-  of exiting.
-- Wrong Mailjet secret: installer re-prompts the API key and secret key.
+- Wrong administrator secret at CORS or the relay: installer re-prompts
+  instead of exiting.
+- Wrong Brevo SMTP key or Mailjet secret: installer re-prompts the SMTP login
+  and key.
 - Wrong name.com token: questions repeat; a correct retry publishes.
-- Mailjet port `25`: re-prompt; `587` or `465` continues.
+- Relay port `25`: re-prompt; `587` or `465` continues.
 
 ## Exit criteria
 
 Section A must pass on this tree. Section B must match `install.sh`.
 Sections C1–C5 are required before calling the feature done on GCP; if a live
-Mailjet or name.com account is unavailable, list that gap explicitly and do
+Brevo or name.com account is unavailable, list that gap explicitly and do
 not mark C as passed.

@@ -9,13 +9,13 @@ One Linux server, one interactive `install.sh`. When it finishes you have:
 - mail on `mail.example.com` (SMTP, IMAP, JMAP, admin);
 - webmail and calendar on `https://webmail.example.com`;
 - HTTPS via Caddy;
-- outbound delivery through Mailjet (so it works when the cloud provider
-  blocks port 25);
+- outbound delivery through Brevo (Mailjet is also available) so it works
+  when the cloud provider blocks port 25;
 - DNS published through name.com.
 
 The mail engine is [Stalwart](https://stalw.art). BearMail is the product
-wrapper: artifacts, two systemd services, Caddy, Mailjet, and name.com in one
-flow.
+wrapper: artifacts, two systemd services, Caddy, an SMTP relay, and name.com
+in one flow.
 
 ## Prepare these first
 
@@ -41,25 +41,40 @@ You will also choose two hostnames in that zone, typically:
 
 They may share one public IP. They cannot be the same name.
 
-### 2. Mailjet account
+### 2. SMTP relay account (Brevo recommended)
 
-Cloud VMs (including Google Cloud) usually **block outbound TCP 25**. Mailjet
-is the supported SMTP relay.
+Cloud VMs (including Google Cloud) usually **block outbound TCP 25**. The
+installer asks which relay to use. **Brevo is the default.** Mailjet remains
+available.
+
+#### Brevo (default)
+
+1. Create an account at [app.brevo.com](https://app.brevo.com/).
+2. **Settings → Senders, domains & dedicated IPs** → add your mail domain
+   (the part after `@`, such as `example.com`).
+3. Publish Brevo’s domain-ownership TXT (Brevo code) and DKIM as shown there.
+   The installer can merge `include:spf.brevo.com` into SPF when it publishes
+   DNS through name.com. Add Brevo’s DKIM selector from the dashboard yourself.
+4. **Settings → SMTP & API → SMTP**
+   ([SMTP page](https://app.brevo.com/settings/keys/smtp)).
+5. Copy the **SMTP login** (username, often `xxx@smtp-brevo.com`) and the
+   **SMTP key** (password). These are not your Brevo website password, and
+   not a REST API key.
+
+Host is `smtp-relay.brevo.com`. Port `587` (STARTTLS) is the default; `465`
+is implicit TLS. See [Brevo SMTP relay](docs/BREVO_SMTP_RELAY.md).
+
+#### Mailjet (alternative)
 
 1. Create an account at [app.mailjet.com](https://app.mailjet.com/).
-2. **Account settings → Senders & Domains** → add your mail domain
-   (the part after `@`, such as `example.com`).
-3. Publish Mailjet’s domain-ownership TXT (and later its SPF/DKIM as shown
-   there). The installer can merge `include:spf.mailjet.com` into SPF when it
-   publishes DNS through name.com. Add Mailjet’s DKIM selector from the
-   Mailjet dashboard yourself.
+2. **Account settings → Senders & Domains** → add your mail domain.
+3. Publish Mailjet’s domain-ownership TXT and DKIM. The installer can merge
+   `include:spf.mailjet.com` into SPF when it publishes DNS through name.com.
 4. **Account settings → SMTP and SEND API settings**
    ([relay page](https://app.mailjet.com/account/relay)).
 5. Copy the **API key** (SMTP username) and **secret key** (SMTP password).
-   These are not your Mailjet website login. The secret is shown once.
 
-Host is `in-v3.mailjet.com`. Port `587` (STARTTLS) is the default; `465` is
-implicit TLS.
+Host is `in-v3.mailjet.com`. See [Mailjet SMTP relay](docs/MAILJET_SMTP_RELAY.md).
 
 ### 3. A Linux server
 
@@ -182,18 +197,18 @@ password are printed once**. Save them before continuing.
 Only if this is a reinstall or an external directory. Needed to set CORS
 for the web origin. Password input is hidden.
 
-**Use a Mailjet SMTP relay for outbound mail**  
-Default **yes**. Have the API key and secret from the steps above.
+**Outbound SMTP relay**  
+Default **Brevo**. Choose Mailjet or skip if you can send on TCP 25.
 
-| Prompt | What to enter |
+| Prompt (Brevo) | What to enter |
 | --- | --- |
-| Mailjet SMTP host | `in-v3.mailjet.com` |
-| Mailjet SMTP port | `587` or `465` |
-| Mailjet API key | SMTP username |
-| Mailjet secret key | SMTP password (hidden) |
+| Brevo SMTP host | `smtp-relay.brevo.com` |
+| Brevo SMTP port | `587` or `465` |
+| Brevo SMTP login | SMTP username |
+| Brevo SMTP key | SMTP password (hidden) |
 
 Local addresses still deliver on the server. Remote recipients go through
-Mailjet.
+the selected relay.
 
 **Have you already published the printed forward-DNS records**  
 Default **no**. If you answer no, BearMail can publish the table through
@@ -218,8 +233,9 @@ Wait for DNS to resolve, then open:
 Create a user in admin, then sign in to BearMail with that address and
 password. User guide: [How to sign in and send email](docs/WEBUI_USER_GUIDE.md).
 
-Mailjet domain verification and Mailjet’s own DKIM must be finished in the
-Mailjet dashboard if they are still pending.
+Finish the selected relay’s domain authentication (Brevo code/DKIM, or
+Mailjet’s ownership TXT and DKIM) in that vendor’s dashboard if it is still
+pending.
 
 ## What agents get
 

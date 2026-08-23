@@ -92,7 +92,7 @@ printf '%s\n' '{
   ]
 }' > "$STATE_FILE"
 
-build_namecom_dns_plan "$STATE_FILE" "webmail.example.test" "example.test" "true" > "$PLAN_FILE"
+build_namecom_dns_plan "$STATE_FILE" "webmail.example.test" "example.test" "brevo" > "$PLAN_FILE"
 
 PLAN_FILE="$PLAN_FILE" "$NODE_BIN" -e '
   const fs = require("node:fs");
@@ -106,11 +106,11 @@ PLAN_FILE="$PLAN_FILE" "$NODE_BIN" -e '
   const mx = find("MX", "");
   if (!mx || mx.answer !== "mail.example.test" || mx.priority !== 10) fail("apex MX was not planned");
   const spf = find("TXT", "");
-  if (!spf || spf.answer !== "v=spf1 mx include:spf.mailjet.com -all") {
-    fail(`Mailjet SPF was not merged: ${spf?.answer}`);
+  if (!spf || spf.answer !== "v=spf1 mx include:spf.brevo.com -all") {
+    fail(`Brevo SPF was not merged: ${spf?.answer}`);
   }
   const hostSpf = find("TXT", "mail");
-  if (!hostSpf || hostSpf.answer !== "v=spf1 a include:spf.mailjet.com -all") {
+  if (!hostSpf || hostSpf.answer !== "v=spf1 a include:spf.brevo.com -all") {
     fail(`mail host SPF was not merged: ${hostSpf?.answer}`);
   }
   const srv = find("SRV", "_imaps._tcp");
@@ -124,7 +124,19 @@ PLAN_FILE="$PLAN_FILE" "$NODE_BIN" -e '
   }
 '
 
-printf 'PASS: name.com DNS plan is zone-relative and merges Mailjet SPF\n'
+printf 'PASS: name.com DNS plan is zone-relative and merges Brevo SPF\n'
+
+build_namecom_dns_plan "$STATE_FILE" "webmail.example.test" "example.test" "mailjet" > "$PLAN_FILE"
+PLAN_FILE="$PLAN_FILE" "$NODE_BIN" -e '
+  const fs = require("node:fs");
+  const plan = JSON.parse(fs.readFileSync(process.env.PLAN_FILE, "utf8"));
+  const fail = (message) => { console.error(`FAIL: ${message}`); process.exit(1); };
+  const spf = plan.plan.find((row) => row.type === "TXT" && row.host === "");
+  if (!spf || spf.answer !== "v=spf1 mx include:spf.mailjet.com -all") {
+    fail(`Mailjet SPF was not merged: ${spf?.answer}`);
+  }
+'
+printf 'PASS: name.com DNS plan merges Mailjet SPF when Mailjet is selected\n'
 
 EXISTING_FILE="${TEST_TMP_DIR}/existing.json"
 ACTIONS_FILE="${TEST_TMP_DIR}/actions.json"
@@ -146,7 +158,7 @@ printf '%s\n' '{
   "plan": [
     {"host": "mail", "type": "A", "answer": "192.0.2.4", "ttl": 3600},
     {"host": "", "type": "MX", "answer": "mail.example.test", "ttl": 3600, "priority": 10},
-    {"host": "", "type": "TXT", "answer": "v=spf1 mx include:spf.mailjet.com -all", "ttl": 3600},
+    {"host": "", "type": "TXT", "answer": "v=spf1 mx include:spf.brevo.com -all", "ttl": 3600},
     {"host": "webmail", "type": "A", "answer": "192.0.2.4", "ttl": 3600}
   ]
 }' > "$PLAN_FILE"
@@ -170,7 +182,7 @@ ACTIONS_FILE="$ACTIONS_FILE" "$NODE_BIN" -e '
   if (!actions.update.some((row) => row.id === 4 && row.record.answer === "mail.example.test")) {
     fail("primary MX was not replaced");
   }
-  if (!actions.update.some((row) => row.id === 6 && /spf.mailjet.com/.test(row.record.answer))) {
+  if (!actions.update.some((row) => row.id === 6 && /spf.brevo.com/.test(row.record.answer))) {
     fail("old SPF was not replaced");
   }
   if (actions.destroy.some((row) => row.id === 7)) fail("unrelated verification TXT was deleted");

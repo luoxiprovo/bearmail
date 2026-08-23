@@ -128,29 +128,42 @@ configure_stalwart_cors "https://webmail.example.com" "admin" "secret" || \
 configure_stalwart_mailjet_relay "admin" "secret" "key" "secret" "in-v3.mailjet.com" "587" || \
     fail "successful Mailjet configuration returned non-zero"
 
-MAILJET_RELAY_ATTEMPTS=0
-configure_stalwart_mailjet_relay() {
-    MAILJET_RELAY_ATTEMPTS=$((MAILJET_RELAY_ATTEMPTS + 1))
-    if [ "$MAILJET_RELAY_ATTEMPTS" -eq 1 ]; then
+RELAY_ATTEMPTS=0
+configure_stalwart_smtp_relay() {
+    RELAY_ATTEMPTS=$((RELAY_ATTEMPTS + 1))
+    if [ "$RELAY_ATTEMPTS" -eq 1 ]; then
         return 2
     fi
     return 0
 }
-prompt_yes_no() { return 0; }
-prompt_dns_name() { RETVAL="in-v3.mailjet.com"; }
-prompt_mailjet_port() { RETVAL="587"; }
-prompt_text() { RETVAL="apikey"; }
-prompt_secret() { RETVAL="secret"; }
+prompt_menu() { RETVAL=1; }
+prompt_dns_name() { RETVAL="smtp-relay.brevo.com"; }
+prompt_relay_port() { RETVAL="587"; }
+prompt_text() { RETVAL="smtp-login@smtp-brevo.com"; }
+prompt_secret() { RETVAL="xsmtp-key"; }
 prompt_admin_credentials() {
     ADMIN_USERNAME_RETVAL="admin"
     ADMIN_SECRET_RETVAL="correct-password"
 }
 
-configure_optional_mailjet_relay "admin" "wrong-password" "example.com"
-[ "$MAILJET_RELAY_ATTEMPTS" -eq 2 ] || fail "Mailjet auth failure did not retry after new administrator credentials"
-[ "$RETVAL" = "true" ] || fail "Mailjet relay was not marked configured after a successful retry"
+configure_optional_smtp_relay "admin" "wrong-password" "example.com"
+[ "$RELAY_ATTEMPTS" -eq 2 ] || fail "Brevo auth failure did not retry after new administrator credentials"
+[ "$RETVAL" = "brevo" ] || fail "Brevo relay was not marked configured after a successful retry"
 grep -q "rejected those administrator credentials" "${TEST_TMP_DIR}/prompt-output" || \
-    fail "Mailjet auth retry did not explain the rejected credentials"
+    fail "Brevo auth retry did not explain the rejected credentials"
+
+RELAY_ATTEMPTS=0
+prompt_menu() { RETVAL=2; }
+prompt_dns_name() { RETVAL="in-v3.mailjet.com"; }
+prompt_text() { RETVAL="apikey"; }
+prompt_secret() { RETVAL="secret"; }
+configure_optional_smtp_relay "admin" "wrong-password" "example.com"
+[ "$RELAY_ATTEMPTS" -eq 2 ] || fail "Mailjet auth failure did not retry after new administrator credentials"
+[ "$RETVAL" = "mailjet" ] || fail "Mailjet relay was not marked configured after a successful retry"
+
+prompt_menu() { RETVAL=3; }
+configure_optional_smtp_relay "admin" "secret" "example.com"
+[ -z "$RETVAL" ] || fail "skipping the SMTP relay did not leave the provider unset"
 
 looks_like_public_mail_hostname "mail.example.com" || \
     fail "mail.example.com was not accepted as a public mail hostname"

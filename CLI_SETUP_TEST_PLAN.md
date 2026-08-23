@@ -5,10 +5,10 @@
 Verify `CLI_SETUP_SPEC.md`: local-artifact installation, argument-free
 interaction, webpage-schema parity, safe bootstrap persistence, two systemd
 services, exact CORS automation, automatic Caddy publishing, certificate
-synchronization, combined DNS output, optional Mailjet SMTP relay, and optional
-name.com DNS publishing.
+synchronization, combined DNS output, optional Brevo or Mailjet SMTP relay,
+and optional name.com DNS publishing.
 
-Mailjet relay, name.com publishing, and conflicting old DNS records have a
+SMTP relay, name.com publishing, and conflicting old DNS records have a
 focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RELAY_DNS_TEST_PLAN.md).
 
 ## Automated Rust tests
@@ -89,9 +89,10 @@ focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RELAY_DNS
   outside the domain DNS zone and unnecessary for opening either public URL;
 - manual and automatic DNS-management guidance identifies which forward records
   the operator must add or verify;
-- Mailjet SMTP port 25 is rejected and 587/465 are accepted;
+- relay SMTP port 25 is rejected and 587/465 are accepted;
 - the name.com DNS plan uses zone-relative hosts, adds WebUI A/AAAA rows,
-  skips PTR/CAA, and merges `include:spf.mailjet.com` into SPF when requested;
+  skips PTR/CAA, and merges `include:spf.brevo.com` or `include:spf.mailjet.com`
+  into SPF for the selected relay;
 - name.com reconciliation replaces differing A/MX/SPF rows, deletes extra
   records and CNAME clashes at the same host, and preserves unrelated TXT and
   NS records.
@@ -206,7 +207,7 @@ operator-managed mode and an existing proxy.
   verify the existing proxy remains untouched;
 - use fixture downloads to cover every architecture mapping, checksum mismatch,
   missing checksum entry, malformed archive, and extracted-version failure;
-- use a wrong administrator secret and verify CORS, Caddy proxy, and Mailjet
+- use a wrong administrator secret and verify CORS, Caddy proxy, and SMTP relay
   configuration re-prompt instead of exiting; a non-auth JMAP failure still
   returns non-zero for CORS/Caddy;
 - enter the same Stalwart/WebUI hostname, port 8080, non-HTTPS/path origins,

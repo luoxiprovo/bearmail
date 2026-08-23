@@ -370,6 +370,10 @@
   .settings-grid dd { display: flex; align-items: center; gap: 7px; max-width: 60%; margin: 0; overflow-wrap: anywhere; color: var(--ink); text-align: right; }
   .settings-actions { display: flex; gap: 7px; }
   .signature-settings { grid-column: 1 / -1; }
+  .password-settings { grid-column: 1 / -1; display: grid; gap: 12px; }
+  .password-settings label, .signature-identity { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 750; }
+  .password-settings input { min-height: 41px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--paper-strong); color: var(--ink); }
+  .password-settings input:focus { border-color: var(--teal); outline: 0; }
   .signature-settings textarea { width: 100%; min-height: 120px; margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; outline: 0; background: var(--paper-strong); line-height: 1.55; resize: vertical; }
   .signature-settings textarea:focus { border-color: var(--teal); }
   .signature-identity { display: grid; gap: 6px; margin-top: 14px; color: var(--muted); font-size: 12px; font-weight: 750; }

@@ -27,6 +27,7 @@ interface AppContextValue {
   connectOAuth(server: string): Promise<void>;
   logout(): void;
   refresh(): Promise<void>;
+  rememberPassword(password: string): void;
   notify(text: string, tone?: ToastMessage["tone"]): void;
 }
 
@@ -202,6 +203,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     clearStoredAuth();
   }, []);
 
+  const rememberPassword = useCallback((password: string) => {
+    const stored = loadStoredAuth();
+    if (!stored || stored.type !== "basic" || !client) return;
+    saveStoredAuth({ ...stored, password });
+    client.replaceAuth(new BasicAuthProvider(stored.username, password));
+  }, [client]);
+
   useEffect(() => {
     if (!client || !config) return;
     const interval = window.setInterval(() => {
@@ -212,8 +220,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AppContextValue>(() => ({
     config, client, sessionReady, serverOrigin, username, mailboxes, calendars, identities, participantIdentities,
-    loadingData, lastSync, syncVersion, online, toasts, oauthError, connect, connectOAuth, logout, refresh, notify,
-  }), [config, client, sessionReady, serverOrigin, username, mailboxes, calendars, identities, participantIdentities, loadingData, lastSync, syncVersion, online, toasts, oauthError, connect, connectOAuth, logout, refresh, notify]);
+    loadingData, lastSync, syncVersion, online, toasts, oauthError, connect, connectOAuth, logout, rememberPassword, refresh, notify,
+  }), [config, client, sessionReady, serverOrigin, username, mailboxes, calendars, identities, participantIdentities, loadingData, lastSync, syncVersion, online, toasts, oauthError, connect, connectOAuth, logout, rememberPassword, refresh, notify]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

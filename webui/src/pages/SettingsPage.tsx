@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Copy, LogOut, Moon, RefreshCw, Server, Sun } from "lucide-react";
+import { CheckCircle2, Copy, KeyRound, LogOut, Moon, RefreshCw, Server, Sun } from "lucide-react";
 import { useApp } from "../app-context";
+import { changeAccountPassword, validateNewPassword } from "../jmap/account";
 import { identitySignatureText, SIGNATURE_MAX_LENGTH, updateIdentitySignatures } from "../jmap/mail";
 import { CAPABILITIES } from "../types";
 import { useNavigate } from "../router";
@@ -49,6 +50,7 @@ export function SettingsPage({ diagnostics = false }: { diagnostics?: boolean })
             <button className="secondary-button" onClick={() => { logout(); navigate("/connect"); }}><LogOut size={16} /> Sign out</button>
           </div>
         </section>
+        {!diagnostics && <PasswordSettings />}
         {!diagnostics && <SignatureSettings />}
         <section>
           <h2>JMAP capabilities</h2>
@@ -57,7 +59,7 @@ export function SettingsPage({ diagnostics = false }: { diagnostics?: boolean })
         </section>
         <section>
           <h2>Privacy</h2>
-          <p>Passwords stay in memory. Message bodies are loaded on demand. This client includes no analytics, ad code, third-party fonts, or telemetry.</p>
+          <p>This client includes no analytics, ad code, third-party fonts, or telemetry. Message bodies are loaded on demand.</p>
           <button className="text-button" onClick={() => navigate("/diagnostics")}><Server size={16} /> Open diagnostics</button>
         </section>
         {diagnostics && <section className="diagnostics-card">
@@ -67,6 +69,53 @@ export function SettingsPage({ diagnostics = false }: { diagnostics?: boolean })
         </section>}
       </div>
     </div>
+  );
+}
+
+function PasswordSettings() {
+  const { client, rememberPassword, notify } = useApp();
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  if (!client?.has(CAPABILITIES.stalwart)) return null;
+  const save = async () => {
+    setSaving(true);
+    try {
+      validateNewPassword(currentPassword, newPassword, confirmPassword);
+      await changeAccountPassword(client, currentPassword, newPassword);
+      rememberPassword(newPassword);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      notify("Password updated", "success");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The password could not be changed.", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <section className="password-settings">
+      <h2>Password</h2>
+      <p>Change the password for this mail account. You will stay signed in on this device.</p>
+      <label>
+        <span>Current password</span>
+        <input aria-label="Current password" type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+      </label>
+      <label>
+        <span>New password</span>
+        <input aria-label="New password" type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+      </label>
+      <label>
+        <span>Confirm new password</span>
+        <input aria-label="Confirm new password" type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+      </label>
+      <div className="signature-actions">
+        <small>At least 8 characters. The server may require a stronger password.</small>
+        <button className="primary-button" disabled={saving} onClick={() => void save()}><KeyRound size={16} />{saving ? "Saving…" : "Change password"}</button>
+      </div>
+    </section>
   );
 }
 
