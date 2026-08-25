@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildMimeMessage, composeDraftBody, forwardedMessage, forwardSubject, identitySignatureText, patchEmails, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, updateIdentitySignatures } from "./mail";
+import { buildMimeMessage, composeDraftBody, composeDraftHtml, forwardedMessage, forwardSubject, identitySignatureHtml, identitySignatureText, patchEmails, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, updateIdentitySignatures } from "./mail";
 import type { JmapClient } from "./client";
 import type { Email } from "../types";
 
@@ -17,6 +17,24 @@ describe("MIME draft builder", () => {
     expect(text).toContain("Subject: Hello Bcc: intruder@example.test");
     expect(text).not.toContain("\r\nBcc: intruder@example.test");
     expect(text).toContain("Hej 👋");
+  });
+
+  it("sends a multipart alternative when the draft has HTML", async () => {
+    const blob = await buildMimeMessage({
+      to: "reader@example.test",
+      subject: "Hello",
+      body: "Hello",
+      htmlBody: "<p><b>Hello</b></p>",
+    }, { id: "one", name: "Ada", email: "ada@example.test" });
+    const text = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(blob);
+    });
+    expect(text).toContain("multipart/alternative");
+    expect(text).toContain("text/html");
+    expect(text).toContain("<p><b>Hello</b></p>");
   });
 });
 
@@ -79,6 +97,7 @@ describe("email signatures", () => {
     expect(identitySignatureText({ id: "1", name: "Ada", email: "ada@example.test", textSignature: "Ada Rivera\nMail" })).toBe("Ada Rivera\nMail");
     expect(identitySignatureText({ id: "1", name: "Ada", email: "ada@example.test", htmlSignature: "<p>Ada <b>Rivera</b></p>" })).toBe("Ada Rivera");
     expect(identitySignatureText({ id: "1", name: "Ada", email: "ada@example.test" })).toBe("");
+    expect(identitySignatureHtml({ id: "1", name: "Ada", email: "ada@example.test", htmlSignature: "<p>Ada <img src=\"data:image/png;base64,QQ==\"></p>" })).toContain("<img");
   });
 
   it("adds a standard delimiter unless the signature already has one", () => {
@@ -114,6 +133,16 @@ describe("email signatures", () => {
       accountId: "account-1",
       update: { "identity-1": { textSignature: "Ada Rivera\nMail", htmlSignature: textToHtmlSignature("Ada Rivera\nMail") } },
     });
+    await updateIdentitySignatures(client, "identity-1", "Ada", "<p>Ada <b>Rivera</b></p>");
+    expect(payload).toEqual({
+      accountId: "account-1",
+      update: { "identity-1": { textSignature: "Ada", htmlSignature: "<p>Ada <b>Rivera</b></p>" } },
+    });
+  });
+
+  it("places HTML signatures above quoted replies", () => {
+    expect(composeDraftHtml({ signatureHtml: "<p>Ada Rivera</p>" })).toContain('class="signature"');
+    expect(composeDraftHtml({ signatureHtml: "<p>Ada</p>", quotedHtml: "<blockquote>Hi</blockquote>" })).toMatch(/signature[\s\S]*blockquote/);
   });
 });
 

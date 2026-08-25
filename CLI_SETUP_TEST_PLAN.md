@@ -41,7 +41,7 @@ focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RELAY_DNS
 
 ## Installer static tests
 
-- `sh -n install.sh` and `sh -n webui/install.sh` pass;
+- `sh -n install.sh`, `sh -n webui/install.sh`, and `sh -n update.sh` pass;
 - `shellcheck -s dash` passes when ShellCheck is installed;
 - only `-h` and `--help` are accepted by the public installer;
 - every public answer is read from `/dev/tty`;

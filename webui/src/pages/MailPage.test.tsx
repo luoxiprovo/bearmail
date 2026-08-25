@@ -24,7 +24,10 @@ describe("mail list", () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     mockedUseApp.mockReturnValue({
       client: { mailAccountId: "account", request, call } as unknown as JmapClient,
-      mailboxes: [{ id: "inbox", name: "Inbox", role: "inbox", unreadEmails: 3, totalEmails: 10 }],
+      mailboxes: [
+        { id: "inbox", name: "Inbox", role: "inbox", unreadEmails: 3, totalEmails: 10 },
+        { id: "junk", name: "Junk", role: "junk", unreadEmails: 0, totalEmails: 0 },
+      ],
       notify: vi.fn(),
       refresh,
       syncVersion: 0,
@@ -43,6 +46,8 @@ describe("mail list", () => {
       update: { "mail-1": { "keywords/$seen": true } },
     })));
     expect(refresh).toHaveBeenCalled();
+    expect(screen.getAllByLabelText("Mark as spam").length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText("Mark as spam and block sender").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByLabelText("Select Read note"));
     fireEvent.click(screen.getByRole("button", { name: "Mark unread" }));

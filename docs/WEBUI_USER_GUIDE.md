@@ -73,8 +73,23 @@ arrives in the recipient's inbox, and check the spam or junk folder if it does
 not appear immediately. Your Stalwart server, not the browser, performs the
 final delivery.
 
+The compose window includes a formatting toolbar (font, size, bold/italic,
+color, alignment, lists, indent, links, and pictures) and an action toolbar
+for **Send**, **Attach files**, and **Add pictures**. Pictures in the message
+are sent inline. File attachments stay as regular attachments.
+
 If sending fails, the WebUI leaves the message in Drafts and displays the server
 error. Do not select **Discard**. Correct the problem and try again.
+
+## Mark as spam and block a sender
+
+Open a message (or use the row actions in the mail list) and choose:
+
+- **Mark as spam** to move it to Junk and train the spam filter; or
+- **Block sender** to do that and also discard future mail from that address
+  into Junk (requires Sieve filters on the server).
+
+You can do the same for several selected messages from the mail list toolbar.
 
 ## Sign out
 
@@ -95,6 +110,18 @@ are not available here — ask your administrator.
 
 If you stay signed in, this device keeps your sign-in so you do not have to
 enter it after a refresh. Always sign out when using a shared device.
+
+## Email signature
+
+1. Open **Settings**.
+2. Under **Email signature**, write your name and title. Use the formatting
+   toolbar if you want bold text or a color.
+3. Select the picture button to add a small logo or photo.
+4. Select **Save signature**.
+
+New messages, replies, and forwards include this signature. You can still edit
+it in the composer before sending. Keep pictures small so the signature can be
+stored on the server.
 
 ## Troubleshooting
 

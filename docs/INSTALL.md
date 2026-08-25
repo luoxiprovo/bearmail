@@ -418,7 +418,34 @@ Stalwart binary, configuration, data, or log directory or by the private
 Node.js root at `/opt/stalwart-node`. It also must not contain the selected
 system Node.js executable.
 
-## Reinstall or update
+## Update the WebUI only
+
+To replace the web app without touching Stalwart, Caddy, DNS, or mail data,
+build a new archive and copy it to the server with `update.sh`:
+
+```sh
+cd webui
+npm ci
+npm test
+npm run build
+tar -czf ../stalwart-webui.tar.gz \
+  install.sh server.mjs stalwart-webui.service dist
+cd ..
+```
+
+On the installed Ubuntu server, put `update.sh` and `stalwart-webui.tar.gz` in
+the same directory, then run:
+
+```sh
+sudo sh ./update.sh
+```
+
+The updater reads the live `stalwart-webui.service` unit and the installed
+`config.json`, then installs over that prefix, port, Node.js binary, and
+default mail-server URL. Preview with `sudo sh ./update.sh --dry-run`. After
+it finishes, hard-refresh the webmail URL so the browser loads the new assets.
+
+## Reinstall or update everything
 
 Build a matching Stalwart binary and WebUI archive, replace the three staging
 files, and run the same command:

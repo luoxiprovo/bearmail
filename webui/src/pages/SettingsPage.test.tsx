@@ -70,4 +70,25 @@ describe("settings password", () => {
     await waitFor(() => expect(notify).toHaveBeenCalledWith("The new passwords do not match.", "error"));
     expect(call).not.toHaveBeenCalled();
   });
+
+  it("lets the user edit a signature with the formatting toolbar and picture control", () => {
+    mockedUseApp.mockReturnValue({
+      client: { mailAccountId: "account", call: vi.fn(), has: () => false, session: { state: "s" } } as unknown as JmapClient,
+      identities: [{ id: "identity", name: "Ada Rivera", email: "ada@example.test", textSignature: "Ada Rivera", htmlSignature: "<p>Ada Rivera</p>" }],
+      username: "ada@example.test",
+      serverOrigin: "https://mail.example.test",
+      online: true,
+      lastSync: null,
+      refresh: vi.fn(),
+      logout: vi.fn(),
+      rememberPassword: vi.fn(),
+      notify: vi.fn(),
+    } as unknown as ReturnType<typeof useApp>);
+
+    render(<Router><SettingsPage /></Router>);
+    expect(screen.getByLabelText("Email signature")).toBeInTheDocument();
+    expect(screen.getByLabelText("Text formatting")).toBeInTheDocument();
+    expect(screen.getByLabelText("Insert picture")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save signature" })).toBeInTheDocument();
+  });
 });

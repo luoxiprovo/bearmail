@@ -252,6 +252,21 @@
   .compose-field { display: grid; min-height: 47px; grid-template-columns: 70px 1fr; align-items: center; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 12px; font-weight: 750; }
   .compose-field input { height: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); }
   .compose-body { width: 100%; min-height: 330px; border: 0; padding: 22px 0; resize: vertical; outline: 0; background: transparent; line-height: 1.65; }
+  .compose-editor { margin: 16px 0 8px; }
+  .richtext { display: grid; gap: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-strong); overflow: hidden; }
+  .richtext-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; padding: 8px; border-bottom: 1px solid var(--line-soft); background: var(--canvas); }
+  .richtext-toolbar select { min-height: 30px; max-width: 130px; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; background: var(--paper-strong); color: var(--ink); }
+  .richtext-button { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; color: var(--ink-soft); }
+  .richtext-button:hover, .richtext-button:focus-visible { background: var(--paper); color: var(--ink); }
+  .richtext-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--line); }
+  .color-swatch { width: 14px; height: 14px; border-radius: 99px; background: linear-gradient(135deg, #d84e66, #267a72, #b37822); }
+  .richtext-editor { min-height: 260px; padding: 16px 14px; outline: 0; line-height: 1.65; overflow-wrap: anywhere; }
+  .richtext-editor:empty::before { color: var(--muted); content: attr(data-placeholder); pointer-events: none; }
+  .richtext-editor img { max-width: 100%; height: auto; }
+  .richtext-editor blockquote { margin: 0; padding-left: 14px; border-left: 3px solid var(--line); color: var(--muted); }
+  .richtext.compact .richtext-editor { min-height: 140px; }
+  .compose-action-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; border-top: 1px solid var(--line-soft); padding-top: 15px; }
+  .compose-action-toolbar .discard-button { margin-left: auto; }
   .compose-attachments { display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line-soft); padding-top: 12px; }
   .compose-attachments > span { display: flex; align-items: center; gap: 6px; border-radius: 7px; padding: 7px 9px; background: var(--canvas); font-size: 11px; }
   .compose-attachments small { color: var(--muted); }
@@ -374,8 +389,7 @@
   .password-settings label, .signature-identity { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 750; }
   .password-settings input { min-height: 41px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--paper-strong); color: var(--ink); }
   .password-settings input:focus { border-color: var(--teal); outline: 0; }
-  .signature-settings textarea { width: 100%; min-height: 120px; margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; outline: 0; background: var(--paper-strong); line-height: 1.55; resize: vertical; }
-  .signature-settings textarea:focus { border-color: var(--teal); }
+  .signature-editor { margin-top: 14px; }
   .signature-identity { display: grid; gap: 6px; margin-top: 14px; color: var(--muted); font-size: 12px; font-weight: 750; }
   .signature-identity select { min-height: 41px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--paper-strong); color: var(--ink); }
   .signature-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
@@ -438,6 +452,9 @@
     .compose-header .save-state { display: none; }
     .compose-sheet { min-height: calc(100vh - 127px); margin: 0; border: 0; border-radius: 0; padding: 24px 18px; box-shadow: none; }
     .compose-body { min-height: 260px; }
+    .richtext-editor { min-height: 200px; }
+    .compose-action-toolbar { gap: 6px; }
+    .compose-action-toolbar .discard-button { margin-left: auto; }
     .calendar-sidebar { overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px 12px; }
     .calendar-sidebar .new-event, .calendar-sidebar .invite-legend { display: none; }
     .calendar-list { display: flex; min-width: max-content; gap: 14px; margin: 0; border: 0; }

@@ -121,6 +121,11 @@ sudo sh ./install.sh
 There are no setup flags. `install.sh -h` only prints help. Every answer is
 typed in the terminal so secrets never land in shell history.
 
+To update **only** the WebUI on an already-installed server, copy `update.sh`
+and a new `stalwart-webui.tar.gz` to that host and run `sudo sh ./update.sh`.
+It reuses the live WebUI service and `config.json`. Details:
+[How to install BearMail](docs/INSTALL.md#update-the-webui-only).
+
 Full paths, reinstall, uninstall, and troubleshooting:
 [How to install BearMail](docs/INSTALL.md).
 

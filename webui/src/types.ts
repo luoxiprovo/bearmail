@@ -5,6 +5,7 @@ export const CAPABILITIES = {
   calendars: "urn:ietf:params:jmap:calendars",
   calendarsParse: "urn:ietf:params:jmap:calendars:parse",
   stalwart: "urn:stalwart:jmap",
+  sieve: "urn:ietf:params:jmap:sieve",
 } as const;
 
 export interface RuntimeConfig {
@@ -154,6 +155,7 @@ export interface DraftInput {
   bcc?: string;
   subject: string;
   body: string;
+  htmlBody?: string;
 }
 
 export interface ToastMessage {

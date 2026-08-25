@@ -1,3 +1,4 @@
+import { bytesToBase64, extractInlineImages, htmlToPlainText, looksLikeHtml, plainTextToHtml, sanitizeComposeHtml } from "../richtext";
 import { CAPABILITIES, type DraftInput, type Email, type EmailBodyPart, type Identity, type Mailbox } from "../types";
 import { JmapClient, JmapError, findResponse } from "./client";
 
@@ -95,10 +96,17 @@ export async function getIdentities(client: JmapClient): Promise<Identity[]> {
 }
 
 export const SIGNATURE_MAX_LENGTH = 2047;
+export const HTML_SIGNATURE_MAX_LENGTH = 32_000;
 
 export function identitySignatureText(identity?: Identity): string {
   if (identity?.textSignature?.trim()) return identity.textSignature.replace(/\s+$/, "");
-  return htmlToTextSignature(identity?.htmlSignature ?? "").replace(/\s+$/, "");
+  return htmlToPlainText(identity?.htmlSignature ?? "").replace(/\s+$/, "");
+}
+
+export function identitySignatureHtml(identity?: Identity): string {
+  if (identity?.htmlSignature?.trim()) return sanitizeComposeHtml(identity.htmlSignature);
+  const text = identity?.textSignature?.trim() ?? "";
+  return text ? textToHtmlSignature(text) : "";
 }
 
 export function signatureBlock(signature: string): string {
@@ -114,6 +122,29 @@ export function composeDraftBody(options: { signature?: string; quoted?: string;
   if (options.quoted) blocks.push(options.quoted);
   if (options.forwarded) blocks.push(options.forwarded);
   return blocks.join("\n\n");
+}
+
+export function composeDraftHtml(options: { signatureHtml?: string; quotedHtml?: string; forwardedHtml?: string } = {}): string {
+  const blocks = ["<p><br></p>"];
+  if (options.signatureHtml?.trim()) {
+    const html = sanitizeComposeHtml(options.signatureHtml);
+    blocks.push(`<div class="signature">${html}</div>`);
+  }
+  if (options.quotedHtml?.trim()) blocks.push(options.quotedHtml);
+  if (options.forwardedHtml?.trim()) blocks.push(options.forwardedHtml);
+  return blocks.join("");
+}
+
+export function emailHtml(email: Email): string {
+  const part = email.htmlBody?.find((item) => item.partId && email.bodyValues?.[item.partId]);
+  return part?.partId ? email.bodyValues?.[part.partId]?.value ?? "" : "";
+}
+
+export function draftBodyFromEmail(email: Email): { body: string; htmlBody: string } {
+  const html = emailHtml(email);
+  const text = emailPlainText(email) || email.preview || "";
+  if (html.trim()) return { body: htmlToPlainText(html) || text, htmlBody: sanitizeComposeHtml(html) };
+  return { body: text, htmlBody: plainTextToHtml(text) };
 }
 
 export function replyQuote(email: Email): string {
@@ -143,6 +174,22 @@ export function forwardedMessage(email: Email): string {
   ].join("\n");
 }
 
+export function replyQuoteHtml(email: Email): string {
+  const who = email.from?.[0]?.name || email.from?.[0]?.email || "someone";
+  const inner = emailHtml(email).trim() || plainTextToHtml(emailPlainText(email) || email.preview || "");
+  return `<p>On ${escapeAttr(new Date(email.receivedAt).toLocaleString())}, ${escapeAttr(who)} wrote:</p><blockquote>${sanitizeComposeHtml(inner)}</blockquote>`;
+}
+
+export function forwardedMessageHtml(email: Email): string {
+  const recipients = (email.to ?? []).map(formatMailbox).filter(Boolean).join(", ") || "undisclosed-recipients";
+  const inner = emailHtml(email).trim() || plainTextToHtml(emailPlainText(email) || email.preview || "");
+  return `<p><strong>---------- Forwarded message ---------</strong><br>From: ${escapeAttr(formatMailbox(email.from?.[0]))}<br>Date: ${escapeAttr(new Date(email.receivedAt).toLocaleString())}<br>Subject: ${escapeAttr(email.subject || "(no subject)")}<br>To: ${escapeAttr(recipients)}</p>${sanitizeComposeHtml(inner)}`;
+}
+
+function escapeAttr(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
+}
+
 export function emailPlainText(email: Email): string {
   const part = email.textBody?.find((item) => item.partId && email.bodyValues?.[item.partId]);
   return part?.partId ? email.bodyValues?.[part.partId]?.value ?? "" : "";
@@ -152,34 +199,22 @@ function formatMailbox(address?: { name?: string; email?: string }): string {
   return address?.name ? `${address.name} <${address.email}>` : address?.email || "Unknown sender";
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char));
-}
-
-function htmlToTextSignature(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"');
-}
-
 export function textToHtmlSignature(text: string): string {
-  const html = text.split("\n").map(escapeHtml).join("<br>");
-  return html.length < 2048 ? html : escapeHtml(text.replace(/\s+/g, " ")).slice(0, SIGNATURE_MAX_LENGTH);
+  const html = text.split("\n").map((line) => line.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char] ?? char))).join("<br>");
+  return html.length < 2048 ? html : html.slice(0, SIGNATURE_MAX_LENGTH);
 }
 
-export async function updateIdentitySignatures(client: JmapClient, identityId: string, textSignature: string): Promise<void> {
+export async function updateIdentitySignatures(client: JmapClient, identityId: string, textSignature: string, htmlSignature?: string): Promise<void> {
+  const html = htmlSignature?.trim() ? sanitizeComposeHtml(htmlSignature) : textToHtmlSignature(textSignature);
   if (textSignature.length > SIGNATURE_MAX_LENGTH) {
     throw new JmapError(`Keep the signature under ${SIGNATURE_MAX_LENGTH} characters.`, "invalidProperties");
   }
+  if (html.length > HTML_SIGNATURE_MAX_LENGTH) {
+    throw new JmapError("The signature image is too large. Use a smaller picture.", "invalidProperties");
+  }
   const result = await client.call<SetResult>(CAPABILITIES.submission, "Identity/set", {
     accountId: client.mailAccountId,
-    update: { [identityId]: { textSignature, htmlSignature: textToHtmlSignature(textSignature) } },
+    update: { [identityId]: { textSignature, htmlSignature: html } },
   });
   if (result.notUpdated?.[identityId]) {
     throw new JmapError(String(result.notUpdated[identityId].description ?? "The signature could not be saved."), String(result.notUpdated[identityId].type ?? "notUpdated"));
@@ -192,7 +227,7 @@ function parseAddresses(value: string): string[] {
   return value.split(",").map(cleanHeader).filter(Boolean);
 }
 
-export async function buildMimeMessage(input: DraftInput, identity: Identity, attachments: File[] = []): Promise<Blob> {
+function mimeHeaders(input: DraftInput, identity: Identity): string[] {
   const headers = [
     `From: ${cleanHeader(identity.name)} <${cleanHeader(identity.email)}>`,
     `To: ${parseAddresses(input.to).join(", ")}`,
@@ -200,22 +235,82 @@ export async function buildMimeMessage(input: DraftInput, identity: Identity, at
   if (input.cc) headers.push(`Cc: ${parseAddresses(input.cc).join(", ")}`);
   if (input.bcc) headers.push(`Bcc: ${parseAddresses(input.bcc).join(", ")}`);
   headers.push(`Subject: ${cleanHeader(input.subject)}`, "MIME-Version: 1.0");
-  if (!attachments.length) {
-    headers.push("Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: 8bit", "", input.body.replace(/\r?\n/g, "\r\n"));
-  } else {
-    const boundary = `stalwart-${crypto.randomUUID()}`;
-    headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`, "", `--${boundary}`, "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: 8bit", "", input.body.replace(/\r?\n/g, "\r\n"));
-    for (const file of attachments) {
-      headers.push(
-        `--${boundary}`,
-        `Content-Type: ${cleanHeader(file.type || "application/octet-stream")}; name="${quoteParameter(file.name)}"`,
-        "Content-Transfer-Encoding: base64",
-        `Content-Disposition: attachment; filename="${quoteParameter(file.name)}"`,
-        "",
-        toBase64(await file.arrayBuffer()),
-      );
+  return headers;
+}
+
+function textPart(body: string): string[] {
+  return ["Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: 8bit", "", body.replace(/\r?\n/g, "\r\n")];
+}
+
+function htmlPart(html: string): string[] {
+  return ["Content-Type: text/html; charset=UTF-8", "Content-Transfer-Encoding: 8bit", "", html.replace(/\r?\n/g, "\r\n")];
+}
+
+async function attachmentParts(attachments: File[]): Promise<string[][]> {
+  const parts: string[][] = [];
+  for (const file of attachments) {
+    parts.push([
+      `Content-Type: ${cleanHeader(file.type || "application/octet-stream")}; name="${quoteParameter(file.name)}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename="${quoteParameter(file.name)}"`,
+      "",
+      toBase64(await file.arrayBuffer()),
+    ]);
+  }
+  return parts;
+}
+
+function joinMultipart(boundary: string, parts: string[][]): string[] {
+  const lines: string[] = [];
+  for (const part of parts) {
+    lines.push(`--${boundary}`, ...part);
+  }
+  lines.push(`--${boundary}--`, "");
+  return lines;
+}
+
+export async function buildMimeMessage(input: DraftInput, identity: Identity, attachments: File[] = []): Promise<Blob> {
+  const headers = mimeHeaders(input, identity);
+  const htmlSource = input.htmlBody?.trim()
+    ? sanitizeComposeHtml(input.htmlBody)
+    : looksLikeHtml(input.body) ? sanitizeComposeHtml(input.body) : "";
+  if (!htmlSource) {
+    if (!attachments.length) {
+      headers.push(...textPart(input.body));
+    } else {
+      const boundary = `stalwart-${crypto.randomUUID()}`;
+      headers.push(`Content-Type: multipart/mixed; boundary="${boundary}"`, "", ...joinMultipart(boundary, [textPart(input.body), ...(await attachmentParts(attachments))]));
     }
-    headers.push(`--${boundary}--`, "");
+    return new Blob([headers.join("\r\n")], { type: "message/rfc822" });
+  }
+  const extracted = extractInlineImages(htmlSource);
+  const plain = (input.body.trim() || htmlToPlainText(htmlSource) || "").replace(/\r?\n/g, "\r\n");
+  const alternativeBoundary = `alt-${crypto.randomUUID()}`;
+  const alternative = [
+    `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`,
+    "",
+    ...joinMultipart(alternativeBoundary, [textPart(plain), htmlPart(extracted.html)]),
+  ];
+  const relatedBoundary = `rel-${crypto.randomUUID()}`;
+  const relatedParts = [alternative];
+  for (const image of extracted.images) {
+    relatedParts.push([
+      `Content-Type: ${cleanHeader(image.type)}; name="${quoteParameter(image.name)}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: inline; filename="${quoteParameter(image.name)}"`,
+      `Content-ID: <${image.cid}>`,
+      "",
+      bytesToBase64(image.bytes),
+    ]);
+  }
+  const related = extracted.images.length
+    ? [`Content-Type: multipart/related; boundary="${relatedBoundary}"`, "", ...joinMultipart(relatedBoundary, relatedParts)]
+    : alternative;
+  if (!attachments.length) {
+    headers.push(...related);
+  } else {
+    const mixedBoundary = `mix-${crypto.randomUUID()}`;
+    headers.push(`Content-Type: multipart/mixed; boundary="${mixedBoundary}"`, "", ...joinMultipart(mixedBoundary, [related, ...(await attachmentParts(attachments))]));
   }
   return new Blob([headers.join("\r\n")], { type: "message/rfc822" });
 }

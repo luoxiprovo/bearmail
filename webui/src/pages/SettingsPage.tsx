@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, Copy, KeyRound, LogOut, Moon, RefreshCw, Server, Sun } from "lucide-react";
 import { useApp } from "../app-context";
 import { changeAccountPassword, validateNewPassword } from "../jmap/account";
-import { identitySignatureText, SIGNATURE_MAX_LENGTH, updateIdentitySignatures } from "../jmap/mail";
+import { RichTextEditor } from "../components/RichTextEditor";
+import { identitySignatureHtml, SIGNATURE_MAX_LENGTH, updateIdentitySignatures } from "../jmap/mail";
+import { fileToCompressedDataUrl, htmlToPlainText } from "../richtext";
 import { CAPABILITIES } from "../types";
 import { useNavigate } from "../router";
 
@@ -13,7 +15,7 @@ export function SettingsPage({ diagnostics = false }: { diagnostics?: boolean })
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("stalwart.theme", theme); }, [theme]);
   if (!client) return null;
   const capabilities = [
-    ["Mail", CAPABILITIES.mail], ["Sending", CAPABILITIES.submission], ["Calendars", CAPABILITIES.calendars], ["Invite parsing", CAPABILITIES.calendarsParse],
+    ["Mail", CAPABILITIES.mail], ["Sending", CAPABILITIES.submission], ["Calendars", CAPABILITIES.calendars], ["Invite parsing", CAPABILITIES.calendarsParse], ["Filters", CAPABILITIES.sieve],
   ] as const;
   const copyDiagnostics = async () => {
     const report = { serverOrigin, username, online, sessionState: client.session.state, capabilities: capabilities.map(([name, id]) => ({ name, available: client.has(id) })), userAgent: navigator.userAgent };
@@ -123,20 +125,21 @@ function SignatureSettings() {
   const { client, identities, refresh, notify } = useApp();
   const [identityId, setIdentityId] = useState(identities[0]?.id ?? "");
   const identity = identities.find((item) => item.id === identityId) ?? identities[0];
-  const [text, setText] = useState(() => identitySignatureText(identity));
+  const [html, setHtml] = useState(() => identitySignatureHtml(identity));
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (identity && !identities.some((item) => item.id === identityId)) setIdentityId(identity.id);
   }, [identities, identity, identityId]);
   useEffect(() => {
-    setText(identitySignatureText(identity));
+    setHtml(identitySignatureHtml(identity));
   }, [identity]);
   if (!identity) return null;
+  const text = htmlToPlainText(html);
   const save = async () => {
     if (!client) return;
     setSaving(true);
     try {
-      await updateIdentitySignatures(client, identity.id, text);
+      await updateIdentitySignatures(client, identity.id, text.slice(0, SIGNATURE_MAX_LENGTH), html);
       await refresh();
       notify("Signature saved", "success");
     } catch (error) {
@@ -148,7 +151,7 @@ function SignatureSettings() {
   return (
     <section className="signature-settings">
       <h2>Email signature</h2>
-      <p>Added below your message on new mail, replies, and forwards. You can still edit it in the composer before sending.</p>
+      <p>Added below your message on new mail, replies, and forwards. Use the picture button to include a logo or photo.</p>
       {identities.length > 1 && (
         <label className="signature-identity">
           <span>From address</span>
@@ -157,15 +160,17 @@ function SignatureSettings() {
           </select>
         </label>
       )}
-      <textarea
+      <RichTextEditor
+        compact
+        className="signature-editor"
+        value={html}
+        onChange={setHtml}
         aria-label="Email signature"
-        value={text}
-        maxLength={SIGNATURE_MAX_LENGTH}
         placeholder={"Jane Doe\nEngineering\nexample.com"}
-        onChange={(event) => setText(event.target.value)}
+        onInsertImage={(file) => fileToCompressedDataUrl(file, 180, 0.55)}
       />
       <div className="signature-actions">
-        <small>{text.length}/{SIGNATURE_MAX_LENGTH}</small>
+        <small>{text.length}/{SIGNATURE_MAX_LENGTH} text · pictures are embedded in the HTML signature</small>
         <button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save signature"}</button>
       </div>
     </section>

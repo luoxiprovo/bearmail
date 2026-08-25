@@ -16,12 +16,13 @@ let events = [
   { id: "event-declined", uid: "vendor@example.test", title: "Vendor introduction", start: local(5, 16), duration: "PT1H", timeZone: "Etc/UTC", calendarIds: { [calendarId]: true }, organizerCalendarAddress: "mailto:mira@example.test", participants: participants("declined") },
 ];
 let identity = { id: "identity", name: "Ada Rivera", email: "ada@example.test", textSignature: "", htmlSignature: "" };
+const emails = [
   { id: "mail-invite", blobId: "mail-invite-blob", threadId: "thread-1", mailboxIds: { inbox: true }, keywords: {}, receivedAt: new Date().toISOString(), from: [{ name: "Mira Chen", email: "mira@example.test" }], to: [{ name: "Ada Rivera", email: "ada@example.test" }], subject: "Invitation: Quarterly planning", preview: "Review goals and decide the next bets.", hasAttachment: true, textBody: [{ partId: "text-1", type: "text/plain" }], htmlBody: [{ partId: "html-1", type: "text/html" }], attachments: [{ blobId: "invite-blob", type: "text/calendar", name: "invite.ics", size: 820 }], bodyValues: { "text-1": { value: "You are invited to quarterly planning." }, "html-1": { value: "<p>Hello Ada,</p><p>You are invited to <strong>quarterly planning</strong>. The agenda is attached.</p><script>console.error('unsafe')</script>" } } },
   { id: "mail-news", blobId: "mail-news-blob", threadId: "thread-2", mailboxIds: { inbox: true }, keywords: { "$seen": true, "$flagged": true }, receivedAt: new Date(Date.now() - 3_600_000).toISOString(), from: [{ name: "Stalwart Weekly", email: "hello@example.test" }], to: [{ email: "ada@example.test" }], subject: "A quieter inbox, one shortcut at a time", preview: "Three small changes for a calmer week.", hasAttachment: false, textBody: [{ partId: "text-2", type: "text/plain" }], bodyValues: { "text-2": { value: "Three small changes for a calmer week.\n\n1. Archive decisively.\n2. Plan tomorrow today.\n3. Protect focus time." } } },
   { id: "mail-report", blobId: "mail-report-blob", threadId: "thread-3", mailboxIds: { inbox: true }, keywords: {}, receivedAt: new Date(Date.now() - 86_400_000).toISOString(), from: [{ name: "Theo Martin", email: "theo@example.test" }], to: [{ email: "ada@example.test" }], subject: "August field report", preview: "The report is ready for your review.", hasAttachment: true, textBody: [{ partId: "text-3", type: "text/plain" }], attachments: [{ blobId: "report-blob", type: "application/pdf", name: "field-report.pdf", size: 34812 }], bodyValues: { "text-3": { value: "Hi Ada,\n\nThe August field report is ready for your review.\n\nTheo" } } },
 ];
 
-const capabilities = { "urn:ietf:params:jmap:core": {}, "urn:ietf:params:jmap:mail": {}, "urn:ietf:params:jmap:submission": {}, "urn:ietf:params:jmap:calendars": {}, "urn:ietf:params:jmap:calendars:parse": {} };
+const capabilities = { "urn:ietf:params:jmap:core": {}, "urn:ietf:params:jmap:mail": {}, "urn:ietf:params:jmap:submission": {}, "urn:ietf:params:jmap:calendars": {}, "urn:ietf:params:jmap:calendars:parse": {}, "urn:ietf:params:jmap:sieve": {} };
 const session = { capabilities, accounts: { [accountId]: { name: "Ada Rivera", isPersonal: true, isReadOnly: false, accountCapabilities: capabilities } }, primaryAccounts: { "urn:ietf:params:jmap:mail": accountId, "urn:ietf:params:jmap:calendars": accountId }, username: "ada@example.test", apiUrl: "http://127.0.0.1:4181/jmap", uploadUrl: "http://127.0.0.1:4181/upload/{accountId}", downloadUrl: "http://127.0.0.1:4181/download/{accountId}/{blobId}/{name}", eventSourceUrl: "http://127.0.0.1:4181/events", state: "demo-1" };
 
 createServer(async (request, response) => {
@@ -44,7 +45,11 @@ function handle(name, args) {
     { id: "sent", name: "Sent", role: "sent", sortOrder: 3, totalEmails: 12, unreadEmails: 0 },
     { id: "archive", name: "Archive", role: "archive", sortOrder: 4, totalEmails: 86, unreadEmails: 0 },
     { id: "trash", name: "Trash", role: "trash", sortOrder: 5, totalEmails: 2, unreadEmails: 0 },
+    { id: "junk", name: "Junk", role: "junk", sortOrder: 6, totalEmails: 0, unreadEmails: 0 },
   ] };
+  if (name === "SieveScript/query") return { accountId, ids: [] };
+  if (name === "SieveScript/get") return { accountId, list: [] };
+  if (name === "SieveScript/set") return { accountId, created: { blocked: { id: "sieve-blocked" } }, updated: args.update ? Object.fromEntries(Object.keys(args.update).map((id) => [id, null])) : undefined };
   if (name === "Identity/get") return { accountId, state: "identity-1", list: [identity] };
   if (name === "Identity/set") {
     Object.entries(args.update || {}).forEach(([, patch]) => { Object.assign(identity, patch); });
