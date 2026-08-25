@@ -11,10 +11,36 @@ installer will ask for those credentials; it does not register the vendors
 for you. Details and every prompt are in the
 [BearMail README](../README.md).
 
-The combined installer is interactive. It does not download or build either
-application. Prepare the Stalwart binary and WebUI archive first, then copy
-them to the target server with `install.sh`. The installer handles its Node.js
-runtime automatically.
+The combined installer is interactive. `install.sh` itself does not download
+or build either application. The easiest path is `release_install.sh`, which
+downloads the published artifacts from GitHub and then runs `install.sh`.
+The installer handles its Node.js runtime automatically.
+
+## One-line install
+
+On a Linux x86-64 server with systemd, from an SSH terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sudo bash
+```
+
+After you host the same script on Vercel (or another HTTPS site), users can
+run the same command against that URL:
+
+```sh
+curl -fsSL https://YOUR-DOMAIN/release_install.sh | sudo bash
+```
+
+The bootstrapper always fetches `install.sh`, `stalwart`, and
+`stalwart-webui.tar.gz` from GitHub unless `BEARMAIL_DOWNLOAD_BASE` is set.
+It then starts the usual interactive setup. Prepare the name.com and SMTP
+relay accounts first; the wizard will ask for them.
+
+Preview the download plan without changing the system:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sh -s -- --dry-run
+```
 
 ## Before you begin
 
@@ -131,7 +157,9 @@ Its root must contain `install.sh`, `server.mjs`,
 
 ## 3. Copy the installer bundle to the server
 
-Put these three files in one directory on the target server:
+Prefer the [one-line install](#one-line-install) above, which downloads this
+bundle for you. To stage the files yourself, put these three files in one
+directory on the target server:
 
 ```text
 install.sh

@@ -7,6 +7,11 @@ prebuilt `stalwart-webui.tar.gz` in one directory on a new Linux server. Running
 `sudo sh ./install.sh` installs Stalwart and the mail/calendar WebUI with one
 interactive flow while keeping two systemd services and two public hostnames.
 
+`release_install.sh` is the network entrypoint. It downloads those three
+published files from GitHub (or `BEARMAIL_DOWNLOAD_BASE`) into
+`/var/tmp/bearmail-install` and execs `install.sh`. It may be served from a
+static site such as Vercel. It accepts only `--help` and `--dry-run`.
+
 The webpage is not part of first-run Stalwart bootstrap. All bootstrap fields
 available on the webpage remain available in the terminal wizard.
 
@@ -32,7 +37,9 @@ explains the accepted form and repeats that question until the answer is valid
 or interactive input ends. Cancellation, missing prerequisites, invalid
 artifact contents, and installation command failures remain fatal.
 
-The installer never downloads or builds either application. It validates that:
+The installer never downloads or builds either application. `release_install.sh`
+is the only public script that fetches the published Stalwart binary and WebUI
+archive. `install.sh` validates that:
 
 - the Stalwart artifact is an executable regular file compiled with the CLI
   setup, quick setup, DNS table, and secure installer-result handoff;

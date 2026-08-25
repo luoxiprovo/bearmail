@@ -41,12 +41,15 @@ focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RELAY_DNS
 
 ## Installer static tests
 
-- `sh -n install.sh`, `sh -n webui/install.sh`, and `sh -n update.sh` pass;
+- `sh -n install.sh`, `sh -n webui/install.sh`, `sh -n update.sh`, and
+  `sh -n release_install.sh` pass;
 - `shellcheck -s dash` passes when ShellCheck is installed;
-- only `-h` and `--help` are accepted by the public installer;
+- only `-h` and `--help` are accepted by `install.sh`;
+- `release_install.sh` is the curl entrypoint: it downloads the published
+  `install.sh`, `stalwart`, and `stalwart-webui.tar.gz`, then execs `install.sh`;
 - every public answer is read from `/dev/tty`;
-- no source build, release download, artifact URL, or answer-bearing public CLI
-  flag exists;
+- `install.sh` itself has no source build, release download, artifact URL, or
+  answer-bearing public CLI flag;
 - defaults point to `stalwart` and `stalwart-webui.tar.gz` beside `install.sh`;
 - Linux/systemd are checked before system changes;
 - an absolute system Node.js >=22.12 outside user homes is reused unchanged;

@@ -17,6 +17,26 @@ The mail engine is [Stalwart](https://stalw.art). BearMail is the product
 wrapper: artifacts, two systemd services, Caddy, an SMTP relay, and name.com
 in one flow.
 
+## Quick Install
+
+On a Linux **x86-64** server with systemd, from an SSH session:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sudo bash
+```
+
+That downloads `install.sh`, the `stalwart` binary, and
+`stalwart-webui.tar.gz` from this GitHub repo, then starts the interactive
+setup. Prepare the [name.com](#1-namecom-domain-and-account) and
+[SMTP relay](#2-smtp-relay-account-brevo-recommended) accounts first. The
+wizard will ask for them.
+
+Preview the download plan without changing the system:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sh -s -- --dry-run
+```
+
 ## Prepare these first
 
 Do this **before** you run the installer. The script will ask for the values;
@@ -78,20 +98,25 @@ Host is `in-v3.mailjet.com`. See [Mailjet SMTP relay](docs/MAILJET_SMTP_RELAY.md
 
 ### 3. A Linux server
 
-- Linux with systemd, root (`sudo`), and an interactive terminal (SSH is
+- Linux **x86-64** with systemd, root (`sudo`), and an interactive terminal (SSH is
   fine).
 - A public IPv4 address (IPv6 optional).
 - Inbound TCP **80** and **443** open if you use automatic Caddy (recommended).
-- The three install artifacts in one directory (see below).
 
-## Install artifacts
+## Install from local artifacts
 
-Put these next to each other on the server:
+If you already have the three files on the server, put them in one directory:
 
 ```text
 install.sh
 stalwart
 stalwart-webui.tar.gz
+```
+
+Then run:
+
+```sh
+sudo sh ./install.sh
 ```
 
 Build them from this repository (community edition, no enterprise feature
@@ -111,15 +136,6 @@ tar -czf ../stalwart-webui.tar.gz \
   install.sh server.mjs stalwart-webui.service dist
 cd ..
 ```
-
-Copy the three files to the server and run:
-
-```sh
-sudo sh ./install.sh
-```
-
-There are no setup flags. `install.sh -h` only prints help. Every answer is
-typed in the terminal so secrets never land in shell history.
 
 To update **only** the WebUI on an already-installed server, copy `update.sh`
 and a new `stalwart-webui.tar.gz` to that host and run `sudo sh ./update.sh`.
