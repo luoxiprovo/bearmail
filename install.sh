@@ -504,9 +504,9 @@ main() {
     say ""
     if [ "$_proxy_mode" = "caddy" ]; then
         say "Caddy now routes ${_mail_hostname} to the mail engine and ${_webui_hostname}"
-        say "to BearMail. Allow inbound TCP 80/443; Caddy obtains HTTPS certificates"
-        say "once the mail and webmail hostnames resolve here. The installed timer"
-        say "synchronizes its mail-host certificate into the engine for IMAPS/SMTPS."
+        say "to BearMail. Caddy obtains HTTPS certificates once the mail and webmail"
+        say "hostnames resolve here. The installed timer synchronizes its mail-host"
+        say "certificate into the engine for IMAPS/SMTPS."
     else
         say "Configure your HTTPS reverse proxy to send ${_webui_origin} to the WebUI"
         say "upstream above, and keep the WebUI port private."
@@ -533,6 +533,16 @@ main() {
         say "the web app with the full email address (or account name) and its password."
         say "Direct MX delivery needs outbound TCP 25, which Google Cloud blocks."
     fi
+    say ""
+    say "Firewall: allow inbound TCP so BearMail fully works:"
+    say "  80    HTTPS certificates (Let's Encrypt)"
+    say "  443   Webmail, admin, and JMAP"
+    say "  25    Incoming mail from other servers (MX)"
+    say "  465   Phones and mail apps sending (SMTPS)"
+    say "  993   Phones and mail apps reading (IMAPS)"
+    say "Leave 8080, 8081, and 8443 closed; they are localhost only."
+    say "Outbound: 443, DNS 53, and 587 or 465 to the SMTP relay."
+    say "Cloud VMs usually block outbound 25; the relay does not need it."
     say ""
 
     cleanup
