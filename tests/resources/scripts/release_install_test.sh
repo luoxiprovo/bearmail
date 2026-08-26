@@ -37,4 +37,20 @@ printf '%s\n' "$override_out" | grep -q 'https://example.test/bearmail/install.s
 printf '%s\n' "$override_out" | grep -q '/tmp/bm/install.sh' || \
     fail "BEARMAIL_WORK_DIR is not honored"
 
+grep -q 'od -An -t x1 -j 18 -N 2' "$RELEASE_SH" || \
+    fail "x86-64 ELF check must read raw bytes (od -t x1), not host-endian x2"
+
+if command -v od >/dev/null 2>&1; then
+    elf_hdr="${TMPDIR:-/tmp}/bearmail-elf-hdr.$$"
+    trap 'rm -f "$elf_hdr"' EXIT
+    # Minimal ELF64 little-endian header: magic + e_machine 0x3E at offset 18.
+    python3 -c 'import sys; p=sys.argv[1]; b=bytearray(64); b[0:4]=b"\x7fELF"; b[18]=0x3e; b[19]=0x00; open(p,"wb").write(b)' "$elf_hdr"
+    magic=$(od -An -t x1 -N 4 "$elf_hdr" | tr -d ' \n')
+    machine=$(od -An -t x1 -j 18 -N 2 "$elf_hdr" | tr -d ' \n')
+    [ "$magic" = "7f454c46" ] || fail "fixture ELF magic is ${magic}"
+    [ "$machine" = "3e00" ] || fail "fixture e_machine via od -t x1 is ${machine}, expected 3e00"
+    rm -f "$elf_hdr"
+    trap - EXIT
+fi
+
 printf 'ok\n'

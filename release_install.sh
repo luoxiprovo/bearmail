@@ -87,7 +87,9 @@ assert_elf_x86_64() {
     if command -v od >/dev/null 2>&1; then
         _magic=$(od -An -t x1 -N 4 "$_path" | tr -d ' \n')
         [ "$_magic" = "7f454c46" ] || err "The Stalwart download is not an ELF binary."
-        _machine=$(od -An -t x2 -j 18 -N 2 "$_path" | tr -d ' \n')
+        # Read raw bytes (not a host-endian u16). GNU od -t x2 prints 003e on
+        # little-endian hosts; x86-64 ELF stores e_machine as 3e 00.
+        _machine=$(od -An -t x1 -j 18 -N 2 "$_path" | tr -d ' \n')
         [ "$_machine" = "3e00" ] || err "The Stalwart download is not an x86-64 binary (ELF machine ${_machine})."
         return 0
     fi
