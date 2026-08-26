@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Ban, Download, Forward, Image as ImageIcon, LoaderCircle, OctagonAlert, Paperclip, Reply, ReplyAll, Trash2 } from "lucide-react";
+import { ArrowLeft, Ban, Download, Forward, Image as ImageIcon, Inbox, LoaderCircle, OctagonAlert, Paperclip, Reply, ReplyAll, Trash2 } from "lucide-react";
 import { useApp } from "../app-context";
 import { sanitizeEmailHtml } from "../emailHtml";
 import { findCalendarInvitationPart, getEmail, patchEmail } from "../jmap/mail";
-import { markAsSpamAndBlockSender, markEmailAsSpam, senderAddress } from "../jmap/spam";
+import { emailIsInMailbox, markAsSpamAndBlockSender, markEmailAsNotSpam, markEmailAsSpam, senderAddress } from "../jmap/spam";
 import type { Email, EmailBodyPart } from "../types";
 import { InvitationCard } from "../components/InvitationCard";
 import { useNavigate } from "../router";
@@ -30,6 +30,8 @@ export function MessagePage({ emailId }: { emailId: string }) {
   const calendarAttachment = findCalendarInvitationPart(email);
   const trash = mailboxes.find((box) => box.role === "trash");
   const junk = mailboxes.find((box) => box.role === "junk");
+  const inbox = mailboxes.find((box) => box.role === "inbox");
+  const inJunk = emailIsInMailbox(email, junk?.id);
   const recipients = (email.to ?? []).map(formatAddress).join(", ");
 
   const reportSpam = async (block: boolean) => {
@@ -57,6 +59,21 @@ export function MessagePage({ emailId }: { emailId: string }) {
     }
   };
 
+  const reportNotSpam = async () => {
+    if (!client) return;
+    if (!inbox) {
+      notify("This account has no Inbox mailbox, so the message cannot be moved out of Junk.", "error");
+      return;
+    }
+    try {
+      await markEmailAsNotSpam(client, email, inbox.id);
+      notify("Marked as not spam", "success");
+      navigate("/mail");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The message could not be marked as not spam.", "error");
+    }
+  };
+
   const remove = async () => {
     if (!client || !trash) return;
     try {
@@ -74,8 +91,9 @@ export function MessagePage({ emailId }: { emailId: string }) {
           <button className="icon-button" aria-label="Reply" onClick={() => navigate("/mail/compose", { state: { replyTo: email } })}><Reply size={18} /></button>
           <button className="icon-button" aria-label="Reply all" onClick={() => navigate("/mail/compose", { state: { replyTo: email, replyAll: true } })}><ReplyAll size={18} /></button>
           <button className="icon-button" aria-label="Forward" onClick={() => navigate("/mail/compose", { state: { forward: email } })}><Forward size={18} /></button>
-          {junk && <button className="icon-button" aria-label="Mark as spam" title="Mark as spam" onClick={() => void reportSpam(false)}><OctagonAlert size={18} /></button>}
-          {junk && <button className="icon-button" aria-label="Mark as spam and block sender" title="Mark as spam and block sender" onClick={() => void reportSpam(true)}><Ban size={18} /></button>}
+          {inJunk && inbox && <button className="icon-button" aria-label="Mark as not spam" title="Mark as not spam" onClick={() => void reportNotSpam()}><Inbox size={18} /></button>}
+          {!inJunk && junk && <button className="icon-button" aria-label="Mark as spam" title="Mark as spam" onClick={() => void reportSpam(false)}><OctagonAlert size={18} /></button>}
+          {!inJunk && junk && <button className="icon-button" aria-label="Mark as spam and block sender" title="Mark as spam and block sender" onClick={() => void reportSpam(true)}><Ban size={18} /></button>}
           {trash && <button className="icon-button" aria-label="Move to trash" onClick={() => void remove()}><Trash2 size={18} /></button>}
         </div>
       </header>
@@ -90,8 +108,9 @@ export function MessagePage({ emailId }: { emailId: string }) {
           <button className="secondary-button" onClick={() => navigate("/mail/compose", { state: { replyTo: email } })}><Reply size={17} /> Reply</button>
           <button className="secondary-button" onClick={() => navigate("/mail/compose", { state: { replyTo: email, replyAll: true } })}><ReplyAll size={17} /> Reply all</button>
           <button className="secondary-button" onClick={() => navigate("/mail/compose", { state: { forward: email } })}><Forward size={17} /> Forward</button>
-          {junk && <button className="secondary-button" onClick={() => void reportSpam(false)}><OctagonAlert size={17} /> Mark as spam</button>}
-          {junk && <button className="secondary-button" onClick={() => void reportSpam(true)}><Ban size={17} /> Block sender</button>}
+          {inJunk && inbox && <button className="secondary-button" onClick={() => void reportNotSpam()}><Inbox size={17} /> Not spam</button>}
+          {!inJunk && junk && <button className="secondary-button" onClick={() => void reportSpam(false)}><OctagonAlert size={17} /> Mark as spam</button>}
+          {!inJunk && junk && <button className="secondary-button" onClick={() => void reportSpam(true)}><Ban size={17} /> Block sender</button>}
         </div>
       </div>
     </article>

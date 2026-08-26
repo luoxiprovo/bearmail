@@ -91,6 +91,11 @@ Open a message (or use the row actions in the mail list) and choose:
 
 You can do the same for several selected messages from the mail list toolbar.
 
+If a message was moved to Junk by mistake, open **Junk**, select it, and choose
+**Not spam**. That trains the filter that it is legitimate mail and moves it
+back to Inbox. You can do this for one message from the row actions or the
+open message, or for several selected messages from the Junk toolbar.
+
 ## Sign out
 
 Select **Sign out** at the bottom of the sidebar. On a small screen, open

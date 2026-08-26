@@ -473,6 +473,19 @@ The updater reads the live `stalwart-webui.service` unit and the installed
 default mail-server URL. Preview with `sudo sh ./update.sh --dry-run`. After
 it finishes, hard-refresh the webmail URL so the browser loads the new assets.
 
+## Small-memory VMs
+
+After install, cap RocksDB, add swap, and limit Stalwart/WebUI/journald. This
+does not change Caddy, DNS, ports, or stored mail. It also disables Google
+Cloud Ops Agent when present, and snapd when no user snaps are installed.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/small-memory-optimize.sh | sudo bash
+```
+
+Preview with `sudo bash -s -- --dry-run`. On a host that already has the repo
+checkout, `sudo sh ./small-memory-optimize.sh` is the same. Safe to re-run.
+
 ## Reinstall or update everything
 
 Build a matching Stalwart binary and WebUI archive, replace the three staging

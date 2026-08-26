@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, Ban, CalendarDays, ChevronRight, Inbox, LoaderCircle, Mail, MailOpen, OctagonAlert, Paperclip, Search, Star, Trash2 } from "lucide-react";
 import { useApp } from "../app-context";
 import { findCalendarInvitationPart, getEmails, patchEmail, patchEmails } from "../jmap/mail";
-import { blockSender, markEmailAsSpam, senderAddress } from "../jmap/spam";
+import { blockSender, emailIsInMailbox, markEmailAsNotSpam, markEmailAsSpam, senderAddress } from "../jmap/spam";
 import type { Email, Mailbox } from "../types";
 import { useNavigate } from "../router";
 
@@ -79,6 +79,8 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
   const archive = mailboxes.find((box) => box.role === "archive");
   const trash = mailboxes.find((box) => box.role === "trash");
   const junk = mailboxes.find((box) => box.role === "junk");
+  const inbox = mailboxes.find((box) => box.role === "inbox");
+  const viewingJunk = activeMailbox?.role === "junk";
 
   const reportSpam = async (email: Email, block: boolean) => {
     if (!client || !junk) return;
@@ -99,6 +101,21 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
       await load();
     } catch (error) {
       notify(error instanceof Error ? error.message : "The message could not be marked as spam.", "error");
+    }
+  };
+
+  const reportNotSpam = async (email: Email) => {
+    if (!client || !inbox) {
+      notify("This account has no Inbox mailbox, so the message cannot be moved out of Junk.", "error");
+      return;
+    }
+    try {
+      await markEmailAsNotSpam(client, email, inbox.id);
+      notify("Marked as not spam", "success");
+      await refresh();
+      await load();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The message could not be marked as not spam.", "error");
     }
   };
 
@@ -123,6 +140,20 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
       await load();
     } catch (error) {
       notify(error instanceof Error ? error.message : "The messages could not be marked as spam.", "error");
+    }
+  };
+
+  const reportSelectedNotSpam = async () => {
+    if (!client || !inbox || !selected.size) return;
+    const chosen = emails.filter((email) => selected.has(email.id));
+    try {
+      for (const email of chosen) await markEmailAsNotSpam(client, email, inbox.id);
+      notify(chosen.length === 1 ? "Marked as not spam" : `Moved ${chosen.length} messages to Inbox`, "success");
+      setSelected(new Set());
+      await refresh();
+      await load();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The messages could not be marked as not spam.", "error");
     }
   };
   const unreadCount = search ? emails.filter((email) => !email.keywords?.["$seen"]).length : (activeMailbox?.unreadEmails ?? emails.filter((email) => !email.keywords?.["$seen"]).length);
@@ -151,8 +182,9 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
             <span>{selected.size} selected</span>
             <button type="button" onClick={() => void markSelected(true)}><MailOpen size={16} /> Mark read</button>
             <button type="button" onClick={() => void markSelected(false)}><Mail size={16} /> Mark unread</button>
-            {junk && <button type="button" onClick={() => void reportSelectedSpam(false)}><OctagonAlert size={16} /> Spam</button>}
-            {junk && <button type="button" onClick={() => void reportSelectedSpam(true)}><Ban size={16} /> Block</button>}
+            {viewingJunk && inbox && <button type="button" onClick={() => void reportSelectedNotSpam()}><Inbox size={16} /> Not spam</button>}
+            {!viewingJunk && junk && <button type="button" onClick={() => void reportSelectedSpam(false)}><OctagonAlert size={16} /> Spam</button>}
+            {!viewingJunk && junk && <button type="button" onClick={() => void reportSelectedSpam(true)}><Ban size={16} /> Block</button>}
             <button type="button" className="text-button" onClick={() => setSelected(new Set())}>Clear</button>
           </div>
         )}
@@ -170,9 +202,13 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
                 <div className="email-markers">{invited && <span title="Calendar invitation"><CalendarDays size={15} /></span>}{email.hasAttachment && <Paperclip size={15} />}</div>
                 <div className="row-actions">
                   <button aria-label={unread ? "Mark as read" : "Mark as unread"} onClick={(event) => { event.stopPropagation(); void action(email, { "keywords/$seen": unread ? true : null }, unread ? "Marked read" : "Marked unread"); }}>{unread ? <MailOpen size={16} /> : <Mail size={16} />}</button>
-                  {archive && <button aria-label="Archive" onClick={(event) => { event.stopPropagation(); void action(email, { [`mailboxIds/${activeMailbox?.id}`]: null, [`mailboxIds/${archive.id}`]: true }, "Archived"); }}><Archive size={16} /></button>}
-                  {junk && <button aria-label="Mark as spam" onClick={(event) => { event.stopPropagation(); void reportSpam(email, false); }}><OctagonAlert size={16} /></button>}
-                  {junk && <button aria-label="Mark as spam and block sender" onClick={(event) => { event.stopPropagation(); void reportSpam(email, true); }}><Ban size={16} /></button>}
+                  {archive && !emailIsInMailbox(email, junk?.id) && <button aria-label="Archive" onClick={(event) => { event.stopPropagation(); void action(email, { [`mailboxIds/${activeMailbox?.id}`]: null, [`mailboxIds/${archive.id}`]: true }, "Archived"); }}><Archive size={16} /></button>}
+                  {emailIsInMailbox(email, junk?.id)
+                    ? inbox && <button aria-label="Mark as not spam" onClick={(event) => { event.stopPropagation(); void reportNotSpam(email); }}><Inbox size={16} /></button>
+                    : junk && <>
+                      <button aria-label="Mark as spam" onClick={(event) => { event.stopPropagation(); void reportSpam(email, false); }}><OctagonAlert size={16} /></button>
+                      <button aria-label="Mark as spam and block sender" onClick={(event) => { event.stopPropagation(); void reportSpam(email, true); }}><Ban size={16} /></button>
+                    </>}
                   {trash && <button aria-label="Move to trash" onClick={(event) => { event.stopPropagation(); const patch: Record<string, unknown> = { [`mailboxIds/${trash.id}`]: true }; Object.keys(email.mailboxIds).forEach((id) => { if (id !== trash.id) patch[`mailboxIds/${id}`] = null; }); void action(email, patch, "Moved to trash"); }}><Trash2 size={16} /></button>}
                 </div>
                 <ChevronRight className="row-chevron" size={17} />

@@ -36,8 +36,28 @@ export function junkMailboxPatch(email: Pick<Email, "mailboxIds">, junkMailboxId
   return patch;
 }
 
+export function notSpamMailboxPatch(email: Pick<Email, "mailboxIds">, inboxMailboxId: string): Record<string, unknown> {
+  const patch: Record<string, unknown> = {
+    [`mailboxIds/${inboxMailboxId}`]: true,
+    "keywords/$junk": null,
+    "keywords/$notjunk": true,
+  };
+  for (const id of Object.keys(email.mailboxIds ?? {})) {
+    if (id !== inboxMailboxId) patch[`mailboxIds/${id}`] = null;
+  }
+  return patch;
+}
+
+export function emailIsInMailbox(email: Pick<Email, "mailboxIds">, mailboxId?: string): boolean {
+  return Boolean(mailboxId && email.mailboxIds?.[mailboxId]);
+}
+
 export async function markEmailAsSpam(client: JmapClient, email: Pick<Email, "id" | "mailboxIds">, junkMailboxId: string): Promise<void> {
   await patchEmail(client, email.id, junkMailboxPatch(email, junkMailboxId));
+}
+
+export async function markEmailAsNotSpam(client: JmapClient, email: Pick<Email, "id" | "mailboxIds">, inboxMailboxId: string): Promise<void> {
+  await patchEmail(client, email.id, notSpamMailboxPatch(email, inboxMailboxId));
 }
 
 const EMAIL_RE = /^[^\s,<>"]+@[^\s,<>"]+\.[^\s,<>"]+$/;

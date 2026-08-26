@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CAPABILITIES } from "../types";
 import type { JmapClient } from "./client";
-import { BLOCKED_SENDERS_SCRIPT, blockedAddressesFromScript, blockedSendersScript, blockSender, junkMailboxPatch, markAsSpamAndBlockSender, mergeBlockedSenders, senderAddress } from "./spam";
+import { BLOCKED_SENDERS_SCRIPT, blockedAddressesFromScript, blockedSendersScript, blockSender, junkMailboxPatch, markAsSpamAndBlockSender, markEmailAsNotSpam, mergeBlockedSenders, notSpamMailboxPatch, senderAddress } from "./spam";
 
 describe("spam and block", () => {
   it("extracts the sender and builds a junk mailbox patch", () => {
@@ -12,6 +12,12 @@ describe("spam and block", () => {
       "keywords/$notjunk": null,
       "mailboxIds/inbox": null,
       "mailboxIds/other": null,
+    });
+    expect(notSpamMailboxPatch({ mailboxIds: { junk: true } }, "inbox")).toEqual({
+      "mailboxIds/inbox": true,
+      "keywords/$junk": null,
+      "keywords/$notjunk": true,
+      "mailboxIds/junk": null,
     });
   });
 
@@ -67,5 +73,24 @@ describe("spam and block", () => {
     }, { id: "junk" });
     expect(result).toEqual({ blocked: true, sender: "spam@example.test" });
     expect(call.mock.calls[0][1]).toBe("Email/set");
+  });
+
+  it("moves a junk message back to inbox as not spam", async () => {
+    const call = vi.fn().mockResolvedValue({ updated: { "mail-1": null } });
+    const client = {
+      mailAccountId: "account",
+      call,
+    } as unknown as JmapClient;
+    await markEmailAsNotSpam(client, { id: "mail-1", mailboxIds: { junk: true } }, "inbox");
+    expect(call).toHaveBeenCalledWith("urn:ietf:params:jmap:mail", "Email/set", expect.objectContaining({
+      update: {
+        "mail-1": {
+          "mailboxIds/inbox": true,
+          "keywords/$junk": null,
+          "keywords/$notjunk": true,
+          "mailboxIds/junk": null,
+        },
+      },
+    }));
   });
 });

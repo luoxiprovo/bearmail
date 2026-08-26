@@ -37,6 +37,18 @@ Preview the download plan without changing the system:
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sh -s -- --dry-run
 ```
 
+### 1 GB VMs (e2-micro)
+
+After a successful install on a small host (~1 GB RAM), cap RocksDB, add 2 GB
+swap, and apply OS memory limits:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/small-memory-optimize.sh | sudo bash
+```
+
+Preview with `sudo bash -s -- --dry-run`. Details:
+[Small-memory VMs](docs/INSTALL.md#small-memory-vms).
+
 ## Prepare these first
 
 Do this **before** you run the installer. The script will ask for the values;
