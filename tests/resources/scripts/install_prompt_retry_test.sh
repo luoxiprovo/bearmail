@@ -182,17 +182,19 @@ printf '%s\n' "$identity_help" | grep -q 'example.com' || \
     fail "identity help does not give a mail domain example"
 printf '%s\n' "$identity_help" | grep -q '.internal' || \
     fail "identity help does not warn against .internal hostnames"
-printf '%s\n' "$identity_help" | grep -q 'webmail.example.com' || \
+printf '%s\n' "$identity_help" | grep -q 'bearmail.example.com' || \
     fail "identity help does not mention the typical WebUI hostname"
 
 is_example_webui_placeholder "webmail.example.com" || \
     fail "webmail.example.com was not treated as an installer placeholder"
+is_example_webui_placeholder "bearmail.example.com" || \
+    fail "bearmail.example.com was not treated as an installer placeholder"
 if is_example_webui_placeholder "webmail.microdetect.xyz"
 then
     fail "a real WebUI hostname was treated as an installer placeholder"
 fi
 suggested_webui_origin "microdetect.xyz"
-[ "$RETVAL" = "https://webmail.microdetect.xyz" ] || \
+[ "$RETVAL" = "https://bearmail.microdetect.xyz" ] || \
     fail "suggested WebUI origin was not derived from the mail domain"
 
 _webui_origin="https://webmail.example.com"
@@ -204,10 +206,10 @@ prompt_https_origin() {
 }
 confirm_dedicated_webui_origin "caddy" "email.microdetect.xyz" "microdetect.xyz"
 [ "$WEBUI_CONFIRM_PROMPTS" -eq 1 ] || fail "placeholder WebUI origin was not re-prompted after mail domain"
-[ "$_webui_origin" = "https://webmail.microdetect.xyz" ] || \
-    fail "placeholder WebUI origin was not replaced with webmail.<mail-domain>"
-[ "$_webui_hostname" = "webmail.microdetect.xyz" ] || \
-    fail "placeholder WebUI hostname was not replaced with webmail.<mail-domain>"
+[ "$_webui_origin" = "https://bearmail.microdetect.xyz" ] || \
+    fail "placeholder WebUI origin was not replaced with bearmail.<mail-domain>"
+[ "$_webui_hostname" = "bearmail.microdetect.xyz" ] || \
+    fail "placeholder WebUI hostname was not replaced with bearmail.<mail-domain>"
 grep -q "installer example" "${TEST_TMP_DIR}/prompt-output" || \
     fail "placeholder WebUI retry did not explain that the origin is still an example"
 

@@ -35,8 +35,10 @@ pub(crate) fn public_mail_hostname_default(local_hostname: &str) -> String {
 
 fn identity_prompt_label<'a>(name: &str, fallback: &'a str) -> &'a str {
     match name {
-        "serverHostname" => "Public mail hostname",
-        "defaultDomain" => "Primary mail domain",
+        "serverHostname" => "Public mail hostname: eg, mail.example.com",
+        "defaultDomain" => {
+            "Primary mail domain: eg, if you want admin@example.com as email address, input example.com here"
+        }
         _ => fallback,
     }
 }
@@ -842,6 +844,7 @@ mod tests {
         assert!(output.contains("Server Identity"));
         assert!(output.contains("Public mail hostname"));
         assert!(output.contains("mail.example.com"));
+        assert!(output.contains("admin@example.com"));
         assert!(output.contains(".internal"));
         assert!(!output.contains("Storage"));
         assert!(!output.contains("Logging"));

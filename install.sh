@@ -137,7 +137,7 @@ main() {
     prompt_webui_port "WebUI local service port" "8081"
     _webui_port="$RETVAL"
     prompt_https_origin "Public WebUI origin (exact HTTPS URL, no path)" \
-        "https://webmail.example.com"
+        "https://bearmail.example.com"
     _webui_origin="$RETVAL"
     origin_hostname "$_webui_origin"
     _webui_hostname="$RETVAL"
@@ -365,10 +365,10 @@ main() {
     else
         print_server_identity_help
         suggested_public_mail_hostname
-        prompt_dns_name "Public mail hostname (example: mail.example.com)" "$RETVAL"
+        prompt_dns_name "Public mail hostname: eg, mail.example.com" "$RETVAL"
         _mail_hostname="$RETVAL"
         suggested_primary_mail_domain "$_mail_hostname"
-        prompt_dns_name "Primary mail domain (example: example.com)" "$RETVAL"
+        prompt_dns_name "Primary mail domain: eg, if you want admin@example.com as email address, input example.com here" "$RETVAL"
         _mail_domain="$RETVAL"
         _mail_identity_prompted="true"
     fi
@@ -492,9 +492,6 @@ main() {
         _dns_published="true"
     fi
 
-    _admin_secret=""
-    unset _admin_secret
-
     say ""
     say "🎉 Installation complete!"
     say ""
@@ -502,6 +499,17 @@ main() {
     say "  BearMail web:   ${_webui_origin}/"
     say "  WebUI upstream: http://127.0.0.1:${_webui_port}"
     say ""
+    if [ -n "$_admin_username" ] && [ -n "$_admin_secret" ]; then
+        say "Permanent administrator credential"
+        say "  Username: ${_admin_username}"
+        say "  Password: ${_admin_secret}"
+        say "Use this to sign in at https://${_mail_hostname}/admin/ and add other"
+        say "accounts. This password is shown once here and is not saved in"
+        say "installer-state.json. Store it somewhere safe."
+        say ""
+    fi
+    _admin_secret=""
+    unset _admin_secret
     if [ "$_proxy_mode" = "caddy" ]; then
         say "Caddy now routes ${_mail_hostname} to the mail engine and ${_webui_hostname}"
         say "to BearMail. Caddy obtains HTTPS certificates once the mail and webmail"
@@ -839,11 +847,12 @@ suggested_primary_mail_domain() {
 }
 
 suggested_webui_origin() {
-    RETVAL="https://webmail.${1}"
+    RETVAL="https://bearmail.${1}"
 }
 
 is_example_webui_placeholder() {
     case "$1" in
+        bearmail.example.com|bearmail.example.org|bearmail.example.net|bearmail.example.test|\
         webmail.example.com|webmail.example.org|webmail.example.net|webmail.example.test)
             return 0
             ;;
@@ -878,7 +887,7 @@ confirm_dedicated_webui_origin() {
             if [ "$_mode" = "caddy" ] && [ "$_webui_origin" != "https://${_webui_hostname}" ]; then
                 printf '  Automatic Caddy publishing requires standard HTTPS port 443.\n' >&3
             elif webui_hostname_conflicts "$_mode" "$_mail_hostname" "$_mail_domain" "$_webui_hostname"; then
-                printf '  Enter a dedicated WebUI hostname such as webmail.%s.\n' "$_mail_domain" >&3
+                printf '  Enter a dedicated WebUI hostname such as bearmail.%s.\n' "$_mail_domain" >&3
             fi
         done
     fi
@@ -890,12 +899,12 @@ print_server_identity_help() {
     say "------------------------------------"
     say "Enter DNS names you will publish for this mail server, not this VM's"
     say "cloud or OS hostname (do not use a name ending in .internal or .local)."
-    say "  Public mail hostname  example: mail.example.com"
+    say "  Public mail hostname: eg, mail.example.com"
     say "    SMTP greeting, TLS certificate, MX/A records, and the WebUI server URL."
-    say "  Primary mail domain   example: example.com"
-    say "    The part after @. If the hostname is mail.example.com, use example.com."
-    say "  WebUI hostname        typically webmail.example.com, not mail.example.com."
-    say "    If you left the earlier example, it becomes https://webmail.<domain>."
+    say "  Primary mail domain: eg, if you want admin@example.com as email address,"
+    say "    input example.com here."
+    say "  WebUI hostname        typically bearmail.example.com, not mail.example.com."
+    say "    If you left the earlier example, it becomes https://bearmail.<domain>."
     say "Press Enter only if the value in [brackets] is already that public DNS name."
     say ""
 }
@@ -1268,7 +1277,7 @@ normalize_https_origin() {
     case "$_input" in
         https://*) _authority="${_input#https://}" ;;
         *)
-            VALIDATION_ERROR="The public WebUI origin must use HTTPS, for example https://webmail.example.com."
+            VALIDATION_ERROR="The public WebUI origin must use HTTPS, for example https://bearmail.example.com."
             return 1
             ;;
     esac

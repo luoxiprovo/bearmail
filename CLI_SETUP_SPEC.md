@@ -113,12 +113,12 @@ The installer creates and starts:
 - `stalwart-webui.service`, bound to `127.0.0.1:8081` by default and configured
   to connect to `https://mail.example.com`.
 
-The WebUI has a different public origin such as `https://webmail.example.com`.
+The WebUI has a different public origin such as `https://bearmail.example.com`.
 The two hostnames may resolve to the same public IP. The installer asks for the
-WebUI origin before Stalwart setup; `https://webmail.example.com` is only an
+WebUI origin before Stalwart setup; `https://bearmail.example.com` is only an
 example. After the mail hostname and domain are known, leftover example origins
-(`webmail.example.com`, `.org`, `.net`, `.test`) are re-prompted with the default
-`https://webmail.<mail-domain>`. The WebUI hostname cannot equal the mail
+(`bearmail.example.com` / `webmail.example.com`, `.org`, `.net`, `.test`) are re-prompted with the default
+`https://bearmail.<mail-domain>`. The WebUI hostname cannot equal the mail
 hostname or a Caddy protocol-discovery name. Automatic mode installs a
 packaged Caddy service, writes separate Stalwart and WebUI routes, and replaces
 only its marked Caddyfile or a checksum-verified pristine package sample. It binds
@@ -159,9 +159,9 @@ argument or environment value.
 ## Completion and DNS
 
 The setup result includes Stalwart's hostname/domain, public IPs, and complete
-provider-neutral DNS rows. The installer removes the administrator credential
-and saves mode-0600 non-secret installer state beside `config.json` for safe
-reinstalls.
+provider-neutral DNS rows. The installer prints the permanent administrator
+credential once on the completion screen, then discards it and saves mode-0600
+non-secret installer state beside `config.json` for safe reinstalls.
 
 At the end, one aligned forward-DNS table contains `TYPE`, `HOST`, `ANSWER`,
 `TTL`, and `PRIO` columns with:
