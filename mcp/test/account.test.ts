@@ -142,18 +142,12 @@ describe("BearmailAccount", () => {
       participants?: Record<string, unknown>;
       organizerCalendarAddress?: string;
     };
-    expect(createdEvent.recurrenceRule).toEqual({
-      "@type": "RecurrenceRule",
-      frequency: "weekly",
-      until: "2026-09-20T16:25:00",
-      byDay: [{ "@type": "NDay", day: "su" }],
+    expect(createdEvent.recurrenceRule).toBeUndefined();
+    expect(createdEvent.recurrenceOverrides).toEqual({
+      "2026-09-13T13:00:00": {},
+      "2026-09-20T16:25:00": {},
     });
-    const moved = createdEvent.recurrenceOverrides?.["2026-09-20T13:00:00"] as Record<string, unknown>;
-    expect(moved.title).toBe("Panthers at Cardinals");
-    expect(moved.start).toBe("2026-09-20T16:25:00");
-    expect(moved.participants).toEqual(createdEvent.participants);
-    expect(moved.organizerCalendarAddress).toBe(createdEvent.organizerCalendarAddress);
-    expect(createdEvent.recurrenceOverrides?.["2026-09-13T13:00:00"]).toBeUndefined();
+    expect(created.event.description).toContain("Panthers at Cardinals");
     expect(created.schedulingSent).toBe(true);
   });
 

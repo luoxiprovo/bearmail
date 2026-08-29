@@ -129,7 +129,7 @@ export function registerTools(server: McpServer, account: BearmailAccount): void
     before: z.string(),
   }, async (args) => account.getAvailability(args as Parameters<BearmailAccount["getAvailability"]>[0]));
 
-  tool("create_event", "Create a calendar event or a series under one UID. Attendees accept once and every occurrence appears separately. For irregular dates (a sports schedule), pass occurrences — BearMail stores a weekly RRULE plus per-game overrides that keep the same attendees. For a regular pattern, pass recurrence (weekly, etc.). External attendees receive one iMIP series invitation. Do not send a raw .ics.", {
+  tool("create_event", "Create a calendar event or a series under one UID. Attendees accept once and every occurrence appears separately. For irregular dates (a sports schedule), pass occurrences — those become iCalendar RDATE on one VEVENT (Gmail-compatible). Do not use a weekly recurrence for mixed kickoff times. For a regular pattern only, pass recurrence. External attendees receive one iMIP invitation. Do not send a raw .ics.", {
     title: z.string(),
     start: z.string().describe("First occurrence, ISO-8601 local or offset datetime."),
     end: z.string(),
