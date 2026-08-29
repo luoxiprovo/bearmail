@@ -121,18 +121,32 @@ unit_value() {
     sed -n "s/^${2}=//p" "$1" 2>/dev/null | sed -n '$p'
 }
 
-download_file() {
+cache_bust_url() {
     _url="$1"
+    case "$_url" in
+        *githubusercontent.com*|*github.com/*)
+            printf '%s\n' "${_url}?t=$(date +%s)"
+            ;;
+        *)
+            printf '%s\n' "$_url"
+            ;;
+    esac
+}
+
+download_file() {
+    _url="$(cache_bust_url "$1")"
     _destination="$2"
     _label="$3"
     say "Downloading ${_label}..."
     if command -v curl >/dev/null 2>&1; then
         curl --proto '=https' --tlsv1.2 --fail --location --progress-bar \
             --connect-timeout 15 --retry 3 \
+            --header 'Cache-Control: no-cache' --header 'Pragma: no-cache' \
             --output "$_destination" "$_url" \
             || err "Could not download ${_url}."
     elif command -v wget >/dev/null 2>&1; then
-        wget --https-only --timeout=30 --tries=3 --output-document="$_destination" "$_url" \
+        wget --https-only --timeout=30 --tries=3 --no-cache \
+            --output-document="$_destination" "$_url" \
             || err "Could not download ${_url}."
     else
         err "curl or wget is required to download ${_url}."
@@ -442,6 +456,9 @@ case "$mcp_src" in
     *) err "MCP source path is invalid: ${mcp_src}" ;;
 esac
 [ -f "${mcp_src}/install.sh" ] || err "MCP install.sh is missing at ${mcp_src}/install.sh"
+if [ ! -f "${mcp_src}/.npmrc" ]; then
+    printf 'legacy-peer-deps=true\n' > "${mcp_src}/.npmrc"
+fi
 say "Installing MCP from ${mcp_src}..."
 set -- --prefix "$PREFIX" --port "$PORT" --node-bin "$node_bin"
 if [ -n "$server_url" ]; then

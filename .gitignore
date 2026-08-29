@@ -6,4 +6,5 @@ run.sh
 !.gitignore
 !.gitattributes
 !.github
+!mcp/.npmrc
 CLAUDE.md

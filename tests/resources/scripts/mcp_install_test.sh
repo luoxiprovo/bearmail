@@ -49,8 +49,10 @@ override_out="$(BEARMAIL_ARCHIVE_URL=https://example.test/bearmail.tgz BEARMAIL_
 printf '%s\n' "$override_out" | grep -q "${REPO_ROOT}/mcp" || \
     fail "local mcp/ should be preferred over BEARMAIL_ARCHIVE_URL in a checkout"
 
-grep -q 'BEARMAIL_MCP_ARCHIVE_VERSION=' "${REPO_ROOT}/mcp/install.sh" || \
-    fail "mcp/install.sh must keep the archive version marker"
+grep -q 'legacy-peer-deps=true' "${REPO_ROOT}/mcp/install.sh" || \
+    fail "mcp/install.sh must pass --legacy-peer-deps so npm ci matches the published lockfile"
+grep -q 'legacy-peer-deps=true' "$MCP_INSTALL_SH" || \
+    fail "mcp_install.sh must inject .npmrc for GitHub tarballs that omit it"
 grep -q 'mcp_install.sh' "${REPO_ROOT}/README.md" || \
     fail "README.md must document the MCP upgrade one-liner"
 

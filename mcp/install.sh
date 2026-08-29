@@ -57,7 +57,12 @@ node_at_least_22_12 "$node_bin" || { printf 'Node.js 22.12 or later is required.
 
 if [ "$build" = "true" ]; then
   command -v npm >/dev/null 2>&1 || { printf 'npm is required.\n' >&2; exit 1; }
-  (cd "$script_dir" && npm ci && npm run build)
+  (
+    cd "$script_dir" || exit 1
+    [ -f .npmrc ] || printf 'legacy-peer-deps=true\n' > .npmrc
+    npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+    npm run build
+  )
 fi
 [ -f "${script_dir}/dist/http.js" ] || { printf 'MCP dist/http.js is missing. Build first or unpack a prebuilt archive.\n' >&2; exit 1; }
 
