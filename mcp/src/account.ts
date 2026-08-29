@@ -357,8 +357,8 @@ export class BearmailAccount {
       description: input.description || undefined,
       locations: input.location ? { location: { "@type": "Location", name: input.location } } : undefined,
     };
-    Object.assign(event, seriesFields(String(event.start), durationMs, Boolean(input.allDay), input.recurrence, input.occurrences));
     const scheduling = eventSchedulingFields(identities, input.attendees ?? []);
+    Object.assign(event, seriesFields(String(event.start), durationMs, Boolean(input.allDay), input.recurrence, input.occurrences, scheduling));
     if (scheduling) Object.assign(event, scheduling);
     const result = await this.client.call<Record<string, any>>(CAPABILITIES.calendars, "CalendarEvent/set", {
       accountId: this.client.calendarAccountId,
@@ -609,7 +609,7 @@ export class BearmailAccount {
       location: Object.values(event.locations ?? {}).map((item) => item.name).filter(Boolean)[0],
       conference: Object.values(event.locations ?? {}).map((item) => item.uri).filter(Boolean)[0],
       recurrence: event.recurrenceRules,
-      occurrences: Object.entries(event.recurrenceOverrides ?? {}).map(([start, patch]) => {
+      occurrences: Object.entries(event.recurrenceOverrides ?? {}).filter(([, patch]) => patch.excluded !== true).map(([start, patch]) => {
         const item: { start: string; title?: string; duration?: string; location?: string } = { start };
         if (typeof patch.title === "string") item.title = patch.title;
         if (typeof patch.duration === "string") item.duration = patch.duration;
@@ -779,6 +779,7 @@ function formatParticipant(participant: EventParticipant) {
 }
 
 const WEEKDAYS = new Set(["mo", "tu", "we", "th", "fr", "sa", "su"]);
+const WEEKDAY_NAMES = ["su", "mo", "tu", "we", "th", "fr", "sa"] as const;
 
 function seriesFields(
   masterStart: string,
@@ -786,59 +787,151 @@ function seriesFields(
   allDay: boolean,
   recurrence?: RecurrenceInput,
   occurrences?: EventOccurrenceInput[],
+  scheduling?: { participants: Record<string, EventParticipant>; organizerCalendarAddress: string } | null,
 ): { recurrenceRules?: Record<string, unknown>[]; recurrenceOverrides?: Record<string, Record<string, unknown>> } {
-  const fields: { recurrenceRules?: Record<string, unknown>[]; recurrenceOverrides?: Record<string, Record<string, unknown>> } = {};
-  if (recurrence) {
-    if (recurrence.until && recurrence.count != null) {
-      throw new ToolError("Use either recurrence.until or recurrence.count, not both.", "invalidProperties");
-    }
-    if (recurrence.interval != null && (!Number.isInteger(recurrence.interval) || recurrence.interval < 1)) {
-      throw new ToolError("recurrence.interval must be a positive integer.", "invalidProperties");
-    }
-    if (recurrence.count != null && (!Number.isInteger(recurrence.count) || recurrence.count < 1)) {
-      throw new ToolError("recurrence.count must be a positive integer.", "invalidProperties");
-    }
-    const rule: Record<string, unknown> = {
-      "@type": "RecurrenceRule",
-      frequency: recurrence.frequency,
-    };
-    if (recurrence.interval && recurrence.interval > 1) rule.interval = recurrence.interval;
-    if (recurrence.until) rule.until = parseEventDateTime(recurrence.until, allDay);
-    if (recurrence.count) rule.count = recurrence.count;
-    if (recurrence.byDay?.length) {
-      rule.byDay = recurrence.byDay.map((day) => {
-        const code = day.trim().toLowerCase().slice(0, 2);
-        if (!WEEKDAYS.has(code)) throw new ToolError(`Unknown weekday in recurrence.byDay: ${day}`, "invalidProperties");
-        return { "@type": "NDay", day: code };
-      });
-    }
-    fields.recurrenceRules = [rule];
+  const extras = (occurrences ?? [])
+    .map((item) => ({ item, start: parseEventDateTime(item.start, allDay) }))
+    .filter((entry) => entry.start !== masterStart);
+  if (!recurrence && extras.length === 0) {
+    if (occurrences?.length) throw new ToolError("occurrences must include at least one start besides the event start.", "invalidProperties");
+    return {};
   }
-  if (occurrences?.length) {
-    const overrides: Record<string, Record<string, unknown>> = {};
-    for (const item of occurrences) {
-      const start = parseEventDateTime(item.start, allDay);
-      if (start === masterStart) continue;
-      const patch: Record<string, unknown> = {};
-      if (item.end) {
-        const end = new Date(item.end);
-        const occStart = new Date(item.start);
-        if (Number.isNaN(end.getTime()) || Number.isNaN(occStart.getTime()) || end <= occStart) {
-          throw new ToolError(`Occurrence ${item.start} needs a valid end after its start.`, "invalidProperties");
-        }
-        const durationMs = Math.max(60_000, end.getTime() - occStart.getTime());
-        if (durationMs !== masterDurationMs) patch.duration = toIsoDuration(allDay ? Math.max(86_400_000, durationMs) : durationMs);
+
+  const master = localParts(masterStart);
+  const lastStart = extras.reduce((latest, entry) => (entry.start > latest ? entry.start : latest), masterStart);
+  const ruleInput = recurrence ?? {
+    frequency: "weekly" as const,
+    until: lastStart,
+    byDay: [...new Set([weekdayOf(master), ...extras.map((entry) => weekdayOf(localParts(entry.start)))])],
+  };
+  const fields: { recurrenceRules?: Record<string, unknown>[]; recurrenceOverrides?: Record<string, Record<string, unknown>> } = {
+    recurrenceRules: [recurrenceRule(ruleInput, allDay)],
+  };
+
+  const overrides: Record<string, Record<string, unknown>> = {};
+  const byDate = new Map(extras.map((entry) => [dateKey(localParts(entry.start)), entry]));
+  if (extras.length && ruleInput.frequency === "weekly") {
+    const byDay = (ruleInput.byDay?.length ? ruleInput.byDay : [weekdayOf(master)]).map(normalizeWeekday);
+    const until = ruleInput.until ? localParts(parseEventDateTime(ruleInput.until, allDay)) : localParts(lastStart);
+    for (const instance of expandWeekly(master, until, byDay, ruleInput.interval ?? 1, allDay)) {
+      const extra = byDate.get(instance.date);
+      if (instance.start === masterStart) {
+        byDate.delete(instance.date);
+        continue;
       }
-      if (item.title) patch.title = item.title;
-      if (item.location) patch.locations = { location: { "@type": "Location", name: item.location } };
-      overrides[start] = patch;
-    }
-    if (Object.keys(overrides).length) fields.recurrenceOverrides = overrides;
-    else if (!recurrence) {
-      throw new ToolError("occurrences must include at least one start besides the event start.", "invalidProperties");
+      if (!extra) {
+        overrides[instance.start] = { excluded: true };
+        continue;
+      }
+      byDate.delete(instance.date);
+      const patch = occurrencePatch(extra.item, extra.start, instance.start, masterDurationMs, allDay, scheduling);
+      if (Object.keys(patch).length) overrides[instance.start] = patch;
     }
   }
+  for (const extra of byDate.values()) {
+    overrides[extra.start] = occurrencePatch(extra.item, extra.start, extra.start, masterDurationMs, allDay, scheduling, true);
+  }
+  if (Object.keys(overrides).length) fields.recurrenceOverrides = overrides;
   return fields;
+}
+
+function recurrenceRule(recurrence: RecurrenceInput, allDay: boolean): Record<string, unknown> {
+  if (recurrence.until && recurrence.count != null) {
+    throw new ToolError("Use either recurrence.until or recurrence.count, not both.", "invalidProperties");
+  }
+  if (recurrence.interval != null && (!Number.isInteger(recurrence.interval) || recurrence.interval < 1)) {
+    throw new ToolError("recurrence.interval must be a positive integer.", "invalidProperties");
+  }
+  if (recurrence.count != null && (!Number.isInteger(recurrence.count) || recurrence.count < 1)) {
+    throw new ToolError("recurrence.count must be a positive integer.", "invalidProperties");
+  }
+  const rule: Record<string, unknown> = { "@type": "RecurrenceRule", frequency: recurrence.frequency };
+  if (recurrence.interval && recurrence.interval > 1) rule.interval = recurrence.interval;
+  if (recurrence.until) rule.until = parseEventDateTime(recurrence.until, allDay);
+  if (recurrence.count) rule.count = recurrence.count;
+  if (recurrence.byDay?.length) {
+    rule.byDay = recurrence.byDay.map((day) => ({ "@type": "NDay", day: normalizeWeekday(day) }));
+  }
+  return rule;
+}
+
+function occurrencePatch(
+  item: EventOccurrenceInput,
+  actualStart: string,
+  recurrenceId: string,
+  masterDurationMs: number,
+  allDay: boolean,
+  scheduling?: { participants: Record<string, EventParticipant>; organizerCalendarAddress: string } | null,
+  force = false,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  if (actualStart !== recurrenceId) patch.start = actualStart;
+  if (item.end) {
+    const end = new Date(item.end);
+    const occStart = new Date(item.start);
+    if (Number.isNaN(end.getTime()) || Number.isNaN(occStart.getTime()) || end <= occStart) {
+      throw new ToolError(`Occurrence ${item.start} needs a valid end after its start.`, "invalidProperties");
+    }
+    const durationMs = Math.max(60_000, end.getTime() - occStart.getTime());
+    if (durationMs !== masterDurationMs) patch.duration = toIsoDuration(allDay ? Math.max(86_400_000, durationMs) : durationMs);
+  }
+  if (item.title) patch.title = item.title;
+  if (item.location) patch.locations = { location: { "@type": "Location", name: item.location } };
+  if ((force || Object.keys(patch).length) && scheduling) {
+    patch.participants = scheduling.participants;
+    patch.organizerCalendarAddress = scheduling.organizerCalendarAddress;
+  }
+  return patch;
+}
+
+function expandWeekly(master: LocalParts, until: LocalParts, byDay: string[], interval: number, allDay: boolean): Array<{ start: string; date: string }> {
+  const wanted = new Set(byDay);
+  const result: Array<{ start: string; date: string }> = [];
+  const untilKey = dateKey(until);
+  let weeks = 0;
+  for (let day = 0; ; day += 1) {
+    const current = addDays(master, day);
+    if (dateKey(current) > untilKey) break;
+    if (day > 0 && weekdayOf(current) === weekdayOf(master)) weeks += 1;
+    if (weeks % interval !== 0 || !wanted.has(weekdayOf(current))) continue;
+    const start = formatLocal({ ...current, h: master.h, mi: master.mi, s: master.s }, allDay);
+    result.push({ start, date: dateKey(current) });
+  }
+  return result;
+}
+
+function normalizeWeekday(day: string): string {
+  const code = day.trim().toLowerCase().slice(0, 2);
+  if (!WEEKDAYS.has(code)) throw new ToolError(`Unknown weekday in recurrence.byDay: ${day}`, "invalidProperties");
+  return code;
+}
+
+interface LocalParts { y: number; mo: number; d: number; h: number; mi: number; s: number }
+
+function localParts(value: string): LocalParts {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}):(\d{2}))?$/);
+  if (!match) throw new ToolError(`Invalid datetime: ${value}`, "invalidProperties");
+  return { y: Number(match[1]), mo: Number(match[2]), d: Number(match[3]), h: Number(match[4] ?? 0), mi: Number(match[5] ?? 0), s: Number(match[6] ?? 0) };
+}
+
+function weekdayOf(parts: LocalParts): string {
+  return WEEKDAY_NAMES[new Date(parts.y, parts.mo - 1, parts.d).getDay()];
+}
+
+function dateKey(parts: LocalParts): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${parts.y}-${pad(parts.mo)}-${pad(parts.d)}`;
+}
+
+function formatLocal(parts: LocalParts, allDay: boolean): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  if (allDay) return dateKey(parts);
+  return `${dateKey(parts)}T${pad(parts.h)}:${pad(parts.mi)}:${pad(parts.s)}`;
+}
+
+function addDays(parts: LocalParts, days: number): LocalParts {
+  const date = new Date(parts.y, parts.mo - 1, parts.d + days, parts.h, parts.mi, parts.s);
+  return { y: date.getFullYear(), mo: date.getMonth() + 1, d: date.getDate(), h: date.getHours(), mi: date.getMinutes(), s: date.getSeconds() };
 }
 
 function parseEventDateTime(raw: string, allDay: boolean): string {
