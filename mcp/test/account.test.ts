@@ -123,6 +123,52 @@ describe("BearmailAccount", () => {
     expect(listed.events.some((event) => event.id === created.event.id)).toBe(true);
   });
 
+  it("creates a series with extra occurrences as recurrenceOverrides", async () => {
+    const { account, mock: server } = await connect();
+    const created = await account.run("create_event", () => account.createEvent({
+      title: "Panthers",
+      start: "2026-09-06T13:00:00",
+      end: "2026-09-06T16:00:00",
+      attendees: ["guest@gmail.com"],
+      occurrences: [
+        { start: "2026-09-06T13:00:00", end: "2026-09-06T16:00:00" },
+        { start: "2026-09-13T13:00:00", end: "2026-09-13T16:00:00" },
+        { start: "2026-09-20T16:25:00", end: "2026-09-20T19:25:00", title: "Panthers at Cardinals" },
+      ],
+    }));
+    const createdEvent = server.lastCalendarSet?.create?.event as {
+      recurrenceOverrides?: Record<string, Record<string, unknown>>;
+      recurrenceRules?: unknown;
+    };
+    expect(createdEvent.recurrenceRules).toBeUndefined();
+    expect(createdEvent.recurrenceOverrides).toEqual({
+      "2026-09-13T13:00:00": {},
+      "2026-09-20T16:25:00": { title: "Panthers at Cardinals" },
+    });
+    expect(created.event.occurrences).toEqual([
+      { start: "2026-09-13T13:00:00" },
+      { start: "2026-09-20T16:25:00", title: "Panthers at Cardinals" },
+    ]);
+    expect(created.schedulingSent).toBe(true);
+  });
+
+  it("creates a weekly recurrence rule", async () => {
+    const { account, mock: server } = await connect();
+    await account.run("create_event", () => account.createEvent({
+      title: "Stand-up",
+      start: "2026-09-01T09:00:00",
+      end: "2026-09-01T09:15:00",
+      recurrence: { frequency: "weekly", until: "2026-09-29T09:00:00", byDay: ["tu"] },
+    }));
+    const createdEvent = server.lastCalendarSet?.create?.event as { recurrenceRules?: Array<Record<string, unknown>> };
+    expect(createdEvent.recurrenceRules).toEqual([{
+      "@type": "RecurrenceRule",
+      frequency: "weekly",
+      until: "2026-09-29T09:00:00",
+      byDay: [{ "@type": "NDay", day: "tu" }],
+    }]);
+  });
+
   it("reports busy intervals from get_availability", async () => {
     const { account } = await connect();
     const availability = await account.run("get_availability", () => account.getAvailability({

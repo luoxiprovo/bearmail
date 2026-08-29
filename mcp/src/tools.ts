@@ -129,15 +129,28 @@ export function registerTools(server: McpServer, account: BearmailAccount): void
     before: z.string(),
   }, async (args) => account.getAvailability(args as Parameters<BearmailAccount["getAvailability"]>[0]));
 
-  tool("create_event", "Create a calendar event. External attendees receive a normal iMIP invitation. Gmail and other mail systems are valid attendees.", {
+  tool("create_event", "Create a calendar event or a series under one UID. Attendees accept once and every occurrence appears separately. For irregular dates (a sports schedule), pass occurrences. For a regular pattern, pass recurrence (weekly, etc.). External attendees receive a normal iMIP invitation. Do not send a raw .ics.", {
     title: z.string(),
-    start: z.string().describe("ISO-8601 local or offset datetime."),
+    start: z.string().describe("First occurrence, ISO-8601 local or offset datetime."),
     end: z.string(),
     allDay: z.boolean().optional(),
     calendarId: z.string().optional(),
     description: z.string().optional(),
     location: z.string().optional(),
     attendees: z.array(z.string().email()).optional(),
+    recurrence: z.object({
+      frequency: z.enum(["daily", "weekly", "monthly", "yearly"]),
+      interval: z.number().int().positive().optional(),
+      until: z.string().optional().describe("Last instance, ISO-8601. Do not combine with count."),
+      count: z.number().int().positive().optional(),
+      byDay: z.array(z.string()).optional().describe("Weekdays as mo, tu, we, th, fr, sa, su."),
+    }).optional().describe("Regular RRULE. Omit for a one-off or an irregular list of occurrences."),
+    occurrences: z.array(z.object({
+      start: z.string(),
+      end: z.string().optional(),
+      title: z.string().optional(),
+      location: z.string().optional(),
+    })).optional().describe("Additional instances (RDATE). Same UID as start. Use when dates are not a simple weekly/daily rule."),
   }, async (args) => account.createEvent(args as Parameters<BearmailAccount["createEvent"]>[0]), (_, result) => ({
     calendarUid: (result as { event?: { uid?: string } }).event?.uid,
     recipients: (result as { event?: { attendees?: Array<{ address?: string }> } }).event?.attendees?.map((item) => item.address ?? "").filter(Boolean),

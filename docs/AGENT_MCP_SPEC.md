@@ -153,7 +153,7 @@ Default list/search pages are small (for example 20 threads) so tool results fit
 | `list_events` | Events in a time range; include participation status. |
 | `get_event` | Full event: title, times, timezone, recurrence summary, location, attendees, description, conference link if present. |
 | `get_availability` | Free/busy for this account (and, when JMAP allows, for other local attendees) in a window. |
-| `create_event` | Create a `CalendarEvent`. If attendees are present and the server supports it, send scheduling messages (`sendSchedulingMessages`). |
+| `create_event` | Create a `CalendarEvent`, including a series. Optional `recurrence` (RRULE) and `occurrences` (extra dates / RDATE via `recurrenceOverrides`). One UID: attendees accept once and each instance appears separately. If attendees are present and the server supports it, send scheduling messages (`sendSchedulingMessages`). Do not add a raw `.ics` send tool. |
 | `update_event` | Patch title, time, attendees, or description; send updates when attendees exist. |
 | `rsvp` | Accept, tentative, or decline; send the scheduling response when the server supports it. |
 | `cancel_event` | Cancel and notify attendees when this account is the organizer. |

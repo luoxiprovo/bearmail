@@ -127,10 +127,28 @@ export interface CalendarEvent {
   organizerCalendarAddress?: string;
   locations?: Record<string, { name?: string; uri?: string }>;
   recurrenceRules?: Array<Record<string, unknown>>;
+  recurrenceOverrides?: Record<string, Record<string, unknown>>;
   status?: string;
   freeBusyStatus?: string;
   sequence?: number;
   updated?: string;
+}
+
+export type RecurrenceFrequency = "daily" | "weekly" | "monthly" | "yearly";
+
+export interface RecurrenceInput {
+  frequency: RecurrenceFrequency;
+  interval?: number;
+  until?: string;
+  count?: number;
+  byDay?: string[];
+}
+
+export interface EventOccurrenceInput {
+  start: string;
+  end?: string;
+  title?: string;
+  location?: string;
 }
 
 export interface ParticipantIdentity {

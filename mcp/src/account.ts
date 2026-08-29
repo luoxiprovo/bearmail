@@ -1,4 +1,4 @@
-import { CAPABILITIES, type Calendar, type CalendarEvent, type Email, type EventParticipant, type Identity, type Mailbox, type ParticipantIdentity, type ParticipationStatus, type Scope } from "./types.js";
+import { CAPABILITIES, type Calendar, type CalendarEvent, type Email, type EventOccurrenceInput, type EventParticipant, type Identity, type Mailbox, type ParticipantIdentity, type ParticipationStatus, type RecurrenceInput, type Scope } from "./types.js";
 import type { BearmailConfig } from "./config.js";
 import { ToolError } from "./errors.js";
 import { findResponse, JmapClient } from "./jmap.js";
@@ -332,6 +332,8 @@ export class BearmailAccount {
     description?: string;
     location?: string;
     attendees?: string[];
+    recurrence?: RecurrenceInput;
+    occurrences?: EventOccurrenceInput[];
   }) {
     const calendars = await this.getCalendars();
     const calendarId = input.calendarId ?? calendars[0]?.id;
@@ -355,6 +357,7 @@ export class BearmailAccount {
       description: input.description || undefined,
       locations: input.location ? { location: { "@type": "Location", name: input.location } } : undefined,
     };
+    Object.assign(event, seriesFields(String(event.start), durationMs, Boolean(input.allDay), input.recurrence, input.occurrences));
     const scheduling = eventSchedulingFields(identities, input.attendees ?? []);
     if (scheduling) Object.assign(event, scheduling);
     const result = await this.client.call<Record<string, any>>(CAPABILITIES.calendars, "CalendarEvent/set", {
@@ -533,7 +536,7 @@ export class BearmailAccount {
       ["CalendarEvent/get", {
         accountId: this.client.calendarAccountId,
         "#ids": { resultOf: "query", name: "CalendarEvent/query", path: "/ids" },
-        properties: ["id", "uid", "title", "description", "start", "duration", "timeZone", "showWithoutTime", "calendarIds", "participants", "organizerCalendarAddress", "locations", "recurrenceRules", "status", "freeBusyStatus", "sequence", "updated"],
+        properties: ["id", "uid", "title", "description", "start", "duration", "timeZone", "showWithoutTime", "calendarIds", "participants", "organizerCalendarAddress", "locations", "recurrenceRules", "recurrenceOverrides", "status", "freeBusyStatus", "sequence", "updated"],
       }, "get"],
     ]);
     return findResponse<GetResult<CalendarEvent>>(response.methodResponses, "get").list;
@@ -606,6 +609,14 @@ export class BearmailAccount {
       location: Object.values(event.locations ?? {}).map((item) => item.name).filter(Boolean)[0],
       conference: Object.values(event.locations ?? {}).map((item) => item.uri).filter(Boolean)[0],
       recurrence: event.recurrenceRules,
+      occurrences: Object.entries(event.recurrenceOverrides ?? {}).map(([start, patch]) => {
+        const item: { start: string; title?: string; duration?: string; location?: string } = { start };
+        if (typeof patch.title === "string") item.title = patch.title;
+        if (typeof patch.duration === "string") item.duration = patch.duration;
+        const location = locationFromPatch(patch);
+        if (location) item.location = location;
+        return item;
+      }),
       organizer: event.organizerCalendarAddress,
       sequence: event.sequence,
     };
@@ -765,6 +776,87 @@ function formatParticipant(participant: EventParticipant) {
     status: participant.participationStatus ?? "needs-action",
     role: participant.roles?.chair ? "organizer" : "attendee",
   };
+}
+
+const WEEKDAYS = new Set(["mo", "tu", "we", "th", "fr", "sa", "su"]);
+
+function seriesFields(
+  masterStart: string,
+  masterDurationMs: number,
+  allDay: boolean,
+  recurrence?: RecurrenceInput,
+  occurrences?: EventOccurrenceInput[],
+): { recurrenceRules?: Record<string, unknown>[]; recurrenceOverrides?: Record<string, Record<string, unknown>> } {
+  const fields: { recurrenceRules?: Record<string, unknown>[]; recurrenceOverrides?: Record<string, Record<string, unknown>> } = {};
+  if (recurrence) {
+    if (recurrence.until && recurrence.count != null) {
+      throw new ToolError("Use either recurrence.until or recurrence.count, not both.", "invalidProperties");
+    }
+    if (recurrence.interval != null && (!Number.isInteger(recurrence.interval) || recurrence.interval < 1)) {
+      throw new ToolError("recurrence.interval must be a positive integer.", "invalidProperties");
+    }
+    if (recurrence.count != null && (!Number.isInteger(recurrence.count) || recurrence.count < 1)) {
+      throw new ToolError("recurrence.count must be a positive integer.", "invalidProperties");
+    }
+    const rule: Record<string, unknown> = {
+      "@type": "RecurrenceRule",
+      frequency: recurrence.frequency,
+    };
+    if (recurrence.interval && recurrence.interval > 1) rule.interval = recurrence.interval;
+    if (recurrence.until) rule.until = parseEventDateTime(recurrence.until, allDay);
+    if (recurrence.count) rule.count = recurrence.count;
+    if (recurrence.byDay?.length) {
+      rule.byDay = recurrence.byDay.map((day) => {
+        const code = day.trim().toLowerCase().slice(0, 2);
+        if (!WEEKDAYS.has(code)) throw new ToolError(`Unknown weekday in recurrence.byDay: ${day}`, "invalidProperties");
+        return { "@type": "NDay", day: code };
+      });
+    }
+    fields.recurrenceRules = [rule];
+  }
+  if (occurrences?.length) {
+    const overrides: Record<string, Record<string, unknown>> = {};
+    for (const item of occurrences) {
+      const start = parseEventDateTime(item.start, allDay);
+      if (start === masterStart) continue;
+      const patch: Record<string, unknown> = {};
+      if (item.end) {
+        const end = new Date(item.end);
+        const occStart = new Date(item.start);
+        if (Number.isNaN(end.getTime()) || Number.isNaN(occStart.getTime()) || end <= occStart) {
+          throw new ToolError(`Occurrence ${item.start} needs a valid end after its start.`, "invalidProperties");
+        }
+        const durationMs = Math.max(60_000, end.getTime() - occStart.getTime());
+        if (durationMs !== masterDurationMs) patch.duration = toIsoDuration(allDay ? Math.max(86_400_000, durationMs) : durationMs);
+      }
+      if (item.title) patch.title = item.title;
+      if (item.location) patch.locations = { location: { "@type": "Location", name: item.location } };
+      overrides[start] = patch;
+    }
+    if (Object.keys(overrides).length) fields.recurrenceOverrides = overrides;
+    else if (!recurrence) {
+      throw new ToolError("occurrences must include at least one start besides the event start.", "invalidProperties");
+    }
+  }
+  return fields;
+}
+
+function parseEventDateTime(raw: string, allDay: boolean): string {
+  const trimmed = raw.trim();
+  if (allDay) {
+    if (!/^\d{4}-\d{2}-\d{2}/.test(trimmed)) throw new ToolError(`Invalid all-day date: ${raw}`, "invalidProperties");
+    return trimmed.slice(0, 10);
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(trimmed)) return trimmed;
+  const date = new Date(trimmed);
+  if (Number.isNaN(date.getTime())) throw new ToolError(`Invalid datetime: ${raw}`, "invalidProperties");
+  return toJmapLocal(date);
+}
+
+function locationFromPatch(patch: Record<string, unknown>): string | undefined {
+  const locations = patch.locations;
+  if (!locations || typeof locations !== "object") return undefined;
+  return Object.values(locations as Record<string, { name?: string }>).map((item) => item.name).find(Boolean);
 }
 
 function toJmapLocal(date: Date): string {

@@ -22,6 +22,7 @@ npx tsc -p tsconfig.json --noEmit
 | --- | --- | --- | --- |
 | A1 | Mail + Submission + Calendars session advertises mail and calendar tools | `whoami` / in-memory `listTools` | `send_email`, `create_event`, `list_inbox` present |
 | A2 | `send_email` + `create_event` with attendees | account tests | `EmailSubmission/set` with Drafts→Sent; `sendSchedulingMessages: true`; sequence ≥ 1 |
+| A2b | Event series | account tests | `occurrences` become `recurrenceOverrides`; weekly `recurrence` becomes `recurrenceRules` |
 | A3 | Mail-only session | calendars disabled in mock | `create_event` absent or `capabilityMissing` |
 | A4 | Draft-only token | `BEARMAIL_SEND_MODE=draft-only` | `send_email` status `draft`; no `EmailSubmission/set` |
 | A5 | Missing `mail.send` | scopes without `mail.send` | tool omitted / `missingScope`; fail closed |
