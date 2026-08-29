@@ -1,0 +1,18 @@
+# MCP stdio (Cursor / Claude Desktop)
+# Copy to ~/.cursor/mcp.json or project .cursor/mcp.json. Use an app password
+# or OAuth token — never the human primary password.
+
+{
+  "mcpServers": {
+    "bearmail": {
+      "command": "node",
+      "args": ["/opt/bearmail-mcp/dist/stdio.js"],
+      "env": {
+        "BEARMAIL_SERVER": "https://mail.example.com",
+        "BEARMAIL_USERNAME": "scheduler@example.com",
+        "BEARMAIL_TOKEN": "<app-password-or-oauth-token>",
+        "BEARMAIL_SEND_MODE": "draft-only"
+      }
+    }
+  }
+}

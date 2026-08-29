@@ -1,0 +1,32 @@
+{
+  "name": "bearmail-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only OR LicenseRef-SEL",
+  "type": "module",
+  "description": "MCP server for BearMail mail and calendar via JMAP",
+  "bin": {
+    "bearmail-mcp": "./dist/stdio.js",
+    "bearmail-mcp-http": "./dist/http.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/stdio.js",
+    "start:http": "node dist/http.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc -p tsconfig.json --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.25.3",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=22.12"
+  }
+}

@@ -26,7 +26,8 @@ use dav::{DavMethod, request::DavRequestHandler};
 use groupware::{DavResourceName, calendar::itip::ItipIngest};
 use http_proto::{
     DownloadResponse, HtmlResponse, HttpContext, HttpRequest, HttpResponse, HttpResponseBody,
-    HttpSessionData, JsonProblemResponse, ToHttpResponse, form_urlencoded, request::fetch_body,
+    HttpSessionData, JsonProblemResponse, JsonResponse, ToHttpResponse, form_urlencoded,
+    request::fetch_body,
 };
 use hyper::{
     Method, StatusCode, body,
@@ -284,6 +285,38 @@ impl ParseHttp for Server {
                     return Ok(HttpResponse::new(StatusCode::TEMPORARY_REDIRECT)
                         .with_no_cache()
                         .with_location(DavResourceName::Card.base_path()));
+                }
+                ("mcp.json", &Method::GET) => {
+                    self.is_http_anonymous_request_allowed(session.remote_ip)
+                        .await?;
+                    let base_url = self.core.network.http.url_https.trim_end_matches('/');
+                    let server_name = self.core.network.server_name.as_str();
+                    return Ok(JsonResponse::new(serde_json::json!({
+                        "name": "BearMail",
+                        "version": "1",
+                        "description": "MCP tools for a BearMail mailbox and calendar.",
+                        "jmap": format!("{base_url}/.well-known/jmap"),
+                        "oauthAuthorizationServer": format!("{base_url}/.well-known/oauth-authorization-server"),
+                        "mailHostname": server_name,
+                        "documentation": "docs/AGENT_GUIDE.md",
+                        "spec": "docs/AGENT_MCP_SPEC.md",
+                        "authentication": {
+                            "http": "Authorization: Bearer <app-password-or-oauth-token>, or Basic",
+                            "stdio": "Environment BEARMAIL_TOKEN or BEARMAIL_USERNAME + BEARMAIL_PASSWORD"
+                        },
+                        "transports": {
+                            "stdio": {
+                                "command": "bearmail-mcp",
+                                "env": ["BEARMAIL_SERVER", "BEARMAIL_USERNAME", "BEARMAIL_TOKEN"]
+                            },
+                            "http": {
+                                "url": format!("{base_url}/mcp"),
+                                "authentication": "bearer"
+                            }
+                        }
+                    }))
+                    .into_http_response()
+                    .with_cors_unrestricted());
                 }
                 ("oauth-authorization-server", &Method::GET) => {
                     // Limit anonymous requests

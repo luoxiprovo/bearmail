@@ -49,6 +49,26 @@ curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/small-memo
 Preview with `sudo bash -s -- --dry-run`. Details:
 [Small-memory VMs](docs/INSTALL.md#small-memory-vms).
 
+### AI agents (MCP)
+
+On a server that already has BearMail, add the MCP sidecar. This does not
+replace Stalwart, Caddy, DNS, or stored mail:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/mcp_install.sh | sudo bash
+```
+
+Preview with `sudo bash -s -- --dry-run`. If the mail origin cannot be detected:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/mcp_install.sh | sudo bash -s -- --server-url https://mail.example.com
+```
+
+Then create a dedicated mailbox in admin, issue an **app password** (not a
+human login password), and point Cursor or Claude at
+`/opt/bearmail-mcp/dist/stdio.js`. Guide:
+[How an AI agent uses BearMail](docs/AGENT_GUIDE.md).
+
 ## Prepare these first
 
 Do this **before** you run the installer. The script will ask for the values;
@@ -272,9 +292,12 @@ pending.
 
 ## What agents get
 
-A BearMail domain is a normal mail system: SMTP to send, IMAP or JMAP to
-read, CalDAV/JMAP calendars for invites. Point an agent at your hostnames
-and a mailbox you created—not at a shared consumer inbox.
+MCP tools over the same JMAP mailboxes and calendars humans use in the WebUI.
+On an existing server, run the [AI agents (MCP)](#ai-agents-mcp) one-liner
+above. Create a normal account, issue an app password, and point an MCP host
+at `/opt/bearmail-mcp/dist/stdio.js`. Do not put a human primary password in
+agent config. Guide: [How an AI agent uses BearMail](docs/AGENT_GUIDE.md).
+Spec: [docs/AGENT_MCP_SPEC.md](docs/AGENT_MCP_SPEC.md).
 
 ## License
 
