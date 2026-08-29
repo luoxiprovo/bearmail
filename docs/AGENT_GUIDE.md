@@ -14,12 +14,11 @@ Copy this list to the owner:
 
 1. **Mail origin (HTTPS)** — the Stalwart hostname, for example `https://mail.example.com` (no trailing path).
 2. **Agent mailbox address** — a dedicated address for you, for example `scheduler@example.com`. Not the founder’s inbox, not `admin`.
-3. **App password or OAuth token** for that mailbox — not the person’s WebUI/login password. Stalwart admin: open `https://mail.example.com/admin/`, create or open the user, issue an **application password** (or OAuth access token).
+3. **App password or OAuth token** for that mailbox — not the person’s WebUI/login password. Stalwart admin: open `https://mail.example.com/admin/`, create or open the user, issue an **application password** (it starts with `app_`). An OAuth access token is also valid.
 4. **May I send mail, or only save drafts?** Default is **draft-only** (safer). Direct send needs an explicit yes (`send-allowed`).
 5. **Timezone** for new calendar events (IANA name, for example `America/Los_Angeles`). If they do not care, use `UTC`.
-6. **How this host should connect** (pick one):
-   - **stdio** (typical laptop host): they give you a filesystem path to `bearmail-mcp` `dist/stdio.js`, or they install Node and build `mcp/` from this repo on the machine that runs you.
-   - **HTTP** (typical always-on worker on the mail server): they give you the MCP URL, usually `http://127.0.0.1:8082/mcp` on the mail host. That port is loopback-only unless they have put TLS and a reverse proxy in front.
+
+Do **not** ask the owner to choose HTTP vs stdio. That is your host’s transport, not a BearMail setting. Default to **stdio**: spawn `bearmail-mcp` (`dist/stdio.js`) on the machine that runs you, and set `BEARMAIL_SERVER` to the mail origin. Use HTTP MCP only if you are already a worker on the mail host and `http://127.0.0.1:8082/mcp` is listening.
 
 Optional, not secret: `GET {mail origin}/.well-known/mcp.json` — discovery JSON. If it 404s, you can still connect with the values above.
 
@@ -29,7 +28,7 @@ Optional, not secret: `GET {mail origin}/.well-known/mcp.json` — discovery JSO
 
 | Who | What they do |
 | --- | --- |
-| **Owner / admin** | Creates the mailbox, issues the app password, optionally installs the MCP sidecar on the mail host, tells you the six items above. |
+| **Owner / admin** | Creates the mailbox, issues the app password, optionally installs `bearmail-mcp` on the mail host, tells you the five items above. |
 | **You (the agent)** | Ask for those items, configure the MCP host, call `whoami`, then use mail and calendar tools. |
 | **MCP server (`bearmail-mcp`)** | Translates tools to JMAP. It is not Stalwart. It is not compiled into the mail binary. |
 
@@ -48,9 +47,9 @@ Map these into whatever config format your host uses (Cursor `mcp.json`, Claude 
 | Variable | Required | Meaning |
 | --- | --- | --- |
 | `BEARMAIL_SERVER` | yes | Mail origin from the owner, for example `https://mail.example.com` |
-| `BEARMAIL_USERNAME` | yes for stdio | Agent mailbox address |
-| `BEARMAIL_TOKEN` | one of token or password | App password or OAuth token (preferred) |
-| `BEARMAIL_PASSWORD` | alternative to token | Same secret, sent as HTTP Basic |
+| `BEARMAIL_USERNAME` | yes with an app password | Agent mailbox address |
+| `BEARMAIL_PASSWORD` | yes for app passwords (`app_…`) | Application password. Sent as HTTP Basic with the username. **Use this for Stalwart app passwords.** |
+| `BEARMAIL_TOKEN` | OAuth only | OAuth access token, sent as Bearer. Do **not** put an `app_…` password here unless your `bearmail-mcp` build maps it to Basic (older builds send Bearer and Stalwart rejects it). |
 | `BEARMAIL_SEND_MODE` | no | `draft-only` (default) or `send-allowed` |
 | `BEARMAIL_SCOPES` | no | Comma list: `mail.read`, `mail.send`, `mail.draft`, `calendar.read`, `calendar.write`. Defaults omit `mail.send` unless send mode is `send-allowed`. |
 | `BEARMAIL_TIMEZONE` | no | IANA timezone (default `UTC`) |
@@ -67,7 +66,7 @@ Map these into whatever config format your host uses (Cursor `mcp.json`, Claude 
       "env": {
         "BEARMAIL_SERVER": "https://mail.example.com",
         "BEARMAIL_USERNAME": "scheduler@example.com",
-        "BEARMAIL_TOKEN": "<app-password-or-oauth-token>",
+        "BEARMAIL_PASSWORD": "<app-password>",
         "BEARMAIL_SEND_MODE": "draft-only"
       }
     }
@@ -79,11 +78,11 @@ Cursor / Claude often use `~/.cursor/mcp.json` or the project `.cursor/mcp.json`
 
 On a mail host that already ran `mcp_install.sh`, the stdio path is `/opt/bearmail-mcp/dist/stdio.js`.
 
-### HTTP (you call the sidecar)
+### HTTP (only if you already run on the mail host)
 
-POST JSON-RPC to `{mcp url}` (default path `/mcp`). Every request needs `Authorization: Bearer <token>` or `Basic`. There is no anonymous MCP.
+Do not ask the owner for this. If you are a worker on the mail server and `http://127.0.0.1:8082/mcp` is up, POST JSON-RPC there with `Authorization: Bearer <token>` or `Basic`. There is no anonymous MCP. Do not assume `https://mail.example.com/mcp` exists.
 
-If the owner only gave you loopback `http://127.0.0.1:8082/mcp`, you must be on that machine (or they must provide a tunnel). Do not assume `https://mail.example.com/mcp` exists unless they said it does.
+Hermes, Cursor, and Claude Desktop should use **stdio** above.
 
 ## 3. First tool calls
 
@@ -132,10 +131,10 @@ If `sendMode` is `send-allowed`, submission uses JMAP and moves the message Draf
 
 | Symptom | What to ask the owner |
 | --- | --- |
-| Auth / 401 / startup error about credentials | Re-issue an **app password** for the agent mailbox; confirm `BEARMAIL_SERVER` is the mail HTTPS origin, not the webmail hostname. |
+| Auth / 401 / “rejected those credentials” | Put the Stalwart **app password** in `BEARMAIL_PASSWORD` with `BEARMAIL_USERNAME`. `BEARMAIL_TOKEN` is Bearer/OAuth; `app_…` secrets are not OAuth tokens. Confirm the secret is actually in the MCP process env (not an unexpanded `${BEARMAIL_TOKEN}`). Re-issue in admin if it still fails. |
 | `whoami` works but send tools missing | Confirm `BEARMAIL_SEND_MODE=send-allowed` and that they want `mail.send`. Otherwise stay on drafts. |
 | Calendar tools missing | Calendar may be disabled on that account; ask them to enable it in admin. |
 | Discovery `/.well-known/mcp.json` 404 | Ignore for connect; you already have origin + token. Optional Stalwart discovery is not required. |
-| HTTP MCP unreachable from your machine | You are not on loopback. Ask for stdio on your host, or a tunneled/public HTTPS MCP URL. |
+| HTTP MCP unreachable | You are not on the mail host. Use stdio on your machine instead. |
 
 Operator smoke check (owner, from a repo checkout): `cd mcp && npm test`. Live check: `whoami` after the env above is set.

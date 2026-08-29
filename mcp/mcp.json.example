@@ -1,6 +1,7 @@
-# MCP stdio (Cursor / Claude Desktop)
-# Copy to ~/.cursor/mcp.json or project .cursor/mcp.json. Use an app password
-# or OAuth token — never the human primary password.
+# MCP stdio (Cursor / Claude Desktop / Hermes)
+# Copy to the host MCP config. Use an app password as BEARMAIL_PASSWORD
+# (HTTP Basic with BEARMAIL_USERNAME). BEARMAIL_TOKEN is for OAuth only.
+# Never the human primary password.
 
 {
   "mcpServers": {
@@ -10,7 +11,7 @@
       "env": {
         "BEARMAIL_SERVER": "https://mail.example.com",
         "BEARMAIL_USERNAME": "scheduler@example.com",
-        "BEARMAIL_TOKEN": "<app-password-or-oauth-token>",
+        "BEARMAIL_PASSWORD": "<app-password>",
         "BEARMAIL_SEND_MODE": "draft-only"
       }
     }

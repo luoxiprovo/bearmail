@@ -165,6 +165,10 @@ export function findResponse<T>(responses: JmapResponse["methodResponses"], tag:
   return response[1] as T;
 }
 
+export function isAppPassword(secret: string | undefined): boolean {
+  return !!secret && secret.startsWith("app_");
+}
+
 export function authFromHttpHeader(authorization: string): AuthProvider {
   if (authorization.toLowerCase().startsWith("basic ")) return { header: () => authorization };
   if (authorization.toLowerCase().startsWith("bearer ")) return new BearerAuthProvider(authorization.slice(7).trim());
@@ -173,7 +177,13 @@ export function authFromHttpHeader(authorization: string): AuthProvider {
 
 export function authFromHeadersOrConfig(authorization: string | undefined, username?: string, token?: string, password?: string): AuthProvider {
   if (authorization) return authFromHttpHeader(authorization);
+  const secret = password || token;
+  if (password || isAppPassword(secret)) {
+    if (!username) {
+      throw new ToolError("Set BEARMAIL_USERNAME to the mailbox address when using an app password.", "authenticationFailed");
+    }
+    return new BasicAuthProvider(username, secret!);
+  }
   if (token) return new BearerAuthProvider(token);
-  if (username && password) return new BasicAuthProvider(username, password);
   throw new ToolError("Provide an app password or bearer token.", "authenticationFailed");
 }

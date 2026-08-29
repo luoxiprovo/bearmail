@@ -10,12 +10,12 @@ export function discoveryDocument(serverOrigin: string, transports?: { http?: st
     spec: "docs/AGENT_MCP_SPEC.md",
     authentication: {
       http: "Authorization: Bearer <app-password-or-oauth-token>, or Basic",
-      stdio: "Environment BEARMAIL_TOKEN (bearer) or BEARMAIL_USERNAME + BEARMAIL_PASSWORD (app password). Never put the human primary password here.",
+      stdio: "Environment BEARMAIL_USERNAME + BEARMAIL_PASSWORD for a Stalwart app password (HTTP Basic). BEARMAIL_TOKEN is an OAuth bearer token. Never put the human primary password here.",
     },
     transports: {
       stdio: {
         command: "bearmail-mcp",
-        env: ["BEARMAIL_SERVER", "BEARMAIL_USERNAME", "BEARMAIL_TOKEN"],
+        env: ["BEARMAIL_SERVER", "BEARMAIL_USERNAME", "BEARMAIL_PASSWORD"],
       },
       http: transports?.http
         ? { url: transports.http, authentication: "bearer" }

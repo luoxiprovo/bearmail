@@ -4,7 +4,7 @@ import { htmlToPlainText, containsActiveHtml, wrapUntrustedText } from "../src/t
 import { discoveryDocument } from "../src/discovery.js";
 import { assertScope } from "../src/scopes.js";
 import { SendQuota } from "../src/limits.js";
-import { BearerAuthProvider, discoverSession, authFromHttpHeader } from "../src/jmap.js";
+import { BearerAuthProvider, BasicAuthProvider, discoverSession, authFromHttpHeader, authFromHeadersOrConfig } from "../src/jmap.js";
 import { ToolError } from "../src/errors.js";
 
 describe("htmlToPlainText", () => {
@@ -40,6 +40,23 @@ describe("discovery", () => {
 describe("authFromHttpHeader", () => {
   it("rejects schemes other than Basic or Bearer", () => {
     expect(() => authFromHttpHeader("NotBearer garbage")).toThrow(ToolError);
+  });
+});
+
+describe("authFromHeadersOrConfig", () => {
+  it("sends Stalwart app passwords as HTTP Basic with the mailbox address", () => {
+    const auth = authFromHeadersOrConfig(undefined, "east.hill@example.com", "app_exampletoken", undefined);
+    expect(auth).toBeInstanceOf(BasicAuthProvider);
+    expect(auth.header().startsWith("Basic ")).toBe(true);
+  });
+
+  it("sends OAuth access tokens as Bearer", () => {
+    const auth = authFromHeadersOrConfig(undefined, "east.hill@example.com", "eyJhbGciOiJIUzI1NiJ9.e30.x", undefined);
+    expect(auth).toBeInstanceOf(BearerAuthProvider);
+  });
+
+  it("requires a username with an app password", () => {
+    expect(() => authFromHeadersOrConfig(undefined, undefined, "app_exampletoken", undefined)).toThrow(/BEARMAIL_USERNAME/);
   });
 });
 
