@@ -26,7 +26,12 @@ if sh "$MCP_INSTALL_SH" --nope >/dev/null 2>&1; then
     fail "unknown arguments should fail"
 fi
 
-dry_out="$(sh "$MCP_INSTALL_SH" --dry-run)"
+if grep -q 'mcp_src="$(fetch_mcp_sources)"' "$MCP_INSTALL_SH"; then
+    fail "fetch_mcp_sources must not be captured from stdout (progress text would become the path)"
+fi
+grep -q 'mcp_src="$RETVAL"' "$MCP_INSTALL_SH" || fail "MCP source path must come from RETVAL"
+
+dry_out="$(sh "$MCP_INSTALL_SH" --dry-run 2>&1)"
 printf '%s\n' "$dry_out" | grep -q 'mcp/install.sh\|bearmail-mcp' || \
     fail "dry-run does not mention the MCP sidecar"
 printf '%s\n' "$dry_out" | grep -q '/opt/bearmail-mcp' || fail "dry-run does not print the install prefix"
@@ -35,11 +40,11 @@ printf '%s\n' "$dry_out" | grep -q 'Does not change Stalwart' || \
 printf '%s\n' "$dry_out" | grep -q "${REPO_ROOT}/mcp" || \
     fail "dry-run from a checkout should use local mcp/"
 
-nosys_out="$(sh "$MCP_INSTALL_SH" --dry-run --no-systemd)"
+nosys_out="$(sh "$MCP_INSTALL_SH" --dry-run --no-systemd 2>&1)"
 printf '%s\n' "$nosys_out" | grep -q 'Skip systemd' || fail "--no-systemd dry-run should skip the unit"
 
 override_out="$(BEARMAIL_ARCHIVE_URL=https://example.test/bearmail.tgz BEARMAIL_WORK_DIR=/tmp/bm-mcp \
-    sh "$MCP_INSTALL_SH" --dry-run)"
+    sh "$MCP_INSTALL_SH" --dry-run 2>&1)"
 # Local checkout still wins over the archive URL.
 printf '%s\n' "$override_out" | grep -q "${REPO_ROOT}/mcp" || \
     fail "local mcp/ should be preferred over BEARMAIL_ARCHIVE_URL in a checkout"

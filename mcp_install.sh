@@ -27,7 +27,7 @@ local_mcp=""
 tmp=""
 
 say() {
-    printf '%s\n' "$1"
+    printf '%s\n' "$1" >&2
 }
 
 err() {
@@ -304,8 +304,9 @@ ensure_build_npm() {
 }
 
 fetch_mcp_sources() {
+    RETVAL=""
     if [ -n "$local_mcp" ]; then
-        printf '%s\n' "$local_mcp"
+        RETVAL="$local_mcp"
         return 0
     fi
     _archive="${tmp}/bearmail-src.tar.gz"
@@ -321,7 +322,7 @@ fetch_mcp_sources() {
         fi
     done
     [ -n "$_mcp" ] || err "The source archive does not contain mcp/install.sh. Push the MCP tree to ${BEARMAIL_REPO}@${BEARMAIL_REF} or run this script from a checkout."
-    printf '%s\n' "$_mcp"
+    RETVAL="$_mcp"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -434,7 +435,13 @@ if [ "$use_prebuilt" != "true" ]; then
     command -v npm >/dev/null 2>&1 || err "npm is required to build bearmail-mcp."
 fi
 
-mcp_src="$(fetch_mcp_sources)"
+fetch_mcp_sources
+mcp_src="$RETVAL"
+case "$mcp_src" in
+    /*) ;;
+    *) err "MCP source path is invalid: ${mcp_src}" ;;
+esac
+[ -f "${mcp_src}/install.sh" ] || err "MCP install.sh is missing at ${mcp_src}/install.sh"
 say "Installing MCP from ${mcp_src}..."
 set -- --prefix "$PREFIX" --port "$PORT" --node-bin "$node_bin"
 if [ -n "$server_url" ]; then
