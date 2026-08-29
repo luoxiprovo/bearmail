@@ -165,25 +165,43 @@ export function findResponse<T>(responses: JmapResponse["methodResponses"], tag:
   return response[1] as T;
 }
 
+export function isApiKey(secret: string | undefined): boolean {
+  return !!secret && secret.startsWith("API_");
+}
+
 export function isAppPassword(secret: string | undefined): boolean {
   return !!secret && secret.startsWith("app_");
 }
 
 export function authFromHttpHeader(authorization: string): AuthProvider {
   if (authorization.toLowerCase().startsWith("basic ")) return { header: () => authorization };
-  if (authorization.toLowerCase().startsWith("bearer ")) return new BearerAuthProvider(authorization.slice(7).trim());
+  if (authorization.toLowerCase().startsWith("bearer ")) {
+    const token = authorization.slice(7).trim();
+    if (isAppPassword(token)) {
+      throw new ToolError(
+        "Authorization Bearer must be a Stalwart API key (starts with API_). App passwords (app_…) are not Bearer tokens.",
+        "authenticationFailed",
+      );
+    }
+    return new BearerAuthProvider(token);
+  }
   throw new ToolError("Authorization must be Bearer or Basic.", "authenticationFailed");
 }
 
 export function authFromHeadersOrConfig(authorization: string | undefined, username?: string, token?: string, password?: string): AuthProvider {
   if (authorization) return authFromHttpHeader(authorization);
-  const secret = password || token;
-  if (password || isAppPassword(secret)) {
-    if (!username) {
-      throw new ToolError("Set BEARMAIL_USERNAME to the mailbox address when using an app password.", "authenticationFailed");
+  if (token) {
+    if (isAppPassword(token)) {
+      throw new ToolError(
+        "BEARMAIL_TOKEN must be a Stalwart API key (starts with API_). App passwords (app_…) are for IMAP/WebUI, not MCP. Create an API key for this mailbox in admin.",
+        "authenticationFailed",
+      );
     }
-    return new BasicAuthProvider(username, secret!);
+    return new BearerAuthProvider(token);
   }
-  if (token) return new BearerAuthProvider(token);
-  throw new ToolError("Provide an app password or bearer token.", "authenticationFailed");
+  if (username && password) {
+    if (isApiKey(password)) return new BearerAuthProvider(password);
+    return new BasicAuthProvider(username, password);
+  }
+  throw new ToolError("Set BEARMAIL_TOKEN to a Stalwart API key (starts with API_).", "authenticationFailed");
 }

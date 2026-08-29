@@ -43,8 +43,9 @@ export async function startHttpServer(config: BearmailConfig): Promise<{ server:
     }
     try {
       authFromHttpHeader(authorization);
-    } catch {
-      json(res, 401, { jsonrpc: "2.0", error: { code: -32001, message: "Authorization must be Bearer or Basic." }, id: null });
+    } catch (error) {
+      const message = error instanceof ToolError ? error.message : "Authorization must be Bearer or Basic.";
+      json(res, 401, { jsonrpc: "2.0", error: { code: -32001, message }, id: null });
       return;
     }
     if (req.method === "DELETE") {
@@ -90,7 +91,7 @@ export async function startHttpServer(config: BearmailConfig): Promise<{ server:
     } catch (error) {
       if (!res.headersSent) {
         if (error instanceof ToolError && error.code === "authenticationFailed") {
-          json(res, 401, { jsonrpc: "2.0", error: { code: -32001, message: "Authorization must be Bearer or Basic." }, id: null });
+          json(res, 401, { jsonrpc: "2.0", error: { code: -32001, message: error.message }, id: null });
         } else {
           json(res, 500, { jsonrpc: "2.0", error: { code: -32603, message: "Internal error." }, id: null });
         }

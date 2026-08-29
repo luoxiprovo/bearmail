@@ -28,7 +28,7 @@ npx tsc -p tsconfig.json --noEmit
 | A6 | `get_thread` does not return raw active HTML | HTML + script fixture | plain text, `untrusted_content`, no `<script` |
 | A7 | Same calendar state after MCP create | `create_event` then `list_events` | created id present |
 | A8 | HTTP MCP requires Authorization | POST `/mcp` without header | 401 |
-| A9 | Discovery has no secrets | `/.well-known/mcp.json` | no app password or token values |
+| A9 | Discovery has no secrets | `/.well-known/mcp.json` | no API key or token values |
 | A10 | Typecheck | `tsc --noEmit` | clean |
 
 ## B. Security and policy (must PASS)
@@ -50,7 +50,7 @@ npx tsc -p tsconfig.json --noEmit
 | C2 | HTTP entry binds loopback by default | `BEARMAIL_MCP_HOST=127.0.0.1`, path `/mcp` |
 | C3 | Stalwart serves `GET /.well-known/mcp.json` | handler in `crates/http/src/request.rs`; CORS unrestricted; no secrets |
 | C4 | Installer prints agent snippet | `install.sh` completion names discovery URL and env vars; no tokens as arguments |
-| C5 | Example Cursor config | `mcp/mcp.json.example` uses env, not a primary password |
+| C5 | Example Cursor config | `mcp/mcp.json.example` uses `BEARMAIL_TOKEN` for an API key, not a primary password or `app_…` |
 
 ## D. Live Stalwart (optional)
 

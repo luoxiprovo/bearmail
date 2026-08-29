@@ -85,5 +85,5 @@ if [ "$install_service" = "true" ]; then
 fi
 
 printf 'BearMail MCP installed at %s (HTTP 127.0.0.1:%s).\n' "$prefix" "$port"
-printf 'Set BEARMAIL_USERNAME and BEARMAIL_TOKEN in the unit or MCP host. Stdio: node %s/dist/stdio.js\n' "$prefix"
+printf 'Set BEARMAIL_TOKEN to a Stalwart API key (API_…) in the MCP host. Optional BEARMAIL_USERNAME. Stdio: node %s/dist/stdio.js\n' "$prefix"
 printf 'Do not pass tokens as command-line arguments. See docs/AGENT_GUIDE.md\n'

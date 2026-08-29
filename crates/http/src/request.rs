@@ -301,8 +301,8 @@ impl ParseHttp for Server {
                         "documentation": "docs/AGENT_GUIDE.md",
                         "spec": "docs/AGENT_MCP_SPEC.md",
                         "authentication": {
-                            "http": "Authorization: Bearer <app-password-or-oauth-token>, or Basic",
-                            "stdio": "Environment BEARMAIL_TOKEN or BEARMAIL_USERNAME + BEARMAIL_PASSWORD"
+                            "http": "Authorization: Bearer <Stalwart-API-key>",
+                            "stdio": "Environment BEARMAIL_TOKEN (API_… Stalwart API key). Optional BEARMAIL_USERNAME."
                         },
                         "transports": {
                             "stdio": {

@@ -397,7 +397,7 @@ if [ "$dry_run" = "true" ]; then
         say "  Skip systemd (--no-systemd)"
     fi
     say "Does not change Stalwart, Caddy, DNS, or mail data."
-    say "Does not accept mailbox tokens. After install, create a mailbox and an app password."
+    say "Does not accept mailbox tokens. After install, create a mailbox and a Stalwart API key."
     exit 0
 fi
 
@@ -473,13 +473,13 @@ fi
 sh "${mcp_src}/install.sh" "$@"
 
 say ""
-say "Next: create a dedicated mailbox in admin, issue an app password, then"
-say "point the MCP host at stdio (never a human primary password):"
+say "Next: create a dedicated mailbox in admin, issue a Stalwart API key (API_…),"
+say "then point the MCP host at stdio (never a human primary password or an app_… password):"
 say "  command: ${node_bin} ${PREFIX}/dist/stdio.js"
 if [ -n "$server_url" ]; then
     say "  BEARMAIL_SERVER=${server_url}"
 fi
 say "  BEARMAIL_USERNAME=<agent@your-domain>"
-say "  BEARMAIL_TOKEN=<app-password-or-oauth-token>"
+say "  BEARMAIL_TOKEN=API_<stalwart-api-key>"
 say "  BEARMAIL_SEND_MODE=draft-only"
 say "Example: mcp/mcp.json.example   Guide: docs/AGENT_GUIDE.md"

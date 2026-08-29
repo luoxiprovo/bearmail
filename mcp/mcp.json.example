@@ -1,7 +1,7 @@
 # MCP stdio (Cursor / Claude Desktop / Hermes)
-# Copy to the host MCP config. Use an app password as BEARMAIL_PASSWORD
-# (HTTP Basic with BEARMAIL_USERNAME). BEARMAIL_TOKEN is for OAuth only.
-# Never the human primary password.
+# Copy to the host MCP config. BEARMAIL_TOKEN is a Stalwart API key (API_…),
+# sent as Bearer. Optional BEARMAIL_USERNAME is the mailbox address.
+# Never the human primary password or an app_… application password.
 
 {
   "mcpServers": {
@@ -11,7 +11,7 @@
       "env": {
         "BEARMAIL_SERVER": "https://mail.example.com",
         "BEARMAIL_USERNAME": "scheduler@example.com",
-        "BEARMAIL_PASSWORD": "<app-password>",
+        "BEARMAIL_TOKEN": "API_<stalwart-api-key>",
         "BEARMAIL_SEND_MODE": "draft-only"
       }
     }

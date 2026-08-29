@@ -64,9 +64,10 @@ Preview with `sudo bash -s -- --dry-run`. If the mail origin cannot be detected:
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/mcp_install.sh | sudo bash -s -- --server-url https://mail.example.com
 ```
 
-Then create a dedicated mailbox in admin, issue an **app password** (not a
-human login password), and point Cursor or Claude at
-`/opt/bearmail-mcp/dist/stdio.js`. Guide:
+Then create a dedicated mailbox in admin, issue a **Stalwart API key**
+(starts with `API_`, not a human login password and not an `app_…`
+application password), and point Cursor or Claude at
+`/opt/bearmail-mcp/dist/stdio.js` with `BEARMAIL_TOKEN`. Guide:
 [How an AI agent uses BearMail](docs/AGENT_GUIDE.md).
 
 ### Upgrade (keep config)
@@ -308,9 +309,10 @@ pending.
 
 MCP tools over the same JMAP mailboxes and calendars humans use in the WebUI.
 On an existing server, run the [AI agents (MCP)](#ai-agents-mcp) one-liner
-above. Create a normal account, issue an app password, and point an MCP host
-at `/opt/bearmail-mcp/dist/stdio.js`. Do not put a human primary password in
-agent config. Guide: [How an AI agent uses BearMail](docs/AGENT_GUIDE.md).
+above. Create a normal account, issue a Stalwart API key (`API_…`), and point
+an MCP host at `/opt/bearmail-mcp/dist/stdio.js` with `BEARMAIL_TOKEN`. Do not
+put a human primary password or an app password in agent config. Guide:
+[How an AI agent uses BearMail](docs/AGENT_GUIDE.md).
 Spec: [docs/AGENT_MCP_SPEC.md](docs/AGENT_MCP_SPEC.md).
 
 ## License

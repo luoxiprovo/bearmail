@@ -1,6 +1,6 @@
 # bearmail-mcp
 
-MCP server for BearMail. Agents use typed tools; Stalwart JMAP remains the store.
+MCP server for BearMail. Agents use typed tools; Stalwart JMAP remains the store. Authenticate with a Stalwart **API key** (`API_…`) in `BEARMAIL_TOKEN` (Bearer). Do not use a human login password or an `app_…` application password.
 
 - Spec: [`docs/AGENT_MCP_SPEC.md`](../docs/AGENT_MCP_SPEC.md)
 - Agent guide: [`docs/AGENT_GUIDE.md`](../docs/AGENT_GUIDE.md)
@@ -20,6 +20,6 @@ npm test
 npm run build
 BEARMAIL_SERVER=https://mail.example.com \
 BEARMAIL_USERNAME=scheduler@example.com \
-BEARMAIL_TOKEN=... \
+BEARMAIL_TOKEN=API_... \
 node dist/stdio.js
 ```

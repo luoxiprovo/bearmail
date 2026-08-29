@@ -74,6 +74,14 @@ describe("MCP protocol", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } }),
     });
     expect(garbage.status).toBe(401);
+    const appPasswordBearer = await fetch(`${http.origin}${http.path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer app_exampletoken" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } }),
+    });
+    expect(appPasswordBearer.status).toBe(401);
+    const appPasswordBody = await appPasswordBearer.json() as { error: { message: string } };
+    expect(appPasswordBody.error.message).toMatch(/API key/);
     expect(doc.transports).toBeTruthy();
     const advertised = JSON.stringify(doc);
     expect(advertised).toContain(http.origin);

@@ -3,7 +3,7 @@
 Status: Draft v0.1
 Date: 2026-08-28
 Audience: Product, backend, security, installer, and QA
-Depends on: Stalwart JMAP (Mail, Submission, Calendars), existing OAuth and app-password auth, WebUI as the human client of the same data
+Depends on: Stalwart JMAP (Mail, Submission, Calendars), existing OAuth and API-key (Bearer) auth, WebUI as the human client of the same data
 
 ## 1. Product summary
 
@@ -41,7 +41,7 @@ This spec does not add a CLI. A command-line client may wrap the same JMAP libra
 
 ### 3.2 Success measures
 
-After a standard BearMail install, an administrator can create an agent mailbox, issue a token, and point an MCP host at the server. Without writing JMAP by hand, an agent can:
+After a standard BearMail install, an administrator can create an agent mailbox, issue a Stalwart API key, and point an MCP host at the server. Without writing JMAP by hand, an agent can:
 
 1. Authenticate and report `whoami` (address, identities, advertised capabilities).
 2. List unread inbox messages and read one thread.
@@ -57,7 +57,7 @@ A meeting created through MCP is visible in the WebUI calendar without a manual 
 - A proprietary agent-to-agent bus, ActivityPub, or a requirement that the remote party run BearMail.
 - Replacing SMTP, DKIM, spam filtering, or calendar scheduling inside Stalwart.
 - Contacts UI, chat, video meetings, or embedding the WebUI in the agent.
-- Letting an agent use a human’s primary password.
+- Letting an agent use a human’s primary password, or an `app_…` application password as `BEARMAIL_TOKEN`.
 - Anonymous public MCP. Every tool call is authenticated as one Stalwart account.
 - Multi-mailbox unified inbox in one MCP session. One server instance, one account.
 - Full offline mutation. The server is the source of truth.
@@ -102,7 +102,7 @@ The MCP server must not open IMAP, SMTP, or CalDAV to Stalwart. Blob upload/down
 
 ### 7.1 Startup administrator
 
-Installs BearMail, creates `scheduler@startup.com`, issues a scoped token, copies the MCP URL or stdio snippet into the team’s agent config, and sets a daily send cap.
+Installs BearMail, creates `scheduler@startup.com`, issues a Stalwart API key, copies the MCP URL or stdio snippet into the team’s agent config, and sets a daily send cap.
 
 ### 7.2 Interactive agent (Cursor / Claude)
 
@@ -191,7 +191,12 @@ Do not share one mailbox across several agents. Do not default to the administra
 
 ### 9.2 Credentials
 
-Preferred: a **scoped app password or OAuth access token** issued for that mailbox.
+Preferred: a **Stalwart API key** (`API_…`) issued for that mailbox. MCP sends it as HTTP Bearer in `BEARMAIL_TOKEN` (stdio) or `Authorization: Bearer API_…` (HTTP).
+
+Supported fallbacks:
+
+- OAuth access token as Bearer (same `BEARMAIL_TOKEN` path).
+- Username + app password (`app_…`) as HTTP Basic via `BEARMAIL_PASSWORD`. This is for mail clients and the WebUI, not the agent default. Putting `app_…` in `BEARMAIL_TOKEN` is rejected.
 
 Supported OAuth patterns:
 
@@ -202,9 +207,10 @@ Not permitted:
 
 - OAuth Authorization Code + PKCE as the only agent path (browser-oriented; WebUI keeps it).
 - The human’s primary account password in MCP config.
+- An application password (`app_…`) in `BEARMAIL_TOKEN`.
 - Token in tool arguments.
 
-Stdio config holds the Stalwart HTTPS origin, mailbox address, and token (environment variable preferred over plaintext in `mcp.json`). HTTP MCP authenticates each connection (Bearer). Tokens are not logged.
+Stdio config holds the Stalwart HTTPS origin, mailbox address, and API key (environment variable preferred over plaintext in `mcp.json`). HTTP MCP authenticates each connection (Bearer). Tokens are not logged.
 
 ### 9.3 Scopes
 
@@ -277,7 +283,7 @@ Google A2A or similar may be offered **in addition to** SMTP later. It must not 
 - SSRF: the MCP server connects only to the configured Stalwart origin, not to URLs from mail headers or tool args (except JMAP blob URLs returned by that session).
 - Rate-limit tool calls and outbound submission.
 - New mail from the public internet is untrusted input. Tool descriptions must tell the model not to follow instructions inside email bodies as system commands (prompt injection). Optional: a `untrusted_content` wrapper in `get_thread` results.
-- Revocation: deleting the app password or token disables MCP immediately on the next request.
+- Revocation: deleting the API key (or fallback token) disables MCP immediately on the next request.
 
 ## 13. Relationship to the WebUI
 
@@ -285,7 +291,7 @@ Google A2A or similar may be offered **in addition to** SMTP later. It must not 
 | --- | --- | --- |
 | Protocol to Stalwart | JMAP | JMAP |
 | User | Person in a browser | Agent via MCP host |
-| Auth | OAuth PKCE or app password | Scoped token / app password / device code |
+| Auth | OAuth PKCE or app password | Stalwart API key (Bearer); OAuth token or app-password Basic as fallback |
 | Send | Composer → `EmailSubmission/set` | `send_email` → same |
 | Calendar | Views + RSVP | Tools + same `CalendarEvent` objects |
 
@@ -297,7 +303,7 @@ Capability gaps follow the WebUI rules: no Submission means no send tools; no Ca
 
 - `bearmail-mcp` with stdio and Streamable HTTP.
 - Session, mail, and calendar tools in section 8.
-- Token or app-password auth; capability-based tool list.
+- API-key Bearer auth (app-password Basic as fallback); capability-based tool list.
 - Discovery document and installer snippet.
 - Draft-only default; optional send.
 - Push when advertised, otherwise poll.
@@ -305,7 +311,7 @@ Capability gaps follow the WebUI rules: no Submission means no send tools; no Ca
 
 ### Phase 2 — Agent as an account type
 
-- Admin: create agent mailbox, issue scoped token, send cap, revoke.
+- Admin: create agent mailbox, issue API key, send cap, revoke.
 - Audit view.
 - Human-in-the-loop send from WebUI for draft-only agents.
 - Optional signed inbound webhook.

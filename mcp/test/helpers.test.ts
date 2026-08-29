@@ -41,11 +41,25 @@ describe("authFromHttpHeader", () => {
   it("rejects schemes other than Basic or Bearer", () => {
     expect(() => authFromHttpHeader("NotBearer garbage")).toThrow(ToolError);
   });
+
+  it("rejects app passwords as Bearer", () => {
+    expect(() => authFromHttpHeader("Bearer app_exampletoken")).toThrow(/API key/);
+  });
 });
 
 describe("authFromHeadersOrConfig", () => {
-  it("sends Stalwart app passwords as HTTP Basic with the mailbox address", () => {
-    const auth = authFromHeadersOrConfig(undefined, "east.hill@example.com", "app_exampletoken", undefined);
+  it("sends Stalwart API keys as Bearer without requiring a username", () => {
+    const auth = authFromHeadersOrConfig(undefined, undefined, "API_examplekey", undefined);
+    expect(auth).toBeInstanceOf(BearerAuthProvider);
+    expect(auth.header()).toBe("Bearer API_examplekey");
+  });
+
+  it("rejects app passwords in BEARMAIL_TOKEN", () => {
+    expect(() => authFromHeadersOrConfig(undefined, "east.hill@example.com", "app_exampletoken", undefined)).toThrow(/API key/);
+  });
+
+  it("still accepts username + app password as HTTP Basic", () => {
+    const auth = authFromHeadersOrConfig(undefined, "east.hill@example.com", undefined, "app_exampletoken");
     expect(auth).toBeInstanceOf(BasicAuthProvider);
     expect(auth.header().startsWith("Basic ")).toBe(true);
   });
@@ -53,10 +67,6 @@ describe("authFromHeadersOrConfig", () => {
   it("sends OAuth access tokens as Bearer", () => {
     const auth = authFromHeadersOrConfig(undefined, "east.hill@example.com", "eyJhbGciOiJIUzI1NiJ9.e30.x", undefined);
     expect(auth).toBeInstanceOf(BearerAuthProvider);
-  });
-
-  it("requires a username with an app password", () => {
-    expect(() => authFromHeadersOrConfig(undefined, undefined, "app_exampletoken", undefined)).toThrow(/BEARMAIL_USERNAME/);
   });
 });
 
