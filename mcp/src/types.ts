@@ -126,6 +126,7 @@ export interface CalendarEvent {
   participants?: Record<string, EventParticipant>;
   organizerCalendarAddress?: string;
   locations?: Record<string, { name?: string; uri?: string }>;
+  recurrenceRule?: Record<string, unknown>;
   recurrenceRules?: Array<Record<string, unknown>>;
   recurrenceOverrides?: Record<string, Record<string, unknown>>;
   status?: string;

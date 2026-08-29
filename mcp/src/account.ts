@@ -536,7 +536,7 @@ export class BearmailAccount {
       ["CalendarEvent/get", {
         accountId: this.client.calendarAccountId,
         "#ids": { resultOf: "query", name: "CalendarEvent/query", path: "/ids" },
-        properties: ["id", "uid", "title", "description", "start", "duration", "timeZone", "showWithoutTime", "calendarIds", "participants", "organizerCalendarAddress", "locations", "recurrenceRules", "recurrenceOverrides", "status", "freeBusyStatus", "sequence", "updated"],
+        properties: ["id", "uid", "title", "description", "start", "duration", "timeZone", "showWithoutTime", "calendarIds", "participants", "organizerCalendarAddress", "locations", "recurrenceRule", "recurrenceOverrides", "status", "freeBusyStatus", "sequence", "updated"],
       }, "get"],
     ]);
     return findResponse<GetResult<CalendarEvent>>(response.methodResponses, "get").list;
@@ -608,7 +608,7 @@ export class BearmailAccount {
       description: event.description,
       location: Object.values(event.locations ?? {}).map((item) => item.name).filter(Boolean)[0],
       conference: Object.values(event.locations ?? {}).map((item) => item.uri).filter(Boolean)[0],
-      recurrence: event.recurrenceRules,
+      recurrence: event.recurrenceRule ?? event.recurrenceRules,
       occurrences: Object.entries(event.recurrenceOverrides ?? {}).filter(([, patch]) => patch.excluded !== true).map(([start, patch]) => {
         const item: { start: string; title?: string; duration?: string; location?: string } = { start };
         if (typeof patch.title === "string") item.title = patch.title;
@@ -788,7 +788,7 @@ function seriesFields(
   recurrence?: RecurrenceInput,
   occurrences?: EventOccurrenceInput[],
   scheduling?: { participants: Record<string, EventParticipant>; organizerCalendarAddress: string } | null,
-): { recurrenceRules?: Record<string, unknown>[]; recurrenceOverrides?: Record<string, Record<string, unknown>> } {
+): { recurrenceRule?: Record<string, unknown>; recurrenceOverrides?: Record<string, Record<string, unknown>> } {
   const extras = (occurrences ?? [])
     .map((item) => ({ item, start: parseEventDateTime(item.start, allDay) }))
     .filter((entry) => entry.start !== masterStart);
@@ -804,8 +804,8 @@ function seriesFields(
     until: lastStart,
     byDay: [...new Set([weekdayOf(master), ...extras.map((entry) => weekdayOf(localParts(entry.start)))])],
   };
-  const fields: { recurrenceRules?: Record<string, unknown>[]; recurrenceOverrides?: Record<string, Record<string, unknown>> } = {
-    recurrenceRules: [recurrenceRule(ruleInput, allDay)],
+  const fields: { recurrenceRule?: Record<string, unknown>; recurrenceOverrides?: Record<string, Record<string, unknown>> } = {
+    recurrenceRule: recurrenceRule(ruleInput, allDay),
   };
 
   const overrides: Record<string, Record<string, unknown>> = {};

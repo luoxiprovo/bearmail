@@ -138,16 +138,16 @@ describe("BearmailAccount", () => {
     }));
     const createdEvent = server.lastCalendarSet?.create?.event as {
       recurrenceOverrides?: Record<string, Record<string, unknown>>;
-      recurrenceRules?: Array<Record<string, unknown>>;
+      recurrenceRule?: Record<string, unknown>;
       participants?: Record<string, unknown>;
       organizerCalendarAddress?: string;
     };
-    expect(createdEvent.recurrenceRules).toEqual([{
+    expect(createdEvent.recurrenceRule).toEqual({
       "@type": "RecurrenceRule",
       frequency: "weekly",
       until: "2026-09-20T16:25:00",
       byDay: [{ "@type": "NDay", day: "su" }],
-    }]);
+    });
     const moved = createdEvent.recurrenceOverrides?.["2026-09-20T13:00:00"] as Record<string, unknown>;
     expect(moved.title).toBe("Panthers at Cardinals");
     expect(moved.start).toBe("2026-09-20T16:25:00");
@@ -165,13 +165,13 @@ describe("BearmailAccount", () => {
       end: "2026-09-01T09:15:00",
       recurrence: { frequency: "weekly", until: "2026-09-29T09:00:00", byDay: ["tu"] },
     }));
-    const createdEvent = server.lastCalendarSet?.create?.event as { recurrenceRules?: Array<Record<string, unknown>> };
-    expect(createdEvent.recurrenceRules).toEqual([{
+    const createdEvent = server.lastCalendarSet?.create?.event as { recurrenceRule?: Record<string, unknown> };
+    expect(createdEvent.recurrenceRule).toEqual({
       "@type": "RecurrenceRule",
       frequency: "weekly",
       until: "2026-09-29T09:00:00",
       byDay: [{ "@type": "NDay", day: "tu" }],
-    }]);
+    });
   });
 
   it("reports busy intervals from get_availability", async () => {
