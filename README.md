@@ -69,6 +69,20 @@ human login password), and point Cursor or Claude at
 `/opt/bearmail-mcp/dist/stdio.js`. Guide:
 [How an AI agent uses BearMail](docs/AGENT_GUIDE.md).
 
+### Upgrade (keep config)
+
+On a host that already has BearMail, replace the Stalwart binary, WebUI, and
+MCP sidecar. This does not change `config.json`, Caddy, DNS, CORS, the SMTP
+relay, or stored mail, and it does not ask setup questions:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/upgrade.sh | sudo bash
+```
+
+Preview with `sudo bash -s -- --dry-run`. Do not rerun `install.sh` for this
+update: that wizard re-asks CORS, relay, and DNS. After it finishes,
+hard-refresh webmail so the browser loads the new assets.
+
 ## Prepare these first
 
 Do this **before** you run the installer. The script will ask for the values;

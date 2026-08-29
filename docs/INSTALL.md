@@ -486,6 +486,23 @@ curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/small-memo
 Preview with `sudo bash -s -- --dry-run`. On a host that already has the repo
 checkout, `sudo sh ./small-memory-optimize.sh` is the same. Safe to re-run.
 
+## Upgrade in place
+
+To replace the Stalwart binary, WebUI, and MCP sidecar without changing
+configuration, Caddy, DNS, CORS, the SMTP relay, or stored mail:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/upgrade.sh | sudo bash
+```
+
+Preview with `sudo bash -s -- --dry-run`. The script is non-interactive. It
+does not run `install.sh` and does not ask for hostnames or passwords. After
+it finishes, hard-refresh the webmail URL.
+
+From a checkout that already has `update.sh` and `mcp_install.sh`,
+`sudo sh ./upgrade.sh` is the same and still downloads the published binary
+and WebUI unless you pass `--local`.
+
 ## Reinstall or update everything
 
 Build a matching Stalwart binary and WebUI archive, replace the three staging
@@ -496,9 +513,10 @@ sudo sh ./install.sh
 ```
 
 The installer preserves an existing non-empty `config.json` and skips initial
-Stalwart setup. It asks for an administrator credential so it can apply and
-verify the selected WebUI origin. It never stores that credential in
-`installer-state.json`.
+Stalwart setup. It still asks for an administrator credential so it can apply
+and verify the selected WebUI origin, and it may re-ask relay and DNS. Prefer
+[Upgrade in place](#upgrade-in-place) when you only need new binaries. It never
+stores that credential in `installer-state.json`.
 
 Back up the configuration and data before an update. Do not remove or truncate
 `config.json`: an empty configuration file is treated as an incomplete install
