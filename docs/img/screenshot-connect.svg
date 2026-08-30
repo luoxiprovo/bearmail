@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">BearMail WebUI connect screen</title>
+  <desc id="desc">Split connect page: navy product story on the left, sign-in form on the right.</desc>
+  <rect width="1280" height="720" fill="#172c3b"/>
+  <rect x="680" y="0" width="600" height="720" fill="#fffdf8"/>
+  <circle cx="1180" cy="560" r="170" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="1"/>
+  <circle cx="1180" cy="560" r="224" fill="none" stroke="rgba(255,255,255,.018)" stroke-width="54"/>
+  <g transform="translate(56,48)">
+    <rect width="31" height="31" rx="9" fill="#d84e66"/>
+    <text x="10" y="23" fill="#fff" font-family="Georgia, serif" font-size="19" font-style="italic" font-weight="700">B</text>
+    <text x="44" y="22" fill="#f9fbf9" font-family="ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="750">BearMail</text>
+  </g>
+  <text x="56" y="210" fill="#85bbb4" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="800" letter-spacing="2.4">YOUR MAIL. YOUR CALENDAR. YOUR SERVER.</text>
+  <text x="56" y="290" fill="#f7f8f5" font-family="Georgia, Cambria, serif" font-size="46" font-weight="500">A calmer place for the</text>
+  <text x="56" y="344" fill="#f7f8f5" font-family="Georgia, Cambria, serif" font-size="46" font-weight="500">work that arrives.</text>
+  <text x="56" y="396" fill="#b8c6c9" font-family="ui-sans-serif, system-ui, sans-serif" font-size="16">Read mail, plan your week, and answer invitations</text>
+  <text x="56" y="418" fill="#b8c6c9" font-family="ui-sans-serif, system-ui, sans-serif" font-size="16">without handing your day to another cloud.</text>
+  <text x="56" y="478" fill="#f7f8f5" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700">Focused mail</text>
+  <text x="56" y="498" fill="#94a7ac" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Fast JMAP search and clean conversations</text>
+  <text x="56" y="536" fill="#f7f8f5" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700">Invites in context</text>
+  <text x="56" y="556" fill="#94a7ac" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Respond once, see the calendar update</text>
+  <text x="56" y="594" fill="#f7f8f5" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700">Private by default</text>
+  <text x="56" y="614" fill="#94a7ac" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">No analytics, trackers, or third-party fonts</text>
+  <text x="56" y="688" fill="#789098" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" letter-spacing="1.8">MAIL AND CALENDAR ON A DOMAIN YOU CONTROL</text>
+
+  <text x="760" y="168" fill="#d84e66" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="800" letter-spacing="2">CONNECT YOUR ACCOUNT</text>
+  <text x="760" y="220" fill="#172a38" font-family="Georgia, Cambria, serif" font-size="38" font-weight="500">Welcome back</text>
+  <text x="760" y="252" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15">Enter the address of your BearMail server</text>
+  <text x="760" y="274" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15">and your account credentials.</text>
+  <text x="760" y="318" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="750">Mail server</text>
+  <rect x="760" y="328" width="420" height="48" rx="10" fill="#ffffff" stroke="#dfe3e2"/>
+  <text x="780" y="358" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14">https://mail.example.com</text>
+  <text x="760" y="408" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="750">Email or account name</text>
+  <rect x="760" y="418" width="420" height="48" rx="10" fill="#ffffff" stroke="#dfe3e2"/>
+  <text x="780" y="448" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14">you@example.com</text>
+  <text x="760" y="498" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="750">Password or app password</text>
+  <rect x="760" y="508" width="420" height="48" rx="10" fill="#ffffff" stroke="#dfe3e2"/>
+  <text x="780" y="538" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14">""""""""""""</text>
+  <rect x="760" y="576" width="420" height="48" rx="9" fill="#d84e66"/>
+  <text x="888" y="606" fill="#ffffff" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700">Connect with password</text>
+  <text x="848" y="656" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11">You stay signed in on this device until you sign out.</text>
+</svg>

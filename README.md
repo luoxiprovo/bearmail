@@ -9,9 +9,9 @@ an opinionated install of [Stalwart](https://stalw.art) plus a WebUI and an
 MCP sidecar so Cursor, Claude, or Hermes can use the same JMAP store humans
 see in the browser.
 
-**10-minute path:** [docs/QUICKSTART.md](docs/QUICKSTART.md).
-**Design partners:** [docs/PILOT.md](docs/PILOT.md).
-**Limits we actually claim:** [docs/SECURITY_AND_LIMITS.md](docs/SECURITY_AND_LIMITS.md).
+**5-minute path:** [docs/QUICKSTART.md](docs/QUICKSTART.md).
+**Prerequisites and limits:** [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+**Release:** [v0.1.0](https://github.com/luoxiprovo/bearmail/releases/tag/v0.1.0) — Linux x86-64 binary, WebUI archive, checksums.
 
 One Linux **x86-64** / systemd server, one interactive installer. When it
 finishes you have:
@@ -22,15 +22,17 @@ finishes you have:
 - outbound through Brevo (Mailjet optional) when the VPS blocks TCP 25;
 - DNS through **name.com** (other registrars are manual).
 
-```mermaid
-flowchart LR
-  Agent[MCP host] --> Sidecar[bearmail-mcp]
-  Sidecar -->|JMAP + API key| Stalwart
-  Human[Browser] --> WebUI --> Stalwart
-  Stalwart <-->|SMTP / iMIP| World[Gmail and everyone else]
-```
+![BearMail architecture: MCP hosts spawn bearmail-mcp; the sidecar talks JMAP to Stalwart; humans use the WebUI; the rest of the world stays on SMTP and iMIP.](docs/img/architecture.svg)
 
 Larger diagram: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### Screenshots
+
+| Connect | Mail | Calendar |
+| --- | --- | --- |
+| [![Connect](docs/img/screenshot-connect.png)](docs/img/screenshot-connect.png) | [![Mail](docs/img/screenshot-mail.svg)](docs/img/screenshot-mail.svg) | [![Calendar](docs/img/screenshot-calendar.svg)](docs/img/screenshot-calendar.svg) |
+
+Connect is a live WebUI capture. Mail and calendar show the same client.
 
 ### This release does not include
 
@@ -107,7 +109,9 @@ Then create a **dedicated** mailbox (not the founder inbox), issue a
 ```
 
 Guide: [How an AI agent uses BearMail](docs/AGENT_GUIDE.md).
-Example: [`mcp/mcp.json.example`](mcp/mcp.json.example).
+Copy-paste configs: [`mcp/mcp.json.example`](mcp/mcp.json.example) (Cursor),
+[`mcp/claude_desktop.json.example`](mcp/claude_desktop.json.example),
+[`mcp/hermes.json.example`](mcp/hermes.json.example).
 
 ### Upgrade (keep config)
 
@@ -359,10 +363,9 @@ Spec (draft): [AGENT_MCP_SPEC.md](docs/AGENT_MCP_SPEC.md).
 
 | Doc | Use |
 | --- | --- |
-| [QUICKSTART.md](docs/QUICKSTART.md) | Install → API key → `whoami` → first draft |
-| [PILOT.md](docs/PILOT.md) | 14-day design-partner offer and limits |
+| [QUICKSTART.md](docs/QUICKSTART.md) | 5-minute path: install → API key → `whoami` → first draft |
+| [LIMITATIONS.md](docs/LIMITATIONS.md) | Prerequisites, draft-only, caps, what we do not claim |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Stalwart, WebUI, MCP, SMTP/iMIP |
-| [SECURITY_AND_LIMITS.md](docs/SECURITY_AND_LIMITS.md) | Draft-only, caps, what we do not claim |
 | [INSTALL.md](docs/INSTALL.md) | Full installer, upgrade, uninstall |
 | [WEBUI_USER_GUIDE.md](docs/WEBUI_USER_GUIDE.md) | Human sign-in and send |
 

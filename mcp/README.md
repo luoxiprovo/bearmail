@@ -5,7 +5,10 @@ MCP server for BearMail. Agents use typed tools; Stalwart JMAP remains the store
 - Quickstart: [`docs/QUICKSTART.md`](../docs/QUICKSTART.md)
 - Spec: [`docs/AGENT_MCP_SPEC.md`](../docs/AGENT_MCP_SPEC.md)
 - Agent guide: [`docs/AGENT_GUIDE.md`](../docs/AGENT_GUIDE.md)
-- Cursor example: [`mcp.json.example`](./mcp.json.example)
+- Cursor: [`mcp.json.example`](./mcp.json.example)
+- Claude Desktop: [`claude_desktop.json.example`](./claude_desktop.json.example)
+- Hermes: [`hermes.json.example`](./hermes.json.example)
+- Limits: [`docs/LIMITATIONS.md`](../docs/LIMITATIONS.md)
 
 On a host that already has BearMail:
 

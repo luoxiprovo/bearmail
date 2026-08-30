@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">BearMail calendar</title>
+  <desc id="desc">Month calendar with a company event and an agent-created draft invite.</desc>
+  <rect width="1280" height="720" fill="#fffdf8"/>
+  <rect width="230" height="720" fill="#f3f1eb" stroke="#dfe3e2"/>
+  <rect x="18" y="24" width="194" height="38" rx="9" fill="#d84e66"/>
+  <text x="68" y="49" fill="#fff" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="750">New event</text>
+  <text x="24" y="96" fill="#172a38" font-family="Georgia, serif" font-size="16" font-weight="500">August 2026</text>
+  <text x="24" y="148" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="700">Calendars</text>
+  <rect x="24" y="162" width="10" height="10" rx="3" fill="#267a72"/>
+  <text x="44" y="172" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Company</text>
+  <rect x="24" y="188" width="10" height="10" rx="3" fill="#d84e66"/>
+  <text x="44" y="198" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">scheduler@</text>
+  <text x="24" y="260" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10">Accepted</text>
+  <text x="24" y="280" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10">Needs action</text>
+
+  <text x="258" y="52" fill="#172a38" font-family="Georgia, serif" font-size="28" font-weight="500">August 2026</text>
+  <rect x="1088" y="28" width="68" height="34" rx="8" fill="#fff" stroke="#dfe3e2"/>
+  <text x="1104" y="50" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="700">Today</text>
+  <rect x="1164" y="28" width="88" height="34" rx="8" fill="#f3f1eb"/>
+  <text x="1186" y="50" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="750">Month</text>
+
+  <g font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="750" fill="#728089" letter-spacing="1">
+    <text x="292" y="96">SUN</text><text x="442" y="96">MON</text><text x="592" y="96">TUE</text>
+    <text x="742" y="96">WED</text><text x="892" y="96">THU</text><text x="1042" y="96">FRI</text><text x="1184" y="96">SAT</text>
+  </g>
+  <line x1="230" y1="108" x2="1280" y2="108" stroke="#dfe3e2"/>
+
+  <g font-family="ui-sans-serif, system-ui, sans-serif">
+    <text x="370" y="132" fill="#41535e" font-size="10" text-anchor="end">2</text>
+    <text x="520" y="132" fill="#41535e" font-size="10" text-anchor="end">3</text>
+    <text x="670" y="132" fill="#41535e" font-size="10" text-anchor="end">4</text>
+    <text x="820" y="132" fill="#41535e" font-size="10" text-anchor="end">5</text>
+    <circle cx="958" cy="126" r="11" fill="#d84e66"/>
+    <text x="958" y="130" fill="#fff" font-size="10" font-weight="750" text-anchor="middle">6</text>
+    <text x="1120" y="132" fill="#41535e" font-size="10" text-anchor="end">7</text>
+    <text x="1270" y="132" fill="#41535e" font-size="10" text-anchor="end">8</text>
+  </g>
+  <rect x="830" y="146" width="138" height="22" rx="4" fill="#dceeea" stroke="#267a72" stroke-width="3" stroke-dasharray="0" />
+  <rect x="830" y="146" width="3" height="22" fill="#267a72"/>
+  <text x="838" y="161" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="720">Kickoff 4:00</text>
+  <rect x="980" y="146" width="138" height="22" rx="4" fill="#fae8eb"/>
+  <rect x="980" y="146" width="3" height="22" fill="#d84e66"/>
+  <text x="988" y="161" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="720">Venue hold</text>
+  <line x1="380" y1="108" x2="380" y2="720" stroke="#eceeeb"/>
+  <line x1="530" y1="108" x2="530" y2="720" stroke="#eceeeb"/>
+  <line x1="680" y1="108" x2="680" y2="720" stroke="#eceeeb"/>
+  <line x1="830" y1="108" x2="830" y2="720" stroke="#eceeeb"/>
+  <line x1="980" y1="108" x2="980" y2="720" stroke="#eceeeb"/>
+  <line x1="1130" y1="108" x2="1130" y2="720" stroke="#eceeeb"/>
+  <line x1="230" y1="210" x2="1280" y2="210" stroke="#eceeeb"/>
+  <line x1="230" y1="312" x2="1280" y2="312" stroke="#eceeeb"/>
+  <line x1="230" y1="414" x2="1280" y2="414" stroke="#eceeeb"/>
+  <line x1="230" y1="516" x2="1280" y2="516" stroke="#eceeeb"/>
+  <line x1="230" y1="618" x2="1280" y2="618" stroke="#eceeeb"/>
+</svg>

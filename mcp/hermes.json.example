@@ -1,0 +1,19 @@
+# Hermes — add a stdio MCP server with this command and env.
+# Hermes on another machine must spawn bearmail-mcp locally; it cannot
+# reach the mail host’s 127.0.0.1:8082 sidecar.
+# BEARMAIL_TOKEN is a Stalwart API key (API_…), sent as Bearer.
+
+{
+  "mcpServers": {
+    "bearmail": {
+      "command": "node",
+      "args": ["/absolute/path/to/bearmail-mcp/dist/stdio.js"],
+      "env": {
+        "BEARMAIL_SERVER": "https://mail.example.com",
+        "BEARMAIL_USERNAME": "scheduler@example.com",
+        "BEARMAIL_TOKEN": "API_<stalwart-api-key>",
+        "BEARMAIL_SEND_MODE": "draft-only"
+      }
+    }
+  }
+}

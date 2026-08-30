@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 520" role="img" aria-labelledby="title desc">
+  <title id="title">BearMail architecture</title>
+  <desc id="desc">MCP hosts spawn bearmail-mcp over stdio. The sidecar talks JMAP HTTPS to Stalwart. Humans use the WebUI. The rest of the world stays on SMTP and iMIP.</desc>
+  <defs>
+    <filter id="shadow" x="-8%" y="-8%" width="116%" height="124%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#1a2a32" flood-opacity=".12"/>
+    </filter>
+  </defs>
+  <rect width="1120" height="520" fill="#f3f1eb"/>
+  <text x="40" y="42" fill="#267a72" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="800" letter-spacing="2.4">BEARMAIL</text>
+  <text x="40" y="78" fill="#172a38" font-family="Georgia, Cambria, serif" font-size="28">Agents call tools. Stalwart stores the mail.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="36" y="118" width="300" height="348" rx="16" fill="#fffdf8" stroke="#dfe3e2"/>
+  </g>
+  <text x="56" y="148" fill="#267a72" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="800" letter-spacing="1.8">AGENT HOST</text>
+  <rect x="56" y="168" width="260" height="86" rx="12" fill="#172c3b"/>
+  <text x="76" y="206" fill="#f7f8f5" font-family="ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700">Hermes / Cursor / Claude</text>
+  <text x="76" y="228" fill="#94a7ac" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">MCP host (client)</text>
+  <rect x="56" y="274" width="260" height="86" rx="12" fill="#dceeea"/>
+  <text x="76" y="312" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700">bearmail-mcp</text>
+  <text x="76" y="334" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">stdio sidecar · API key</text>
+  <text x="56" y="396" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">Spawned locally. Not in the Stalwart binary.</text>
+  <text x="56" y="418" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">Remote hosts do not use 127.0.0.1:8082.</text>
+  <line x1="186" y1="254" x2="186" y2="274" stroke="#267a72" stroke-width="2"/>
+  <polygon points="186,274 181,264 191,264" fill="#267a72"/>
+
+  <g filter="url(#shadow)">
+    <rect x="410" y="118" width="360" height="348" rx="16" fill="#fffdf8" stroke="#dfe3e2"/>
+  </g>
+  <text x="430" y="148" fill="#267a72" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="800" letter-spacing="1.8">MAIL HOST</text>
+  <rect x="430" y="168" width="150" height="70" rx="12" fill="#172c3b"/>
+  <text x="450" y="198" fill="#f7f8f5" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="700">Caddy :443</text>
+  <text x="450" y="218" fill="#94a7ac" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11">HTTPS</text>
+  <rect x="600" y="168" width="150" height="70" rx="12" fill="#fffdf8" stroke="#dfe3e2"/>
+  <text x="618" y="198" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="700">WebUI :8081</text>
+  <text x="618" y="218" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11">Human client</text>
+  <rect x="430" y="268" width="320" height="88" rx="12" fill="#d84e66"/>
+  <text x="450" y="306" fill="#ffffff" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700">Stalwart</text>
+  <text x="450" y="330" fill="#fae8eb" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">JMAP · IMAP · SMTP · calendar store</text>
+  <rect x="430" y="376" width="320" height="56" rx="12" fill="#dceeea"/>
+  <text x="450" y="400" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700">Optional loopback MCP :8082</text>
+  <text x="450" y="418" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11">Only for a worker already on this VM</text>
+
+  <g filter="url(#shadow)">
+    <rect x="844" y="118" width="240" height="348" rx="16" fill="#fffdf8" stroke="#dfe3e2"/>
+  </g>
+  <text x="864" y="148" fill="#267a72" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="800" letter-spacing="1.8">THE WORLD</text>
+  <rect x="864" y="176" width="200" height="72" rx="12" fill="#fffdf8" stroke="#dfe3e2"/>
+  <text x="884" y="206" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="700">Human browser</text>
+  <text x="884" y="226" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">webmail.example.com</text>
+  <rect x="864" y="266" width="200" height="72" rx="12" fill="#fffdf8" stroke="#dfe3e2"/>
+  <text x="884" y="296" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="700">Gmail / Outlook</text>
+  <text x="884" y="316" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">SMTP and iMIP</text>
+  <rect x="864" y="356" width="200" height="72" rx="12" fill="#dceeea"/>
+  <text x="884" y="386" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="700">Brevo / Mailjet</text>
+  <text x="884" y="406" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">Outbound when :25 is blocked</text>
+
+  <line x1="336" y1="317" x2="410" y2="312" stroke="#267a72" stroke-width="2.2"/>
+  <polygon points="410,312 400,307 400,317" fill="#267a72"/>
+  <text x="338" y="298" fill="#267a72" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="700">JMAP HTTPS + API key</text>
+  <line x1="770" y1="203" x2="844" y2="212" stroke="#d84e66" stroke-width="2"/>
+  <polygon points="844,212 834,207 834,217" fill="#d84e66"/>
+  <line x1="750" y1="312" x2="844" y2="302" stroke="#41535e" stroke-width="2"/>
+  <polygon points="844,302 834,297 834,307" fill="#41535e"/>
+</svg>

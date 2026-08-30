@@ -1,7 +1,8 @@
 # How to install BearMail
 
 For the short activation path (install → API key → `whoami` → first draft),
-use [QUICKSTART.md](./QUICKSTART.md). This page is the full installer
+use [QUICKSTART.md](./QUICKSTART.md). Prerequisites and hard limits:
+[LIMITATIONS.md](./LIMITATIONS.md). This page is the full installer
 reference.
 
 BearMail is a one-shot install of mail, calendar, and webmail on one Linux

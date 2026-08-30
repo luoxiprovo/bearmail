@@ -76,7 +76,7 @@ Do **not** put an `app_…` application password in `BEARMAIL_TOKEN`. That is a 
 }
 ```
 
-Cursor / Claude often use `~/.cursor/mcp.json` or the project `.cursor/mcp.json`. Hermes: the same env and a stdio command, in that product’s MCP server list. Example file in-repo: `mcp/mcp.json.example`.
+Cursor / Claude often use `~/.cursor/mcp.json` or the project `.cursor/mcp.json`. Hermes: the same env and a stdio command, in that product’s MCP server list. Copy-paste files: `mcp/mcp.json.example`, `mcp/claude_desktop.json.example`, `mcp/hermes.json.example`.
 
 On a mail host that already ran `mcp_install.sh`, the stdio path is `/opt/bearmail-mcp/dist/stdio.js`.
 
