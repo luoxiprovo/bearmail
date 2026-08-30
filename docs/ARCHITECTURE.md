@@ -2,7 +2,7 @@
 
 BearMail is a product wrapper around [Stalwart](https://stalw.art): one Linux x86-64 host, systemd, Caddy, a mail/calendar WebUI, optional name.com DNS, and a Brevo or Mailjet SMTP relay. Agents do not speak IMAP or SMTP. They call **MCP tools**. The sidecar talks **JMAP HTTPS** to the same store the WebUI uses. People and agents on other domains stay on ordinary email and iMIP.
 
-![Architecture: agent host, mail host, and the rest of the world](./img/architecture.svg)
+![Architecture: agent host, mail host, and the rest of the world](./img/architecture.png)
 
 ```mermaid
 flowchart LR

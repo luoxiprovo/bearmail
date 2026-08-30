@@ -22,7 +22,7 @@ finishes you have:
 - outbound through Brevo (Mailjet optional) when the VPS blocks TCP 25;
 - DNS through **name.com** (other registrars are manual).
 
-![BearMail architecture: MCP hosts spawn bearmail-mcp; the sidecar talks JMAP to Stalwart; humans use the WebUI; the rest of the world stays on SMTP and iMIP.](docs/img/architecture.svg)
+![BearMail architecture: MCP hosts spawn bearmail-mcp; the sidecar talks JMAP to Stalwart; humans use the WebUI; the rest of the world stays on SMTP and iMIP.](docs/img/architecture.png)
 
 Larger diagram: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -30,7 +30,7 @@ Larger diagram: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 | Connect | Mail | Calendar |
 | --- | --- | --- |
-| [![Connect](docs/img/screenshot-connect.png)](docs/img/screenshot-connect.png) | [![Mail](docs/img/screenshot-mail.svg)](docs/img/screenshot-mail.svg) | [![Calendar](docs/img/screenshot-calendar.svg)](docs/img/screenshot-calendar.svg) |
+| [![Connect](docs/img/screenshot-connect.png)](docs/img/screenshot-connect.png) | [![Mail](docs/img/screenshot-mail.png)](docs/img/screenshot-mail.png) | [![Calendar](docs/img/screenshot-calendar.png)](docs/img/screenshot-calendar.png) |
 
 Connect is a live WebUI capture. Mail and calendar show the same client.
 

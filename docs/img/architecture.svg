@@ -19,7 +19,7 @@
   <text x="76" y="228" fill="#94a7ac" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">MCP host (client)</text>
   <rect x="56" y="274" width="260" height="86" rx="12" fill="#dceeea"/>
   <text x="76" y="312" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700">bearmail-mcp</text>
-  <text x="76" y="334" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">stdio sidecar · API key</text>
+  <text x="76" y="334" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">stdio sidecar Â· API key</text>
   <text x="56" y="396" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">Spawned locally. Not in the Stalwart binary.</text>
   <text x="56" y="418" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">Remote hosts do not use 127.0.0.1:8082.</text>
   <line x1="186" y1="254" x2="186" y2="274" stroke="#267a72" stroke-width="2"/>
@@ -37,7 +37,7 @@
   <text x="618" y="218" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11">Human client</text>
   <rect x="430" y="268" width="320" height="88" rx="12" fill="#d84e66"/>
   <text x="450" y="306" fill="#ffffff" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700">Stalwart</text>
-  <text x="450" y="330" fill="#fae8eb" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">JMAP · IMAP · SMTP · calendar store</text>
+  <text x="450" y="330" fill="#fae8eb" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">JMAP Â· IMAP Â· SMTP Â· calendar store</text>
   <rect x="430" y="376" width="320" height="56" rx="12" fill="#dceeea"/>
   <text x="450" y="400" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700">Optional loopback MCP :8082</text>
   <text x="450" y="418" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11">Only for a worker already on this VM</text>

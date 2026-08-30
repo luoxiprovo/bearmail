@@ -40,13 +40,13 @@
   <circle cx="488" cy="108" r="21" fill="#dceeea"/>
   <text x="481" y="114" fill="#267a72" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="800">A</text>
   <text x="520" y="104" fill="#172a38" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="700">Ada Chen</text>
-  <text x="520" y="122" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11">ada@example.com · Today 9:14</text>
+  <text x="520" y="122" fill="#728089" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11">ada@example.com Â· Today 9:14</text>
   <text x="470" y="180" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15">Can we move this to 4pm Mountain? The gym</text>
   <text x="470" y="204" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15">just opened an extra court.</text>
   <rect x="470" y="236" width="520" height="92" rx="13" fill="#dceeea" stroke="#bcd8d3"/>
   <rect x="488" y="256" width="47" height="47" rx="12" fill="#267a72"/>
   <text x="552" y="274" fill="#172a38" font-family="Georgia, serif" font-size="20" font-weight="500">Thursday kickoff</text>
-  <text x="552" y="298" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">Thu · 4:005:00 PM · America/Denver</text>
+  <text x="552" y="298" fill="#41535e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12">Thu Â· 4:005:00 PM Â· America/Denver</text>
   <rect x="470" y="360" width="88" height="34" rx="8" fill="#267a72"/>
   <text x="492" y="382" fill="#fff" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="750">Accept</text>
   <rect x="566" y="360" width="96" height="34" rx="8" fill="#fffdf8" stroke="#9fc6c0"/>
