@@ -1,8 +1,8 @@
 # BearMail
 
-Give your workers and AI agents a **real mailbox and calendar on the
-company domain**. Self-hosted control. Ordinary email and calendar to the
-rest of the world. Draft first; send only when you allow it.
+Give your team and AI agents a **real mailbox and calendar on the company
+domain**. Self-hosted control. Ordinary email and calendar to the rest of
+the world.
 
 BearMail is **not** a Gmail replacement and **not** a managed suite. It is
 an opinionated install of [Stalwart](https://stalw.art) plus a WebUI and an
