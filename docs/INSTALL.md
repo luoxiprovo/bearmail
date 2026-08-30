@@ -1,6 +1,6 @@
 # How to install BearMail
 
-For the short activation path (install → API key → `whoami` → first draft),
+For the short activation path (install, then hand setup to your agent),
 use [QUICKSTART.md](./QUICKSTART.md). Prerequisites and hard limits:
 [LIMITATIONS.md](./LIMITATIONS.md). This page is the full installer
 reference.

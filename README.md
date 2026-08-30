@@ -355,15 +355,15 @@ one address (`scheduler@startup.com`), scoped token, draft-only until you
 allow send. External people stay reachable with ordinary mail and calendar
 invites.
 
-Install the sidecar, then follow [QUICKSTART.md](docs/QUICKSTART.md) through
-`whoami` and a draft. Skill: [AGENT_GUIDE.md](docs/AGENT_GUIDE.md).
+Install the mail host, then paste the prompt in [QUICKSTART.md](docs/QUICKSTART.md)
+so the agent follows [AGENT_GUIDE.md](docs/AGENT_GUIDE.md).
 Spec (draft): [AGENT_MCP_SPEC.md](docs/AGENT_MCP_SPEC.md).
 
 ## Docs
 
 | Doc | Use |
 | --- | --- |
-| [QUICKSTART.md](docs/QUICKSTART.md) | 5-minute path: install → API key → `whoami` → first draft |
+| [QUICKSTART.md](docs/QUICKSTART.md) | Install, then paste the agent prompt |
 | [LIMITATIONS.md](docs/LIMITATIONS.md) | Prerequisites, draft-only, caps, what we do not claim |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Stalwart, WebUI, MCP, SMTP/iMIP |
 | [INSTALL.md](docs/INSTALL.md) | Full installer, upgrade, uninstall |
