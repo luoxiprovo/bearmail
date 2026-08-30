@@ -1,21 +1,42 @@
 # BearMail
 
-BearMail is a **one-shot install** mail and calendar stack for startups in the
-AI-agent era: your company domain, a real inbox, and APIs that agents can use
-without handing mail to a consumer Gmail account.
+Give every AI agent a **real, scoped mailbox and calendar on your company
+domain**. Self-hosted control. Ordinary email and calendar to the rest of
+the world. Draft first; send only when you allow it.
 
-One Linux server, one interactive `install.sh`. When it finishes you have:
+BearMail is **not** a Gmail replacement and **not** a managed suite. It is
+an opinionated install of [Stalwart](https://stalw.art) plus a WebUI and an
+MCP sidecar so Cursor, Claude, or Hermes can use the same JMAP store humans
+see in the browser.
+
+**10-minute path:** [docs/QUICKSTART.md](docs/QUICKSTART.md).
+**Design partners:** [docs/PILOT.md](docs/PILOT.md).
+**Limits we actually claim:** [docs/SECURITY_AND_LIMITS.md](docs/SECURITY_AND_LIMITS.md).
+
+One Linux **x86-64** / systemd server, one interactive installer. When it
+finishes you have:
 
 - mail on `mail.example.com` (SMTP, IMAP, JMAP, admin);
 - webmail and calendar on `https://webmail.example.com`;
 - HTTPS via Caddy;
-- outbound delivery through Brevo (Mailjet is also available) so it works
-  when the cloud provider blocks port 25;
-- DNS published through name.com.
+- outbound through Brevo (Mailjet optional) when the VPS blocks TCP 25;
+- DNS through **name.com** (other registrars are manual).
 
-The mail engine is [Stalwart](https://stalw.art). BearMail is the product
-wrapper: artifacts, two systemd services, Caddy, an SMTP relay, and name.com
-in one flow.
+```mermaid
+flowchart LR
+  Agent[MCP host] --> Sidecar[bearmail-mcp]
+  Sidecar -->|JMAP + API key| Stalwart
+  Human[Browser] --> WebUI --> Stalwart
+  Stalwart <-->|SMTP / iMIP| World[Gmail and everyone else]
+```
+
+Larger diagram: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### This release does not include
+
+Managed hosting, Google/Microsoft suite parity, Docker/Kubernetes, ARM,
+generic one-click catalogues, an SLA, compliance certifications, or
+autonomous send from day one. MCP is Draft v0.1.
 
 ## Quick Install
 
@@ -64,11 +85,29 @@ Preview with `sudo bash -s -- --dry-run`. If the mail origin cannot be detected:
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/mcp_install.sh | sudo bash -s -- --server-url https://mail.example.com
 ```
 
-Then create a dedicated mailbox in admin, issue a **Stalwart API key**
-(starts with `API_`, not a human login password and not an `app_…`
-application password), and point Cursor or Claude at
-`/opt/bearmail-mcp/dist/stdio.js` with `BEARMAIL_TOKEN`. Guide:
-[How an AI agent uses BearMail](docs/AGENT_GUIDE.md).
+Then create a **dedicated** mailbox (not the founder inbox), issue a
+**Stalwart API key** (`API_…`), and paste this into the MCP host. Leave
+`draft-only` on until you opt in. Do not use a human password or `app_…`.
+
+```json
+{
+  "mcpServers": {
+    "bearmail": {
+      "command": "node",
+      "args": ["/opt/bearmail-mcp/dist/stdio.js"],
+      "env": {
+        "BEARMAIL_SERVER": "https://mail.example.com",
+        "BEARMAIL_USERNAME": "scheduler@example.com",
+        "BEARMAIL_TOKEN": "API_<stalwart-api-key>",
+        "BEARMAIL_SEND_MODE": "draft-only"
+      }
+    }
+  }
+}
+```
+
+Guide: [How an AI agent uses BearMail](docs/AGENT_GUIDE.md).
+Example: [`mcp/mcp.json.example`](mcp/mcp.json.example).
 
 ### Upgrade (keep config)
 
@@ -307,16 +346,32 @@ pending.
 
 ## What agents get
 
-MCP tools over the same JMAP mailboxes and calendars humans use in the WebUI.
-On an existing server, run the [AI agents (MCP)](#ai-agents-mcp) one-liner
-above. Create a normal account, issue a Stalwart API key (`API_…`), and point
-an MCP host at `/opt/bearmail-mcp/dist/stdio.js` with `BEARMAIL_TOKEN`. Do not
-put a human primary password or an app password in agent config. Guide:
-[How an AI agent uses BearMail](docs/AGENT_GUIDE.md).
-Spec: [docs/AGENT_MCP_SPEC.md](docs/AGENT_MCP_SPEC.md).
+MCP tools over the **same JMAP mailbox** humans use in the WebUI. One agent,
+one address (`scheduler@startup.com`), scoped token, draft-only until you
+allow send. External people stay reachable with ordinary mail and calendar
+invites.
+
+Install the sidecar, then follow [QUICKSTART.md](docs/QUICKSTART.md) through
+`whoami` and a draft. Skill: [AGENT_GUIDE.md](docs/AGENT_GUIDE.md).
+Spec (draft): [AGENT_MCP_SPEC.md](docs/AGENT_MCP_SPEC.md).
+
+## Docs
+
+| Doc | Use |
+| --- | --- |
+| [QUICKSTART.md](docs/QUICKSTART.md) | Install → API key → `whoami` → first draft |
+| [PILOT.md](docs/PILOT.md) | 14-day design-partner offer and limits |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Stalwart, WebUI, MCP, SMTP/iMIP |
+| [SECURITY_AND_LIMITS.md](docs/SECURITY_AND_LIMITS.md) | Draft-only, caps, what we do not claim |
+| [INSTALL.md](docs/INSTALL.md) | Full installer, upgrade, uninstall |
+| [WEBUI_USER_GUIDE.md](docs/WEBUI_USER_GUIDE.md) | Human sign-in and send |
+
+**GitHub topics** (for discovery): `self-hosted`, `email-server`, `calendar`,
+`jmap`, `mcp`, `ai-agents`, `stalwart`.
 
 ## License
 
 The mail engine in this repository is dual-licensed **AGPL-3.0** and the
 [Stalwart Enterprise License](./LICENSES/LicenseRef-SEL.txt). See
-[LICENSES](./LICENSES/). Copyright (C) 2020, Stalwart Labs LLC.
+[LICENSES](./LICENSES/). Copyright (C) 2020, Stalwart Labs LLC. BearMail
+is a packaging and MCP layer on that engine, not a Stalwart Labs product.

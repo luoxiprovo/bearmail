@@ -1,7 +1,8 @@
 # bearmail-mcp
 
-MCP server for BearMail. Agents use typed tools; Stalwart JMAP remains the store. Authenticate with a Stalwart **API key** (`API_…`) in `BEARMAIL_TOKEN` (Bearer). Do not use a human login password or an `app_…` application password.
+MCP server for BearMail. Agents use typed tools; Stalwart JMAP remains the store. Authenticate with a Stalwart **API key** (`API_…`) in `BEARMAIL_TOKEN` (Bearer). Default send mode is **draft-only**. Do not use a human login password or an `app_…` application password.
 
+- Quickstart: [`docs/QUICKSTART.md`](../docs/QUICKSTART.md)
 - Spec: [`docs/AGENT_MCP_SPEC.md`](../docs/AGENT_MCP_SPEC.md)
 - Agent guide: [`docs/AGENT_GUIDE.md`](../docs/AGENT_GUIDE.md)
 - Cursor example: [`mcp.json.example`](./mcp.json.example)

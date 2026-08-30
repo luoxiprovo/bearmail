@@ -1,5 +1,9 @@
 # How to install BearMail
 
+For the short activation path (install → API key → `whoami` → first draft),
+use [QUICKSTART.md](./QUICKSTART.md). This page is the full installer
+reference.
+
 BearMail is a one-shot install of mail, calendar, and webmail on one Linux
 server. When you finish, two systemd services and two HTTPS hostnames are
 live: the mail engine (Stalwart) on `mail.example.com`, and BearMail on
