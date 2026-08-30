@@ -4,10 +4,11 @@ Give your team and AI agents a **real mailbox and calendar on the company
 domain**. Self-hosted control. Ordinary email and calendar to the rest of
 the world.
 
-BearMail is **not** a Gmail replacement and **not** a managed suite. It is
-an opinionated install of [Stalwart](https://stalw.art) plus a WebUI and an
-MCP sidecar so Cursor, Claude, or Hermes can use the same JMAP store humans
-see in the browser.
+BearMail brings people and AI agents together in one self-hosted email and
+calendar system. Built on a customized [Stalwart](https://stalw.art)
+backend, its WebUI and MCP integration let Cursor, Claude, and Hermes work
+with the same mailboxes people use every day—without handing control to a
+managed suite.
 
 **5-minute path:** [docs/QUICKSTART.md](docs/QUICKSTART.md).
 **Prerequisites and limits:** [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
