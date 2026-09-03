@@ -172,6 +172,9 @@ stalwart
 stalwart-webui.tar.gz
 ```
 
+`install.sh` installs Stalwart and the WebUI only. The MCP sidecar is a
+later step; see [Add the MCP sidecar from a checkout](#add-the-mcp-sidecar-from-a-checkout).
+
 For example, copy them to a remote staging directory with `scp`:
 
 ```sh
@@ -442,8 +445,10 @@ The standard layout uses:
 | Logs | `/var/log/stalwart/` |
 | Private Node.js, when needed | `/opt/stalwart-node/<version>/bin/node` |
 | WebUI | `/opt/stalwart-webui/` |
+| MCP sidecar | `/opt/bearmail-mcp/` |
 | Stalwart unit | `/etc/systemd/system/stalwart.service` |
 | WebUI unit | `/etc/systemd/system/stalwart-webui.service` |
+| MCP unit (optional HTTP) | `/etc/systemd/system/bearmail-mcp.service` |
 
 A custom Stalwart prefix uses `$PREFIX/bin`, `$PREFIX/etc`, `$PREFIX/data`, and
 `$PREFIX/logs`. The WebUI prefix must not contain, or be contained by, any
@@ -477,6 +482,27 @@ The updater reads the live `stalwart-webui.service` unit and the installed
 `config.json`, then installs over that prefix, port, Node.js binary, and
 default mail-server URL. Preview with `sudo sh ./update.sh --dry-run`. After
 it finishes, hard-refresh the webmail URL so the browser loads the new assets.
+
+## Add the MCP sidecar from a checkout
+
+After BearMail is installed, add the MCP sidecar from a checkout that already
+has `mcp_install.sh` and the `mcp/` tree:
+
+```sh
+sudo sh ./mcp_install.sh
+```
+
+The script uses local `mcp/` and does not download GitHub. Preview with
+`sudo sh ./mcp_install.sh --dry-run`. If the mail origin cannot be detected:
+
+```sh
+sudo sh ./mcp_install.sh --server-url https://mail.example.com
+```
+
+This does not change Stalwart, Caddy, DNS, or stored mail. After it finishes,
+create a dedicated mailbox, issue a Stalwart API key (`API_…`), and point the
+MCP host at `/opt/bearmail-mcp/dist/stdio.js`. Guide:
+[How an AI agent uses BearMail](./AGENT_GUIDE.md).
 
 ## Small-memory VMs
 

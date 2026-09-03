@@ -210,6 +210,9 @@ Then run:
 sudo sh ./install.sh
 ```
 
+That installs Stalwart and the WebUI. The MCP sidecar is a later step; it is
+not one of these three files.
+
 Build them from this repository (community edition, no enterprise feature
 gates):
 
@@ -227,6 +230,19 @@ tar -czf ../stalwart-webui.tar.gz \
   install.sh server.mjs stalwart-webui.service dist
 cd ..
 ```
+
+After BearMail is up, add MCP from the same checkout (`mcp_install.sh` plus
+the `mcp/` tree):
+
+```sh
+sudo sh ./mcp_install.sh
+```
+
+That uses local `mcp/` and does not download GitHub. Preview with
+`sudo sh ./mcp_install.sh --dry-run`. If the mail origin cannot be detected,
+pass `--server-url https://mail.example.com`. Then create a dedicated
+mailbox, issue a Stalwart API key (`API_…`), and paste the host config from
+[AI agents (MCP)](#ai-agents-mcp).
 
 To update **only** the WebUI on an already-installed server, copy `update.sh`
 and a new `stalwart-webui.tar.gz` to that host and run `sudo sh ./update.sh`.
