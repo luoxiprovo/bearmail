@@ -160,3 +160,38 @@ describe("patchEmails", () => {
     });
   });
 });
+
+describe("folders and starred queries", () => {
+  it("creates a mailbox by name", async () => {
+    const { createMailbox, userFolders } = await import("./mail");
+    const call = vi.fn().mockResolvedValue({ created: { folder: { id: "projects", name: "Projects" } } });
+    const created = await createMailbox({ mailAccountId: "account-1", call } as unknown as JmapClient, "  Projects  ");
+    expect(created).toEqual({ id: "projects", name: "Projects", parentId: null, role: null });
+    expect(call).toHaveBeenCalledWith("urn:ietf:params:jmap:mail", "Mailbox/set", {
+      accountId: "account-1",
+      create: { folder: { name: "Projects" } },
+    });
+    expect(userFolders([
+      { id: "inbox", name: "Inbox", role: "inbox" },
+      { id: "projects", name: "Projects" },
+    ]).map((box) => box.id)).toEqual(["projects"]);
+  });
+
+  it("queries starred mail with hasKeyword", async () => {
+    const { getEmails } = await import("./mail");
+    const request = vi.fn().mockResolvedValue({
+      methodResponses: [
+        ["Email/query", { ids: ["mail-1"], total: 1, queryState: "q" }, "query"],
+        ["Email/get", { list: [{ id: "mail-1", mailboxIds: { inbox: true }, keywords: { $flagged: true }, receivedAt: "2026-08-20T12:00:00Z" }] }, "get"],
+      ],
+    });
+    await getEmails({ mailAccountId: "account-1", request } as unknown as JmapClient, { hasKeyword: "$flagged" });
+    expect(request).toHaveBeenCalledWith(
+      ["urn:ietf:params:jmap:mail"],
+      expect.arrayContaining([
+        ["Email/query", expect.objectContaining({ filter: { hasKeyword: "$flagged" } }), "query"],
+      ]),
+      undefined,
+    );
+  });
+});

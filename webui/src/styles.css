@@ -170,6 +170,15 @@
   .mailbox-list button.active { box-shadow: 0 2px 8px rgba(35,52,60,.05); font-weight: 750; }
   .mailbox-list button span { display: flex; align-items: center; gap: 7px; overflow: hidden; text-overflow: ellipsis; }
   .mailbox-list button b { min-width: 22px; border-radius: 10px; padding: 1px 6px; background: var(--teal-pale); color: var(--teal); font-size: 10px; text-align: center; }
+  .mailbox-list .mailbox-add { color: var(--teal); }
+  .mailbox-list .starred-link.active { color: #d79a35; }
+  .mailbox-list .starred-link.active svg { fill: currentColor; }
+  .mailbox-create { display: grid; gap: 6px; padding: 6px 10px 12px; }
+  .mailbox-create input { width: 100%; min-height: 32px; border: 1px solid var(--line); border-radius: 7px; padding: 0 8px; background: var(--paper-strong); }
+  .mailbox-create button { justify-content: center; min-height: 30px; font-size: 12px; font-weight: 700; }
+  .mailbox-create button[type="submit"] { background: var(--teal-pale); color: var(--teal); }
+  .folder-picker { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; border-radius: 7px; padding: 0 8px; color: var(--ink); background: var(--paper-strong); }
+  .folder-picker select { max-width: 158px; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; }
   .message-list-panel { min-width: 0; }
   .mail-header { gap: 25px; }
   .search-box { display: flex; width: min(430px, 48%); min-height: 42px; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 11px; padding: 0 12px; background: var(--canvas); color: var(--muted); }
@@ -179,7 +188,7 @@
   .list-meta { display: flex; justify-content: space-between; align-items: center; padding: 10px 22px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
   .select-all { display: flex; align-items: center; gap: 10px; text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--ink-soft); }
   .select-all input, .email-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--teal); }
-  .mail-bulk-bar { display: flex; align-items: center; gap: 8px; padding: 8px 22px; border-bottom: 1px solid var(--line-soft); background: var(--teal-pale); color: var(--teal); font-size: 12px; font-weight: 700; }
+  .mail-bulk-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 22px; border-bottom: 1px solid var(--line-soft); background: var(--teal-pale); color: var(--teal); font-size: 12px; font-weight: 700; }
   .mail-bulk-bar button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; border-radius: 7px; padding: 0 10px; color: var(--ink); background: var(--paper-strong); }
   .mail-bulk-bar button:hover { background: var(--paper); }
   .email-list { min-height: 200px; }
@@ -208,6 +217,8 @@
 
   .message-page { min-height: 100vh; }
   .message-toolbar { display: flex; align-items: center; justify-content: space-between; height: 63px; border-bottom: 1px solid var(--line); padding: 0 25px; }
+  .message-toolbar > div { display: flex; align-items: center; gap: 4px; }
+  .message-toolbar .folder-picker { background: var(--canvas); }
   .message-content { max-width: 880px; margin: 0 auto; padding: 42px clamp(25px, 6vw, 72px) 70px; }
   .message-content > h1 { margin: 0 0 25px; font-family: Georgia, Cambria, serif; font-size: clamp(28px, 4vw, 42px); font-weight: 500; line-height: 1.12; }
   .sender-block { display: grid; grid-template-columns: 42px minmax(0,1fr) auto; align-items: center; gap: 11px; margin-bottom: 32px; }
@@ -232,7 +243,8 @@
   .invite-actions .text-button { margin-left: 6px; }
   .invite-state { margin: 10px 0 0; color: var(--teal); font-size: 11px; font-weight: 700; text-transform: capitalize; }
   .attachments { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 20px; }
-  .attachments h2 { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+  .attachments h2 { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
+  .attachments h2 > span { display: flex; align-items: center; gap: 7px; }
   .attachments > div { display: flex; flex-wrap: wrap; gap: 8px; }
   .attachments button { display: flex; min-width: 210px; align-items: center; justify-content: space-between; gap: 20px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; color: var(--ink-soft); }
   .attachments button:hover { border-color: var(--teal); }
@@ -433,6 +445,7 @@
     .mailbox-panel .panel-heading { display: none; }
     .mailbox-list { display: flex; min-width: max-content; gap: 5px; padding: 9px 13px; }
     .mailbox-list button { min-height: 31px; }
+    .mailbox-create { min-width: 210px; padding-top: 4px; }
     .page-header, .calendar-header { min-height: auto; padding: 18px; }
     .page-header h1, .calendar-header h1 { font-size: 24px; }
     .mail-header { display: grid; gap: 15px; }

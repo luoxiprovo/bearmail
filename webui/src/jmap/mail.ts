@@ -4,7 +4,15 @@ import { JmapClient, JmapError, findResponse } from "./client";
 
 interface GetResult<T> { accountId: string; state: string; list: T[]; notFound?: string[] }
 interface QueryResult { accountId: string; queryState: string; canCalculateChanges: boolean; position: number; ids: string[]; total?: number }
-interface SetResult { oldState: string; newState: string; updated?: Record<string, null>; destroyed?: string[]; notUpdated?: Record<string, Record<string, unknown>> }
+interface SetResult<T = unknown> {
+  oldState: string;
+  newState: string;
+  created?: Record<string, T>;
+  updated?: Record<string, null>;
+  destroyed?: string[];
+  notCreated?: Record<string, Record<string, unknown>>;
+  notUpdated?: Record<string, Record<string, unknown>>;
+}
 
 export async function getMailboxes(client: JmapClient): Promise<Mailbox[]> {
   const result = await client.call<GetResult<Mailbox>>(CAPABILITIES.mail, "Mailbox/get", {
@@ -16,14 +24,35 @@ export async function getMailboxes(client: JmapClient): Promise<Mailbox[]> {
 
 export interface EmailPage { emails: Email[]; total: number; queryState: string }
 
+export function userFolders(mailboxes: Mailbox[]): Mailbox[] {
+  return mailboxes.filter((box) => !box.role && box.myRights?.mayAddItems !== false);
+}
+
+export async function createMailbox(client: JmapClient, name: string): Promise<Mailbox> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new JmapError("Enter a folder name.", "invalidProperties");
+  const result = await client.call<SetResult<Mailbox>>(CAPABILITIES.mail, "Mailbox/set", {
+    accountId: client.mailAccountId,
+    create: { folder: { name: trimmed } },
+  });
+  const created = result.created?.folder;
+  if (!created?.id) {
+    const failed = result.notCreated?.folder;
+    throw new JmapError(String(failed?.description ?? "The folder could not be created."), String(failed?.type ?? "notCreated"));
+  }
+  return { id: created.id, name: created.name ?? trimmed, parentId: created.parentId ?? null, role: created.role ?? null };
+}
+
 export async function getEmails(
   client: JmapClient,
-  options: { mailboxId?: string; text?: string; hasAttachment?: boolean; position?: number; limit?: number; signal?: AbortSignal },
+  options: { mailboxId?: string; text?: string; hasAttachment?: boolean; hasKeyword?: string; position?: number; limit?: number; signal?: AbortSignal },
 ): Promise<EmailPage> {
-  const filter: Record<string, unknown> = {};
-  if (options.mailboxId) filter.inMailbox = options.mailboxId;
-  if (options.text) filter.text = options.text;
-  if (options.hasAttachment) filter.hasAttachment = true;
+  const conditions: Record<string, unknown>[] = [];
+  if (options.mailboxId) conditions.push({ inMailbox: options.mailboxId });
+  if (options.text) conditions.push({ text: options.text });
+  if (options.hasAttachment) conditions.push({ hasAttachment: true });
+  if (options.hasKeyword) conditions.push({ hasKeyword: options.hasKeyword });
+  const filter = conditions.length <= 1 ? (conditions[0] ?? {}) : { operator: "AND", conditions };
   const response = await client.request([CAPABILITIES.mail], [
     ["Email/query", {
       accountId: client.mailAccountId,
@@ -81,6 +110,28 @@ export async function patchEmails(client: JmapClient, ids: string[], patch: Reco
   });
   const failed = ids.find((id) => result.notUpdated?.[id]);
   if (failed) throw new JmapError(String(result.notUpdated?.[failed]?.description ?? "The messages could not be updated."), String(result.notUpdated?.[failed]?.type ?? "notUpdated"));
+}
+
+export function downloadableAttachments(email: Pick<Email, "attachments">): EmailBodyPart[] {
+  return (email.attachments ?? []).filter((part) => Boolean(part.blobId));
+}
+
+export async function downloadEmailPart(client: JmapClient, part: EmailBodyPart): Promise<Blob> {
+  if (!part.blobId) throw new JmapError("This attachment is not available to download.", "notFound");
+  const response = await fetch(client.downloadUrl(client.mailAccountId, part.blobId, part.name || "attachment", part.type), {
+    headers: { Authorization: client.authorizationHeader() },
+  });
+  if (!response.ok) throw new JmapError(`Download failed (${response.status}).`, "downloadFailed");
+  return response.blob();
+}
+
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export async function destroyEmail(client: JmapClient, id: string): Promise<void> {

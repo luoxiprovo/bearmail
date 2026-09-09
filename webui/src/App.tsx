@@ -21,6 +21,7 @@ export default function App() {
   else if (path === "/search") page = <MailPage autoFocusSearch />;
   else if (path === "/settings") page = <SettingsPage />;
   else if (path === "/diagnostics") page = <SettingsPage diagnostics />;
+  else if (path === "/mail/starred") page = <MailPage starred />;
   else if (path === "/" || path === "/connect" || path.startsWith("/mail")) page = <MailPage mailboxId={path.split("/")[2] ? decodeURIComponent(path.split("/")[2]) : undefined} />;
   else page = <Redirect to="/mail" />;
   return (

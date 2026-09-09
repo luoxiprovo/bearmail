@@ -1,21 +1,29 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, Ban, CalendarDays, ChevronRight, Inbox, LoaderCircle, Mail, MailOpen, OctagonAlert, Paperclip, Search, Star, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { Archive, Ban, CalendarDays, ChevronRight, Folder, FolderPlus, Inbox, LoaderCircle, Mail, MailOpen, OctagonAlert, Paperclip, Search, Star, Trash2 } from "lucide-react";
 import { useApp } from "../app-context";
-import { findCalendarInvitationPart, getEmails, patchEmail, patchEmails } from "../jmap/mail";
+import { FolderPicker } from "../components/FolderPicker";
+import { createMailbox, findCalendarInvitationPart, getEmails, patchEmail, patchEmails, userFolders } from "../jmap/mail";
 import { blockSender, emailIsInMailbox, markEmailAsNotSpam, markEmailAsSpam, senderAddress } from "../jmap/spam";
 import type { Email, Mailbox } from "../types";
 import { useNavigate } from "../router";
 
-export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: string; autoFocusSearch?: boolean }) {
+export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }: { mailboxId?: string; starred?: boolean; autoFocusSearch?: boolean }) {
   const { client, mailboxes, notify, refresh, syncVersion } = useApp();
   const navigate = useNavigate();
-  const activeMailbox = useMemo(() => mailboxes.find((box) => box.id === mailboxId) ?? mailboxes.find((box) => box.role === "inbox") ?? mailboxes[0], [mailboxId, mailboxes]);
+  const folders = useMemo(() => userFolders(mailboxes), [mailboxes]);
+  const activeMailbox = useMemo(
+    () => starred ? undefined : mailboxes.find((box) => box.id === mailboxId) ?? mailboxes.find((box) => box.role === "inbox") ?? mailboxes[0],
+    [mailboxId, mailboxes, starred],
+  );
   const [emails, setEmails] = useState<Email[]>([]);
   const [total, setTotal] = useState(0);
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [folderName, setFolderName] = useState("");
+  const [savingFolder, setSavingFolder] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(query.trim()), 300);
@@ -23,16 +31,21 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
   }, [query]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
-    if (!client || (!activeMailbox && !search)) return;
+    if (!client || (!activeMailbox && !starred && !search)) return;
     setLoading(true);
     try {
-      const page = await getEmails(client, { mailboxId: search ? undefined : activeMailbox?.id, text: search || undefined, signal });
+      const page = await getEmails(client, {
+        mailboxId: search || starred ? undefined : activeMailbox?.id,
+        hasKeyword: search || !starred ? undefined : "$flagged",
+        text: search || undefined,
+        signal,
+      });
       setEmails(page.emails); setTotal(page.total);
       setSelected((current) => new Set([...current].filter((id) => page.emails.some((email) => email.id === id))));
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "AbortError")) notify(error instanceof Error ? error.message : "Mail could not be loaded.", "error");
     } finally { setLoading(false); }
-  }, [activeMailbox, client, notify, search, syncVersion]);
+  }, [activeMailbox, client, notify, search, starred, syncVersion]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -40,7 +53,7 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
     return () => controller.abort();
   }, [load]);
 
-  useEffect(() => { setSelected(new Set()); }, [activeMailbox?.id, search]);
+  useEffect(() => { setSelected(new Set()); }, [activeMailbox?.id, search, starred]);
 
   const action = async (email: Email, patch: Record<string, unknown>, success: string) => {
     if (!client) return;
@@ -73,6 +86,39 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
       await load();
     } catch (error) {
       notify(error instanceof Error ? error.message : "The messages could not be updated.", "error");
+    }
+  };
+
+  const addSelectedToFolder = async (folderId: string) => {
+    if (!client || !selected.size) return;
+    const folder = mailboxes.find((box) => box.id === folderId);
+    const ids = [...selected];
+    try {
+      await patchEmails(client, ids, { [`mailboxIds/${folderId}`]: true });
+      notify(ids.length === 1 ? `Added to ${folder?.name ?? "folder"}` : `Added ${ids.length} messages to ${folder?.name ?? "folder"}`, "success");
+      setSelected(new Set());
+      await refresh();
+      await load();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The messages could not be added to that folder.", "error");
+    }
+  };
+
+  const submitFolder = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!client || savingFolder) return;
+    setSavingFolder(true);
+    try {
+      const created = await createMailbox(client, folderName);
+      notify(`Created ${created.name}`, "success");
+      setFolderName("");
+      setCreatingFolder(false);
+      await refresh();
+      navigate(`/mail/${encodeURIComponent(created.id)}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The folder could not be created.", "error");
+    } finally {
+      setSavingFolder(false);
     }
   };
 
@@ -156,18 +202,28 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
       notify(error instanceof Error ? error.message : "The messages could not be marked as not spam.", "error");
     }
   };
-  const unreadCount = search ? emails.filter((email) => !email.keywords?.["$seen"]).length : (activeMailbox?.unreadEmails ?? emails.filter((email) => !email.keywords?.["$seen"]).length);
+  const unreadCount = search || starred ? emails.filter((email) => !email.keywords?.["$seen"]).length : (activeMailbox?.unreadEmails ?? emails.filter((email) => !email.keywords?.["$seen"]).length);
   return (
     <div className="mail-layout">
       <aside className="mailbox-panel">
         <div className="panel-heading"><span>Mailboxes</span><small>{mailboxes.reduce((sum, box) => sum + (box.unreadEmails ?? 0), 0)} unread</small></div>
         <div className="mailbox-list">
-          {mailboxes.map((box) => <MailboxLink key={box.id} box={box} active={box.id === activeMailbox?.id && !search} onClick={() => navigate(`/mail/${box.id}`)} />)}
+          <button className={`starred-link ${starred && !search ? "active" : ""}`} onClick={() => navigate("/mail/starred")}><span><Star size={16} />Starred</span></button>
+          {mailboxes.map((box) => <MailboxLink key={box.id} box={box} active={box.id === activeMailbox?.id && !search && !starred} onClick={() => navigate(`/mail/${box.id}`)} />)}
+          {creatingFolder ? (
+            <form className="mailbox-create" onSubmit={(event) => void submitFolder(event)}>
+              <input autoFocus aria-label="New folder name" placeholder="Folder name" value={folderName} onChange={(event) => setFolderName(event.target.value)} disabled={savingFolder} />
+              <button type="submit" disabled={savingFolder || !folderName.trim()}>Add</button>
+              <button type="button" onClick={() => { setCreatingFolder(false); setFolderName(""); }}>Cancel</button>
+            </form>
+          ) : (
+            <button className="mailbox-add" onClick={() => setCreatingFolder(true)}><span><FolderPlus size={16} />New folder</span></button>
+          )}
         </div>
       </aside>
       <section className="message-list-panel">
         <header className="page-header mail-header">
-          <div><p className="eyebrow">MAIL</p><h1>{search ? "Search results" : activeMailbox?.name ?? "Mail"}</h1></div>
+          <div><p className="eyebrow">MAIL</p><h1>{search ? "Search results" : starred ? "Starred" : activeMailbox?.name ?? "Mail"}</h1></div>
           <div className="search-box"><Search size={18} /><input autoFocus={autoFocusSearch} aria-label="Search mail" placeholder="Search mail" value={query} onChange={(event) => setQuery(event.target.value)} />{query && <button onClick={() => setQuery("")}>Clear</button>}</div>
         </header>
         <div className="list-meta">
@@ -185,11 +241,12 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
             {viewingJunk && inbox && <button type="button" onClick={() => void reportSelectedNotSpam()}><Inbox size={16} /> Not spam</button>}
             {!viewingJunk && junk && <button type="button" onClick={() => void reportSelectedSpam(false)}><OctagonAlert size={16} /> Spam</button>}
             {!viewingJunk && junk && <button type="button" onClick={() => void reportSelectedSpam(true)}><Ban size={16} /> Block</button>}
+            <FolderPicker folders={folders} onPick={(id) => void addSelectedToFolder(id)} />
             <button type="button" className="text-button" onClick={() => setSelected(new Set())}>Clear</button>
           </div>
         )}
         {loading ? <div className="empty-state"><LoaderCircle className="spin" /><p>Loading messages…</p></div> : emails.length === 0 ? (
-          <div className="empty-state"><MailOpen size={38} /><h2>Nothing here</h2><p>{search ? "Try a broader search." : "This mailbox is comfortably empty."}</p></div>
+          <div className="empty-state"><MailOpen size={38} /><h2>Nothing here</h2><p>{search ? "Try a broader search." : starred ? "Star messages to find them here." : "This mailbox is comfortably empty."}</p></div>
         ) : <div className="email-list" role="list">
           {emails.map((email) => {
             const unread = !email.keywords?.["$seen"];
@@ -202,7 +259,7 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
                 <div className="email-markers">{invited && <span title="Calendar invitation"><CalendarDays size={15} /></span>}{email.hasAttachment && <Paperclip size={15} />}</div>
                 <div className="row-actions">
                   <button aria-label={unread ? "Mark as read" : "Mark as unread"} onClick={(event) => { event.stopPropagation(); void action(email, { "keywords/$seen": unread ? true : null }, unread ? "Marked read" : "Marked unread"); }}>{unread ? <MailOpen size={16} /> : <Mail size={16} />}</button>
-                  {archive && !emailIsInMailbox(email, junk?.id) && <button aria-label="Archive" onClick={(event) => { event.stopPropagation(); void action(email, { [`mailboxIds/${activeMailbox?.id}`]: null, [`mailboxIds/${archive.id}`]: true }, "Archived"); }}><Archive size={16} /></button>}
+                  {archive && !emailIsInMailbox(email, junk?.id) && <button aria-label="Archive" onClick={(event) => { event.stopPropagation(); const patch: Record<string, unknown> = { [`mailboxIds/${archive.id}`]: true }; if (activeMailbox) patch[`mailboxIds/${activeMailbox.id}`] = null; else if (inbox && email.mailboxIds?.[inbox.id]) patch[`mailboxIds/${inbox.id}`] = null; void action(email, patch, "Archived"); }}><Archive size={16} /></button>}
                   {emailIsInMailbox(email, junk?.id)
                     ? inbox && <button aria-label="Mark as not spam" onClick={(event) => { event.stopPropagation(); void reportNotSpam(email); }}><Inbox size={16} /></button>
                     : junk && <>
@@ -222,7 +279,7 @@ export function MailPage({ mailboxId, autoFocusSearch = false }: { mailboxId?: s
 }
 
 function MailboxLink({ box, active, onClick }: { box: Mailbox; active: boolean; onClick(): void }) {
-  return <button className={active ? "active" : ""} onClick={onClick}><span>{box.role === "inbox" && <Inbox size={16} />}{box.name}</span>{Boolean(box.unreadEmails) && <b>{box.unreadEmails}</b>}</button>;
+  return <button className={active ? "active" : ""} onClick={onClick}><span>{box.role === "inbox" ? <Inbox size={16} /> : !box.role ? <Folder size={16} /> : null}{box.name}</span>{Boolean(box.unreadEmails) && <b>{box.unreadEmails}</b>}</button>;
 }
 
 function formatSender(email: Email): string {

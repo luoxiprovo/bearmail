@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Ban, Download, Forward, Image as ImageIcon, Inbox, LoaderCircle, OctagonAlert, Paperclip, Reply, ReplyAll, Trash2 } from "lucide-react";
+import { ArrowLeft, Ban, Download, FileArchive, Forward, Image as ImageIcon, Inbox, LoaderCircle, OctagonAlert, Paperclip, Reply, ReplyAll, Trash2 } from "lucide-react";
 import { useApp } from "../app-context";
+import { FolderPicker } from "../components/FolderPicker";
 import { sanitizeEmailHtml } from "../emailHtml";
-import { findCalendarInvitationPart, getEmail, patchEmail } from "../jmap/mail";
+import { downloadableAttachments, downloadEmailPart, findCalendarInvitationPart, getEmail, patchEmail, saveBlob, userFolders } from "../jmap/mail";
 import { emailIsInMailbox, markAsSpamAndBlockSender, markEmailAsNotSpam, markEmailAsSpam, senderAddress } from "../jmap/spam";
 import type { Email, EmailBodyPart } from "../types";
 import { InvitationCard } from "../components/InvitationCard";
 import { useNavigate } from "../router";
+import { sanitizeZipName, zipBlob } from "../zip";
 
 export function MessagePage({ emailId }: { emailId: string }) {
   const { client, mailboxes, notify } = useApp();
@@ -14,6 +16,8 @@ export function MessagePage({ emailId }: { emailId: string }) {
   const [email, setEmail] = useState<Email | null>(null);
   const [loading, setLoading] = useState(true);
   const [allowImages, setAllowImages] = useState(false);
+  const [zipping, setZipping] = useState(false);
+  const folders = useMemo(() => userFolders(mailboxes), [mailboxes]);
 
   useEffect(() => {
     if (!client || !emailId) return;
@@ -83,6 +87,35 @@ export function MessagePage({ emailId }: { emailId: string }) {
     } catch (error) { notify(error instanceof Error ? error.message : "The message could not be moved.", "error"); }
   };
 
+  const addToFolder = async (folderId: string) => {
+    if (!client) return;
+    const folder = mailboxes.find((box) => box.id === folderId);
+    try {
+      await patchEmail(client, email.id, { [`mailboxIds/${folderId}`]: true });
+      setEmail({ ...email, mailboxIds: { ...email.mailboxIds, [folderId]: true } });
+      notify(`Added to ${folder?.name ?? "folder"}`, "success");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The message could not be added to that folder.", "error");
+    }
+  };
+
+  const attachments = downloadableAttachments(email);
+  const downloadAll = async () => {
+    if (!client || attachments.length < 3 || zipping) return;
+    setZipping(true);
+    try {
+      const files = await Promise.all(attachments.map(async (part) => ({
+        name: part.name || "attachment",
+        bytes: new Uint8Array(await (await downloadEmailPart(client, part)).arrayBuffer()),
+      })));
+      saveBlob(zipBlob(files), `${sanitizeZipName(email.subject || "message")}-attachments.zip`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The attachments could not be downloaded.", "error");
+    } finally {
+      setZipping(false);
+    }
+  };
+
   return (
     <article className="message-page">
       <header className="message-toolbar">
@@ -94,6 +127,7 @@ export function MessagePage({ emailId }: { emailId: string }) {
           {inJunk && inbox && <button className="icon-button" aria-label="Mark as not spam" title="Mark as not spam" onClick={() => void reportNotSpam()}><Inbox size={18} /></button>}
           {!inJunk && junk && <button className="icon-button" aria-label="Mark as spam" title="Mark as spam" onClick={() => void reportSpam(false)}><OctagonAlert size={18} /></button>}
           {!inJunk && junk && <button className="icon-button" aria-label="Mark as spam and block sender" title="Mark as spam and block sender" onClick={() => void reportSpam(true)}><Ban size={18} /></button>}
+          <FolderPicker folders={folders} onPick={(id) => void addToFolder(id)} />
           {trash && <button className="icon-button" aria-label="Move to trash" onClick={() => void remove()}><Trash2 size={18} /></button>}
         </div>
       </header>
@@ -103,7 +137,19 @@ export function MessagePage({ emailId }: { emailId: string }) {
         {!allowImages && body.hasRemoteImages && <button className="remote-images" onClick={() => setAllowImages(true)}><ImageIcon size={17} /> Remote images are blocked. Load them once.</button>}
         {calendarAttachment && <InvitationCard attachment={calendarAttachment} />}
         {body.html ? <iframe className="email-frame" title="Message body" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={body.html} /> : <pre className="plain-body">{body.text || email.preview}</pre>}
-        {Boolean(email.attachments?.length) && <section className="attachments"><h2><Paperclip size={18} /> Attachments</h2><div>{email.attachments?.map((attachment, index) => <AttachmentButton key={`${attachment.blobId}-${index}`} part={attachment} />)}</div></section>}
+        {attachments.length > 0 && (
+          <section className="attachments">
+            <h2>
+              <span><Paperclip size={18} /> Attachments</span>
+              {attachments.length > 2 && (
+                <button type="button" className="text-button" onClick={() => void downloadAll()} disabled={zipping}>
+                  <FileArchive size={16} /> {zipping ? "Preparing ZIP…" : "Download all as ZIP"}
+                </button>
+              )}
+            </h2>
+            <div>{attachments.map((attachment, index) => <AttachmentButton key={`${attachment.blobId}-${index}`} part={attachment} />)}</div>
+          </section>
+        )}
         <div className="message-end-actions">
           <button className="secondary-button" onClick={() => navigate("/mail/compose", { state: { replyTo: email } })}><Reply size={17} /> Reply</button>
           <button className="secondary-button" onClick={() => navigate("/mail/compose", { state: { replyTo: email, replyAll: true } })}><ReplyAll size={17} /> Reply all</button>
@@ -120,13 +166,9 @@ export function MessagePage({ emailId }: { emailId: string }) {
 function AttachmentButton({ part }: { part: EmailBodyPart }) {
   const { client, notify } = useApp();
   const download = async () => {
-    if (!client || !part.blobId) return;
+    if (!client) return;
     try {
-      const response = await fetch(client.downloadUrl(client.mailAccountId, part.blobId, part.name || "attachment", part.type), { headers: { Authorization: client.authorizationHeader() } });
-      if (!response.ok) throw new Error(`Download failed (${response.status}).`);
-      const url = URL.createObjectURL(await response.blob());
-      const link = document.createElement("a"); link.href = url; link.download = part.name || "attachment"; link.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      saveBlob(await downloadEmailPart(client, part), part.name || (part.type?.startsWith("text/calendar") ? "calendar invitation.ics" : "attachment"));
     } catch (error) { notify(error instanceof Error ? error.message : "Download failed.", "error"); }
   };
   return <button onClick={() => void download()}><span><Download size={17} /><b>{part.name || (part.type?.startsWith("text/calendar") ? "calendar invitation.ics" : "attachment")}</b></span><small>{part.size ? formatSize(part.size) : part.type}</small></button>;
