@@ -98,6 +98,11 @@ export function findCalendarInvitationPart(email: Pick<Email, "attachments" | "t
   return [...(email.attachments ?? []), ...(email.textBody ?? []), ...(email.htmlBody ?? [])].find(isCalendarInvitationPart);
 }
 
+export function isDraftEmail(email: Pick<Email, "keywords" | "mailboxIds">, draftsMailboxId?: string): boolean {
+  if (email.keywords?.["$draft"]) return true;
+  return Boolean(draftsMailboxId && email.mailboxIds?.[draftsMailboxId]);
+}
+
 export async function patchEmail(client: JmapClient, id: string, patch: Record<string, unknown>): Promise<void> {
   await patchEmails(client, [id], patch);
 }

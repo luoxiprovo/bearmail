@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, FileText, Image as ImageIcon, Paperclip, Send, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { ArrowLeft, FileText, Image as ImageIcon, Paperclip, Save, Send, Trash2, X } from "lucide-react";
 import { RichTextEditor, type RichTextEditorHandle } from "../components/RichTextEditor";
 import { useApp } from "../app-context";
 import {
@@ -65,6 +65,11 @@ export function ComposePage({ draftId: routeDraftId }: { draftId?: string }) {
   const [saveState, setSaveState] = useState<"unsaved" | "saving" | "saved" | "error">("unsaved");
   const [sending, setSending] = useState(false);
   const loadedDraft = useRef(false);
+  const draftIdRef = useRef(routeDraftId || undefined);
+  const hydrated = useRef(!routeDraftId);
+  const snapshot = useRef("");
+  const autosaveTimer = useRef<number | null>(null);
+  const persistLock = useRef(Promise.resolve());
   const attachInput = useRef<HTMLInputElement>(null);
   const pictureInput = useRef<HTMLInputElement>(null);
   const editorRef = useRef<RichTextEditorHandle>(null);
@@ -81,31 +86,59 @@ export function ComposePage({ draftId: routeDraftId }: { draftId?: string }) {
     loadedDraft.current = true;
     getEmail(client, routeDraftId).then((email) => {
       const loaded = draftBodyFromEmail(email);
-      setInput({
+      const next = {
         to: email.to?.map((item) => item.email).filter(Boolean).join(", ") ?? "",
         cc: email.cc?.map((item) => item.email).filter(Boolean).join(", ") ?? "",
         subject: email.subject ?? "",
         body: loaded.body,
         htmlBody: loaded.htmlBody,
-      });
+      };
+      snapshot.current = draftFingerprint(next, []);
+      hydrated.current = true;
+      setInput(next);
       setSaveState("saved");
     }).catch((error) => notify(error instanceof Error ? error.message : "Draft could not be opened.", "error"));
   }, [client, notify, routeDraftId]);
 
-  useEffect(() => {
-    if (!client || !identity || !draftMailbox || (!input.to && !input.subject && !attachments.length && input.body === seededBody && (input.htmlBody ?? "") === seededHtml)) return;
-    setSaveState("unsaved");
-    const timer = window.setTimeout(async () => {
+  const persistDraft = useCallback(async () => {
+    if (!client || !identity || !draftMailbox) throw new Error("Drafts are unavailable.");
+    if (routeDraftId && !hydrated.current) throw new Error("This draft is still opening.");
+    const run = persistLock.current.then(async () => {
       setSaveState("saving");
       try {
-        const id = await saveDraft(client, input, identity, draftMailbox.id, draftId, attachments);
-        setDraftId(id); setSaveState("saved");
+        const id = await saveDraft(client, input, identity, draftMailbox.id, draftIdRef.current, attachments);
+        loadedDraft.current = true;
+        hydrated.current = true;
+        snapshot.current = draftFingerprint(input, attachments);
+        draftIdRef.current = id;
+        setDraftId(id);
+        setSaveState("saved");
+        if (id !== routeDraftId) navigate(`/mail/compose/${encodeURIComponent(id)}`, { replace: true, state: locationState });
       } catch (error) {
-        setSaveState("error"); notify(error instanceof Error ? error.message : "Draft could not be saved.", "error");
+        setSaveState("error");
+        throw error;
       }
+    });
+    persistLock.current = run.then(() => undefined, () => undefined);
+    await run;
+  }, [attachments, client, draftMailbox, identity, input, locationState, navigate, routeDraftId]);
+
+  useEffect(() => {
+    if (!client || !identity || !draftMailbox) return;
+    if (routeDraftId && !hydrated.current) return;
+    if (routeDraftId && draftFingerprint(input, attachments) === snapshot.current) return;
+    if (!input.to && !input.subject && !attachments.length && input.body === seededBody && (input.htmlBody ?? "") === seededHtml) return;
+    setSaveState("unsaved");
+    const timer = window.setTimeout(() => {
+      if (autosaveTimer.current === timer) autosaveTimer.current = null;
+      void persistDraft().catch((error) => notify(error instanceof Error ? error.message : "Draft could not be saved.", "error"));
     }, 1500);
-    return () => window.clearTimeout(timer);
-  }, [attachments, client, draftMailbox, identity, input, notify, seededBody, seededHtml]);
+    autosaveTimer.current = timer;
+    return () => {
+      window.clearTimeout(timer);
+      if (autosaveTimer.current === timer) autosaveTimer.current = null;
+    };
+  }, [attachments, client, draftMailbox, identity, input, notify, persistDraft, routeDraftId, seededBody, seededHtml]);
 
   useEffect(() => {
     const protect = (event: BeforeUnloadEvent) => { if (saveState === "saving" || saveState === "unsaved") event.preventDefault(); };
@@ -115,6 +148,19 @@ export function ComposePage({ draftId: routeDraftId }: { draftId?: string }) {
 
   const update = (field: keyof DraftInput, value: string) => setInput((current) => ({ ...current, [field]: value }));
   const updateHtml = (html: string) => setInput((current) => ({ ...current, htmlBody: html, body: htmlToPlainText(html) }));
+  const saveManually = async () => {
+    if (sending || saveState === "saving") return;
+    if (autosaveTimer.current) {
+      window.clearTimeout(autosaveTimer.current);
+      autosaveTimer.current = null;
+    }
+    try {
+      await persistDraft();
+      notify("Draft saved", "success");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Draft could not be saved.", "error");
+    }
+  };
   const close = () => {
     if ((saveState === "saving" || saveState === "unsaved") && !confirm("This draft is still saving. Close the composer?")) return;
     navigate(-1);
@@ -133,9 +179,15 @@ export function ComposePage({ draftId: routeDraftId }: { draftId?: string }) {
     event.preventDefault();
     if (!client || !identity || !draftMailbox || !sentMailbox || sending) return;
     if (!input.to.trim()) { notify("Add at least one recipient.", "error"); return; }
+    if (autosaveTimer.current) {
+      window.clearTimeout(autosaveTimer.current);
+      autosaveTimer.current = null;
+    }
     setSending(true);
     try {
-      const id = await saveDraft(client, input, identity, draftMailbox.id, draftId, attachments);
+      await persistDraft();
+      const id = draftIdRef.current;
+      if (!id) throw new Error("Draft could not be saved.");
       await sendDraft(client, id, identity.id, draftMailbox.id, sentMailbox.id);
       notify("Message sent", "success"); navigate("/mail");
     } catch (error) { notify(error instanceof Error ? error.message : "Message could not be sent. Your draft is safe.", "error"); setSending(false); }
@@ -148,6 +200,7 @@ export function ComposePage({ draftId: routeDraftId }: { draftId?: string }) {
         <button type="button" className="icon-text-button" onClick={close}><ArrowLeft size={18} /> Close</button>
         <div>
           <span className={`save-state ${saveState}`}>{saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved to Drafts" : saveState === "error" ? "Save failed" : "Unsaved"}</span>
+          <button type="button" className="secondary-button" onClick={() => void saveManually()} disabled={sending || saveState === "saving"}><Save size={17} /> {saveState === "saving" ? "Saving…" : "Save draft"}</button>
           <button className="primary-button" disabled={sending}><Send size={17} /> {sending ? "Sending…" : "Send"}</button>
         </div>
       </header>
@@ -167,6 +220,7 @@ export function ComposePage({ draftId: routeDraftId }: { draftId?: string }) {
         {attachments.length > 0 && <div className="compose-attachments">{attachments.map((file, index) => <span key={`${file.name}-${file.lastModified}`}><Paperclip size={15} /><b>{file.name}</b><small>{formatSize(file.size)}</small><button type="button" aria-label={`Remove ${file.name}`} onClick={() => setAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))}><X size={14} /></button></span>)}</div>}
         <div className="compose-action-toolbar" role="toolbar" aria-label="Compose actions">
           <button className="primary-button" disabled={sending}><Send size={17} /> {sending ? "Sending…" : "Send"}</button>
+          <button type="button" className="secondary-button" onClick={() => void saveManually()} disabled={sending || saveState === "saving"}><Save size={17} /> {saveState === "saving" ? "Saving…" : "Save draft"}</button>
           <button type="button" className="secondary-button" onClick={() => attachInput.current?.click()}><Paperclip size={17} /> Attach files</button>
           <button type="button" className="secondary-button" onClick={() => pictureInput.current?.click()}><ImageIcon size={17} /> Add pictures</button>
           <button type="button" className="discard-button" onClick={() => void discard()}><Trash2 size={17} /> Discard</button>
@@ -180,6 +234,17 @@ export function ComposePage({ draftId: routeDraftId }: { draftId?: string }) {
       </div>
     </form>
   );
+}
+
+function draftFingerprint(input: DraftInput, attachments: File[]): string {
+  return JSON.stringify({
+    to: input.to,
+    cc: input.cc ?? "",
+    subject: input.subject,
+    body: input.body,
+    htmlBody: input.htmlBody ?? "",
+    attachments: attachments.map((file) => [file.name, file.size, file.lastModified]),
+  });
 }
 
 function formatSize(bytes: number): string { return bytes < 1024 ** 2 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`; }

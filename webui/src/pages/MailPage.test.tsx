@@ -173,4 +173,34 @@ describe("mail list", () => {
       update: { "mail-1": { "mailboxIds/projects": true } },
     })));
   });
+
+  it("opens a draft in the composer and other mail in the reader", async () => {
+    const request = vi.fn().mockResolvedValue({
+      methodResponses: [
+        ["Email/query", { ids: ["draft-1", "mail-2"], total: 2, queryState: "q" }, "query"],
+        ["Email/get", { list: [
+          { id: "draft-1", mailboxIds: { drafts: true }, keywords: { $draft: true, $seen: true }, receivedAt: "2026-08-20T12:00:00Z", from: [{ name: "Ada" }], subject: "Draft note", preview: "Unsent" },
+          { id: "mail-2", mailboxIds: { inbox: true }, keywords: { $seen: true }, receivedAt: "2026-08-20T11:00:00Z", from: [{ name: "Bob" }], subject: "Inbox note", preview: "Hello" },
+        ] }, "get"],
+      ],
+    });
+    mockedUseApp.mockReturnValue({
+      client: { mailAccountId: "account", request, call: vi.fn() } as unknown as JmapClient,
+      mailboxes: [
+        { id: "inbox", name: "Inbox", role: "inbox" },
+        { id: "drafts", name: "Drafts", role: "drafts" },
+      ],
+      notify: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined),
+      syncVersion: 0,
+    } as unknown as ReturnType<typeof useApp>);
+
+    render(<Router><MailPage /></Router>);
+    expect(await screen.findByText("Draft note")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Draft note"));
+    expect(window.location.pathname).toBe("/mail/compose/draft-1");
+    fireEvent.click(screen.getByText("Inbox note"));
+    expect(window.location.pathname).toBe("/mail/message/mail-2");
+    window.history.replaceState(null, "", "/");
+  });
 });

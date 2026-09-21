@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildMimeMessage, composeDraftBody, composeDraftHtml, forwardedMessage, forwardSubject, identitySignatureHtml, identitySignatureText, patchEmails, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, updateIdentitySignatures } from "./mail";
+import { buildMimeMessage, composeDraftBody, composeDraftHtml, forwardedMessage, forwardSubject, identitySignatureHtml, identitySignatureText, isDraftEmail, patchEmails, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, updateIdentitySignatures } from "./mail";
 import type { JmapClient } from "./client";
 import type { Email } from "../types";
 
@@ -61,6 +61,14 @@ describe("sendDraft", () => {
         "keywords/$seen": true,
       },
     });
+  });
+});
+
+describe("isDraftEmail", () => {
+  it("recognizes the draft keyword and the drafts mailbox", () => {
+    expect(isDraftEmail({ keywords: { $draft: true }, mailboxIds: { inbox: true } })).toBe(true);
+    expect(isDraftEmail({ keywords: {}, mailboxIds: { drafts: true } }, "drafts")).toBe(true);
+    expect(isDraftEmail({ keywords: { $seen: true }, mailboxIds: { inbox: true } }, "drafts")).toBe(false);
   });
 });
 

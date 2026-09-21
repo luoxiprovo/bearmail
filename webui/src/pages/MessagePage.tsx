@@ -3,7 +3,7 @@ import { ArrowLeft, Ban, Download, FileArchive, Forward, Image as ImageIcon, Inb
 import { useApp } from "../app-context";
 import { FolderPicker } from "../components/FolderPicker";
 import { sanitizeEmailHtml } from "../emailHtml";
-import { downloadableAttachments, downloadEmailPart, findCalendarInvitationPart, getEmail, patchEmail, saveBlob, userFolders } from "../jmap/mail";
+import { downloadableAttachments, downloadEmailPart, findCalendarInvitationPart, getEmail, isDraftEmail, patchEmail, saveBlob, userFolders } from "../jmap/mail";
 import { emailIsInMailbox, markAsSpamAndBlockSender, markEmailAsNotSpam, markEmailAsSpam, senderAddress } from "../jmap/spam";
 import type { Email, EmailBodyPart } from "../types";
 import { InvitationCard } from "../components/InvitationCard";
@@ -16,20 +16,34 @@ export function MessagePage({ emailId }: { emailId: string }) {
   const [email, setEmail] = useState<Email | null>(null);
   const [loading, setLoading] = useState(true);
   const [allowImages, setAllowImages] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
   const [zipping, setZipping] = useState(false);
   const folders = useMemo(() => userFolders(mailboxes), [mailboxes]);
+  const draftsMailboxId = mailboxes.find((box) => box.role === "drafts")?.id;
 
   useEffect(() => {
     if (!client || !emailId) return;
+    let cancelled = false;
+    let redirected = false;
     setLoading(true);
     getEmail(client, emailId).then((message) => {
+      if (cancelled) return;
+      if (isDraftEmail(message, draftsMailboxId)) {
+        redirected = true;
+        setRedirecting(true);
+        navigate(`/mail/compose/${encodeURIComponent(message.id)}`, { replace: true });
+        return;
+      }
       setEmail(message);
       if (!message.keywords?.["$seen"]) void patchEmail(client, message.id, { "keywords/$seen": true });
-    }).catch((error) => notify(error instanceof Error ? error.message : "Message could not be loaded.", "error")).finally(() => setLoading(false));
-  }, [client, emailId, notify]);
+    }).catch((error) => {
+      if (!cancelled) notify(error instanceof Error ? error.message : "Message could not be loaded.", "error");
+    }).finally(() => { if (!cancelled && !redirected) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [client, draftsMailboxId, emailId, navigate, notify]);
 
   const body = useMemo(() => getBody(email, allowImages), [email, allowImages]);
-  if (loading) return <div className="page-loading"><LoaderCircle className="spin" /> Loading message…</div>;
+  if (loading || redirecting) return <div className="page-loading"><LoaderCircle className="spin" /> Loading message…</div>;
   if (!email) return <div className="empty-state"><h2>Message unavailable</h2><button onClick={() => navigate("/mail")}>Back to mail</button></div>;
   const calendarAttachment = findCalendarInvitationPart(email);
   const trash = mailboxes.find((box) => box.role === "trash");

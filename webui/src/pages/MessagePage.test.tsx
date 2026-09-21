@@ -66,4 +66,35 @@ describe("message attachments", () => {
     await waitFor(() => expect(createObjectURL).toHaveBeenCalled());
     expect(click).toHaveBeenCalled();
   });
+
+  it("sends a draft to the composer instead of the read-only message view", async () => {
+    const call = vi.fn().mockResolvedValue({
+      list: [{
+        id: "draft-1",
+        mailboxIds: { drafts: true },
+        keywords: { $draft: true },
+        receivedAt: "2026-08-20T12:00:00Z",
+        from: [{ name: "Ada", email: "ada@example.test" }],
+        to: [{ email: "bob@example.test" }],
+        subject: "Draft note",
+        preview: "Unsent",
+        textBody: [{ partId: "text" }],
+        bodyValues: { text: { value: "Unsent" } },
+      }],
+    });
+    mockedUseApp.mockReturnValue({
+      client: { mailAccountId: "account", call } as unknown as JmapClient,
+      mailboxes: [
+        { id: "drafts", name: "Drafts", role: "drafts" },
+        { id: "inbox", name: "Inbox", role: "inbox" },
+      ],
+      notify: vi.fn(),
+    } as unknown as ReturnType<typeof useApp>);
+
+    render(<Router><MessagePage emailId="draft-1" /></Router>);
+    await waitFor(() => expect(window.location.pathname).toBe("/mail/compose/draft-1"));
+    expect(screen.queryByRole("button", { name: "Reply" })).not.toBeInTheDocument();
+    expect(call).not.toHaveBeenCalledWith(expect.anything(), "Email/set", expect.anything());
+    window.history.replaceState(null, "", "/");
+  });
 });

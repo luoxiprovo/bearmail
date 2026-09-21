@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { Archive, Ban, CalendarDays, ChevronRight, Folder, FolderPlus, Inbox, LoaderCircle, Mail, MailOpen, OctagonAlert, Paperclip, Search, Star, Trash2 } from "lucide-react";
 import { useApp } from "../app-context";
 import { FolderPicker } from "../components/FolderPicker";
-import { createMailbox, findCalendarInvitationPart, getEmails, patchEmail, patchEmails, userFolders } from "../jmap/mail";
+import { createMailbox, findCalendarInvitationPart, getEmails, isDraftEmail, patchEmail, patchEmails, userFolders } from "../jmap/mail";
 import { blockSender, emailIsInMailbox, markEmailAsNotSpam, markEmailAsSpam, senderAddress } from "../jmap/spam";
 import type { Email, Mailbox } from "../types";
 import { useNavigate } from "../router";
@@ -122,6 +122,11 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
     }
   };
 
+  const draftsMailboxId = mailboxes.find((box) => box.role === "drafts")?.id;
+  const openEmail = (email: Email) => {
+    if (isDraftEmail(email, draftsMailboxId)) navigate(`/mail/compose/${encodeURIComponent(email.id)}`);
+    else navigate(`/mail/message/${email.id}`);
+  };
   const archive = mailboxes.find((box) => box.role === "archive");
   const trash = mailboxes.find((box) => box.role === "trash");
   const junk = mailboxes.find((box) => box.role === "junk");
@@ -252,7 +257,7 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
             const unread = !email.keywords?.["$seen"];
             const invited = Boolean(findCalendarInvitationPart(email));
             return (
-              <article key={email.id} role="listitem" tabIndex={0} className={`email-row ${unread ? "unread" : ""} ${selected.has(email.id) ? "selected" : ""}`} onClick={() => navigate(`/mail/message/${email.id}`)} onKeyDown={(event) => { if (event.key === "Enter") navigate(`/mail/message/${email.id}`); }}>
+              <article key={email.id} role="listitem" tabIndex={0} className={`email-row ${unread ? "unread" : ""} ${selected.has(email.id) ? "selected" : ""}`} onClick={() => openEmail(email)} onKeyDown={(event) => { if (event.key === "Enter") openEmail(email); }}>
                 <input type="checkbox" checked={selected.has(email.id)} aria-label={`Select ${email.subject || "message"}`} onClick={(event) => event.stopPropagation()} onChange={() => toggleSelected(email.id)} />
                 <button className={`star-button ${email.keywords?.["$flagged"] ? "selected" : ""}`} aria-label={email.keywords?.["$flagged"] ? "Unstar" : "Star"} onClick={(event) => { event.stopPropagation(); void action(email, { "keywords/$flagged": email.keywords?.["$flagged"] ? null : true }, "Star updated"); }}><Star size={17} /></button>
                 <div className="email-main"><div className="email-line"><strong>{formatSender(email)}</strong><time>{formatMailDate(email.receivedAt)}</time></div><div className="email-subject">{email.subject || "(no subject)"}</div><p>{email.preview || "No preview available"}</p></div>
