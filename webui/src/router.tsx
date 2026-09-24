@@ -18,7 +18,7 @@ export function Router({ children }: { children: ReactNode }) {
     if (options?.replace) history.replaceState(options.state ?? null, "", to);
     else history.pushState(options?.state ?? null, "", to);
     setLocation({ path: window.location.pathname, state: history.state });
-    window.scrollTo({ top: 0, behavior: "instant" });
+    try { window.scrollTo({ top: 0, behavior: "auto" }); } catch { window.scrollTo(0, 0); }
   }, []);
   const value = useMemo(() => ({ ...location, navigate }), [location, navigate]);
   return <RouterContext.Provider value={value}>{children}</RouterContext.Provider>;

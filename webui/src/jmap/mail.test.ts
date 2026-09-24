@@ -1,7 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildMimeMessage, composeDraftBody, composeDraftHtml, forwardedMessage, forwardSubject, identitySignatureHtml, identitySignatureText, isDraftEmail, patchEmails, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, updateIdentitySignatures } from "./mail";
+import { buildMimeMessage, composeDraftBody, composeDraftHtml, forwardedMessage, forwardSubject, identitySignatureHtml, identitySignatureText, isDraftEmail, listedMailboxes, patchEmails, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, updateIdentitySignatures } from "./mail";
 import type { JmapClient } from "./client";
 import type { Email } from "../types";
+
+describe("mailbox list order", () => {
+  it("keeps Inbox first so a narrow screen does not scroll it away", () => {
+    const ordered = listedMailboxes([
+      { id: "archive", name: "Archive", role: "archive", sortOrder: 0 },
+      { id: "projects", name: "Projects", sortOrder: 1 },
+      { id: "inbox", name: "Inbox", role: "inbox", sortOrder: 20 },
+      { id: "drafts", name: "Drafts", role: "drafts", sortOrder: 3 },
+    ]);
+    expect(ordered.map((box) => box.name)).toEqual(["Inbox", "Drafts", "Archive", "Projects"]);
+  });
+});
 
 describe("MIME draft builder", () => {
   it("removes injected header lines and preserves Unicode", async () => {

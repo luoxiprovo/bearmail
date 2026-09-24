@@ -91,12 +91,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const applySession = useCallback(async (nextClient: JmapClient, origin: string, name: string) => {
     if (!nextClient.has(CAPABILITIES.mail)) throw new JmapError("This account does not advertise JMAP Mail.", "missingCapability");
+    await refreshClient(nextClient);
     setClient(nextClient);
     setServerOrigin(origin);
     setUsername(name);
     sessionStorage.setItem("stalwart.server", origin);
     sessionStorage.setItem("stalwart.username", name);
-    await refreshClient(nextClient);
   }, [refreshClient]);
 
   const refresh = useCallback(async () => {
@@ -180,10 +180,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         const failedAuth = error instanceof JmapError && (error.type === "authenticationFailed" || error.type.startsWith("oauth"));
         if (failedAuth) clearStoredAuth();
+        const message = error instanceof Error ? error.message : "Could not restore the saved session.";
         if (window.location.pathname === "/login") {
-          setOauthError(error instanceof Error ? error.message : "OAuth sign-in failed.");
+          setOauthError(message);
           history.replaceState(null, "", "/connect");
           window.dispatchEvent(new PopStateEvent("popstate"));
+        } else if (!failedAuth && loadStoredAuth()) {
+          setOauthError(message);
         }
       } finally {
         if (!cancelled) setSessionReady(true);

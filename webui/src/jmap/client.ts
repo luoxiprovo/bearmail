@@ -32,10 +32,50 @@ export class JmapError extends Error {
   }
 }
 
+const JMAP_TIMEOUT_MS = 60_000;
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
+}
+
+function isAbortError(error: unknown): boolean {
+  return (error instanceof DOMException || error instanceof Error) && error.name === "AbortError";
+}
+
 function ensureHttpUrl(value: string, name: string): void {
   const url = new URL(value);
-  const isLocal = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname);
+  const isLocal = isLoopbackHost(url.hostname);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocal)) throw new Error(`The server returned an insecure ${name} URL.`);
+}
+
+// Servers often advertise 127.0.0.1 in the session document. A phone that
+// reached the server through another host would otherwise call itself and
+// sit on the message spinner until the connection timed out inside WebKit.
+export function retargetSession(session: JmapSession, origin: string): JmapSession {
+  const target = new URL(origin);
+  const rewrite = (value: string): string => {
+    const url = new URL(value);
+    if (!isLoopbackHost(url.hostname)) return value;
+    const replacement = url.protocol === "ws:" || url.protocol === "wss:"
+      ? `${target.protocol === "https:" ? "wss:" : "ws:"}//${target.host}`
+      : target.origin;
+    if (url.origin === replacement || !value.startsWith(url.origin)) return value;
+    return replacement + value.slice(url.origin.length);
+  };
+  const websocketKey = "urn:ietf:params:jmap:websocket";
+  const websocket = session.capabilities[websocketKey];
+  const capabilities = websocket && typeof websocket === "object" && typeof (websocket as { url?: unknown }).url === "string"
+    ? { ...session.capabilities, [websocketKey]: { ...(websocket as Record<string, unknown>), url: rewrite((websocket as { url: string }).url) } }
+    : session.capabilities;
+  return {
+    ...session,
+    capabilities,
+    apiUrl: rewrite(session.apiUrl),
+    uploadUrl: rewrite(session.uploadUrl),
+    downloadUrl: rewrite(session.downloadUrl),
+    eventSourceUrl: session.eventSourceUrl ? rewrite(session.eventSourceUrl) : session.eventSourceUrl,
+  };
 }
 
 export async function discoverSession(serverInput: string, auth: AuthProvider): Promise<{ origin: string; session: JmapSession }> {
@@ -52,7 +92,7 @@ export async function discoverSession(serverInput: string, auth: AuthProvider): 
   if (response.status === 401 || response.status === 403) throw new JmapError("The server rejected those credentials.", "authenticationFailed");
   if (!response.ok) throw new JmapError(`JMAP discovery failed (${response.status}).`, "discoveryFailed");
 
-  const session = await response.json() as JmapSession;
+  const session = retargetSession(await response.json() as JmapSession, origin);
   if (!session.apiUrl || !session.accounts || !session.primaryAccounts) {
     throw new JmapError("The server returned an incomplete JMAP session.", "invalidSession");
   }
@@ -93,19 +133,35 @@ export class JmapClient {
   }
 
   async request(using: string[], methodCalls: JmapMethodCall[], signal?: AbortSignal): Promise<JmapResponse> {
-    const response = await fetch(this.session.apiUrl, {
-      method: "POST",
-      headers: {
-        Authorization: this.auth.header(),
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({ using: [...new Set([CAPABILITIES.core, ...using])], methodCalls }),
-      signal,
-    });
-    if (response.status === 401) throw new JmapError("Your session has expired.", "authenticationFailed");
-    if (!response.ok) throw new JmapError(`The server request failed (${response.status}).`, "httpError");
-    return await response.json() as JmapResponse;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), JMAP_TIMEOUT_MS);
+    const onCallerAbort = () => controller.abort();
+    signal?.addEventListener("abort", onCallerAbort);
+    try {
+      const response = await fetch(this.session.apiUrl, {
+        method: "POST",
+        headers: {
+          Authorization: this.auth.header(),
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ using: [...new Set([CAPABILITIES.core, ...using])], methodCalls }),
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      if (response.status === 401) throw new JmapError("Your session has expired.", "authenticationFailed");
+      if (!response.ok) throw new JmapError(`The server request failed (${response.status}).`, "httpError");
+      return await response.json() as JmapResponse;
+    } catch (error) {
+      if (isAbortError(error)) {
+        if (signal?.aborted) throw error;
+        throw new JmapError("The server took too long to respond.", "timeout");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onCallerAbort);
+    }
   }
 
   async call<T>(

@@ -133,7 +133,7 @@ describe("mail list", () => {
       expect.arrayContaining([
         ["Email/query", expect.objectContaining({ filter: { hasKeyword: "$flagged" } }), "query"],
       ]),
-      expect.anything(),
+      undefined,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /New folder/ }));
@@ -202,5 +202,72 @@ describe("mail list", () => {
     fireEvent.click(screen.getByText("Inbox note"));
     expect(window.location.pathname).toBe("/mail/message/mail-2");
     window.history.replaceState(null, "", "/");
+  });
+
+  it("stops spinning when the account has no mailbox to query", async () => {
+    const request = vi.fn();
+    mockedUseApp.mockReturnValue({
+      client: { mailAccountId: "account", request, call: vi.fn() } as unknown as JmapClient,
+      mailboxes: [],
+      notify: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined),
+      syncVersion: 0,
+    } as unknown as ReturnType<typeof useApp>);
+
+    render(<Router><MailPage /></Router>);
+    expect(await screen.findByRole("heading", { name: "Nothing here" })).toBeInTheDocument();
+    expect(screen.queryByText(/Loading messages/)).not.toBeInTheDocument();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("shows the newest page when a refresh overlaps the first load", async () => {
+    let resolveFirst: (value: unknown) => void = () => undefined;
+    const first = new Promise((resolve) => { resolveFirst = resolve; });
+    const page = (id: string, subject: string) => ({
+      methodResponses: [
+        ["Email/query", { ids: [id], total: 1, queryState: "q" }, "query"],
+        ["Email/get", { list: [
+          { id, mailboxIds: { inbox: true }, keywords: { $seen: true }, receivedAt: "2026-08-20T12:00:00Z", from: [{ name: "Bob" }], subject, preview: "Hello" },
+        ] }, "get"],
+      ],
+    });
+    const request = vi.fn().mockReturnValueOnce(first).mockResolvedValueOnce(page("mail-2", "Fresh note"));
+    const app = (syncVersion: number) => ({
+      client: { mailAccountId: "account", request, call: vi.fn() } as unknown as JmapClient,
+      mailboxes: [{ id: "inbox", name: "Inbox", role: "inbox" as const }],
+      notify: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined),
+      syncVersion,
+    });
+    mockedUseApp.mockReturnValue(app(0) as unknown as ReturnType<typeof useApp>);
+    const view = render(<Router><MailPage /></Router>);
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+
+    mockedUseApp.mockReturnValue(app(1) as unknown as ReturnType<typeof useApp>);
+    view.rerender(<Router><MailPage /></Router>);
+    expect(await screen.findByText("Fresh note")).toBeInTheDocument();
+    expect(screen.queryByText(/Loading messages/)).not.toBeInTheDocument();
+
+    resolveFirst(page("mail-1", "Stale note"));
+    await waitFor(() => expect(screen.queryByText("Stale note")).not.toBeInTheDocument());
+    expect(screen.getByText("Fresh note")).toBeInTheDocument();
+  });
+
+  it("shows a retry when the message query fails", async () => {
+    const request = vi.fn().mockRejectedValue(new Error("Load failed"));
+    const notify = vi.fn();
+    mockedUseApp.mockReturnValue({
+      client: { mailAccountId: "account", request, call: vi.fn() } as unknown as JmapClient,
+      mailboxes: [{ id: "inbox", name: "Inbox", role: "inbox" }],
+      notify,
+      refresh: vi.fn().mockResolvedValue(undefined),
+      syncVersion: 0,
+    } as unknown as ReturnType<typeof useApp>);
+
+    render(<Router><MailPage /></Router>);
+    expect(await screen.findByRole("heading", { name: "Mail could not be loaded" })).toBeInTheDocument();
+    expect(screen.getByText("Load failed")).toBeInTheDocument();
+    expect(screen.queryByText(/Loading messages/)).not.toBeInTheDocument();
+    expect(notify).toHaveBeenCalledWith("Load failed", "error");
   });
 });

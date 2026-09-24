@@ -435,16 +435,18 @@
     .connect-form-wrap { padding: 38px 24px; }
     .app-shell { display: block; }
     .sidebar { display: none; }
-    .workspace { min-height: calc(100vh - 64px); padding-bottom: 64px; }
-    .mobile-nav { position: fixed; inset: auto 0 0; z-index: 60; display: grid; height: 64px; grid-template-columns: repeat(auto-fit, minmax(56px, 1fr)); border-top: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(15px); }
+    .workspace { max-width: 100%; min-height: calc(100vh - 64px); min-height: calc(100dvh - 64px - env(safe-area-inset-bottom)); padding-top: env(safe-area-inset-top); padding-bottom: calc(64px + env(safe-area-inset-bottom)); overflow-x: clip; }
+    .mobile-nav { position: fixed; inset: auto 0 0; z-index: 60; display: grid; height: calc(64px + env(safe-area-inset-bottom)); grid-template-columns: repeat(auto-fit, minmax(56px, 1fr)); align-content: start; border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); background: var(--paper); }
     .mobile-nav a { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 2px; color: var(--muted); font-size: 9px; }
     .mobile-nav a.active { color: var(--teal); }
     .mobile-nav .mobile-compose { color: var(--coral); }
-    .mail-layout, .calendar-layout { display: block; }
-    .mailbox-panel { overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+    .mail-layout, .calendar-layout { display: flex; flex-direction: column; max-width: 100%; min-height: calc(100vh - 64px); min-height: calc(100dvh - 64px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+    .mailbox-panel { flex: none; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; touch-action: pan-x; border-right: 0; border-bottom: 1px solid var(--line); }
     .mailbox-panel .panel-heading { display: none; }
-    .mailbox-list { display: flex; min-width: max-content; gap: 5px; padding: 9px 13px; }
-    .mailbox-list button { min-height: 31px; }
+    .mailbox-list { display: flex; width: max-content; min-width: 100%; gap: 5px; padding: 9px 13px; }
+    .mailbox-list button { flex: 0 0 auto; min-height: 36px; }
+    .mailbox-list button span { overflow: visible; white-space: nowrap; text-overflow: unset; }
+    .message-list-panel { flex: 1 1 auto; min-width: 0; min-height: 0; max-width: 100%; overflow-x: hidden; overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
     .mailbox-create { min-width: 210px; padding-top: 4px; }
     .page-header, .calendar-header { min-height: auto; padding: 18px; }
     .page-header h1, .calendar-header h1 { font-size: 24px; }
@@ -468,7 +470,8 @@
     .richtext-editor { min-height: 200px; }
     .compose-action-toolbar { gap: 6px; }
     .compose-action-toolbar .discard-button { margin-left: auto; }
-    .calendar-sidebar { overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px 12px; }
+    .calendar-sidebar { flex: none; max-width: 100%; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px 12px; }
+    .calendar-main { min-width: 0; max-width: 100%; }
     .calendar-sidebar .new-event, .calendar-sidebar .invite-legend { display: none; }
     .calendar-list { display: flex; min-width: max-content; gap: 14px; margin: 0; border: 0; }
     .calendar-list .panel-heading { display: none; }

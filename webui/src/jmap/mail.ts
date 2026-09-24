@@ -24,6 +24,13 @@ export async function getMailboxes(client: JmapClient): Promise<Mailbox[]> {
 
 export interface EmailPage { emails: Email[]; total: number; queryState: string }
 
+const MAILBOX_RANK: Record<string, number> = { inbox: 0, drafts: 1, sent: 2, archive: 3, junk: 4, trash: 5 };
+
+export function listedMailboxes(mailboxes: Mailbox[]): Mailbox[] {
+  const rank = (box: Mailbox) => (box.role ? MAILBOX_RANK[box.role] ?? 40 : 80);
+  return [...mailboxes].sort((a, b) => rank(a) - rank(b) || (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name));
+}
+
 export function userFolders(mailboxes: Mailbox[]): Mailbox[] {
   return mailboxes.filter((box) => !box.role && box.myRights?.mayAddItems !== false);
 }

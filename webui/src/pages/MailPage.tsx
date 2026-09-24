@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Archive, Ban, CalendarDays, ChevronRight, Folder, FolderPlus, Inbox, LoaderCircle, Mail, MailOpen, OctagonAlert, Paperclip, Search, Star, Trash2 } from "lucide-react";
 import { useApp } from "../app-context";
 import { FolderPicker } from "../components/FolderPicker";
-import { createMailbox, findCalendarInvitationPart, getEmails, isDraftEmail, patchEmail, patchEmails, userFolders } from "../jmap/mail";
+import { createMailbox, findCalendarInvitationPart, getEmails, isDraftEmail, listedMailboxes, patchEmail, patchEmails, userFolders } from "../jmap/mail";
 import { blockSender, emailIsInMailbox, markEmailAsNotSpam, markEmailAsSpam, senderAddress } from "../jmap/spam";
 import type { Email, Mailbox } from "../types";
 import { useNavigate } from "../router";
@@ -11,6 +11,7 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
   const { client, mailboxes, notify, refresh, syncVersion } = useApp();
   const navigate = useNavigate();
   const folders = useMemo(() => userFolders(mailboxes), [mailboxes]);
+  const mailboxList = useMemo(() => listedMailboxes(mailboxes), [mailboxes]);
   const activeMailbox = useMemo(
     () => starred ? undefined : mailboxes.find((box) => box.id === mailboxId) ?? mailboxes.find((box) => box.role === "inbox") ?? mailboxes[0],
     [mailboxId, mailboxes, starred],
@@ -20,7 +21,9 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const loadId = useRef(0);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [folderName, setFolderName] = useState("");
   const [savingFolder, setSavingFolder] = useState(false);
@@ -30,28 +33,35 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
     return () => window.clearTimeout(timer);
   }, [query]);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    if (!client || (!activeMailbox && !starred && !search)) return;
+  const load = useCallback(async () => {
+    const request = ++loadId.current;
+    if (!client || (!activeMailbox && !starred && !search)) {
+      setEmails([]);
+      setTotal(0);
+      setLoadError("");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
+    setLoadError("");
     try {
       const page = await getEmails(client, {
         mailboxId: search || starred ? undefined : activeMailbox?.id,
         hasKeyword: search || !starred ? undefined : "$flagged",
         text: search || undefined,
-        signal,
       });
+      if (request !== loadId.current) return;
       setEmails(page.emails); setTotal(page.total);
       setSelected((current) => new Set([...current].filter((id) => page.emails.some((email) => email.id === id))));
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError")) notify(error instanceof Error ? error.message : "Mail could not be loaded.", "error");
-    } finally { setLoading(false); }
+      if (request !== loadId.current) return;
+      const message = error instanceof Error ? error.message : "Mail could not be loaded.";
+      setLoadError(message);
+      notify(message, "error");
+    } finally { if (request === loadId.current) setLoading(false); }
   }, [activeMailbox, client, notify, search, starred, syncVersion]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   useEffect(() => { setSelected(new Set()); }, [activeMailbox?.id, search, starred]);
 
@@ -214,7 +224,7 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
         <div className="panel-heading"><span>Mailboxes</span><small>{mailboxes.reduce((sum, box) => sum + (box.unreadEmails ?? 0), 0)} unread</small></div>
         <div className="mailbox-list">
           <button className={`starred-link ${starred && !search ? "active" : ""}`} onClick={() => navigate("/mail/starred")}><span><Star size={16} />Starred</span></button>
-          {mailboxes.map((box) => <MailboxLink key={box.id} box={box} active={box.id === activeMailbox?.id && !search && !starred} onClick={() => navigate(`/mail/${box.id}`)} />)}
+          {mailboxList.map((box) => <MailboxLink key={box.id} box={box} active={box.id === activeMailbox?.id && !search && !starred} onClick={() => navigate(`/mail/${box.id}`)} />)}
           {creatingFolder ? (
             <form className="mailbox-create" onSubmit={(event) => void submitFolder(event)}>
               <input autoFocus aria-label="New folder name" placeholder="Folder name" value={folderName} onChange={(event) => setFolderName(event.target.value)} disabled={savingFolder} />
@@ -250,7 +260,9 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
             <button type="button" className="text-button" onClick={() => setSelected(new Set())}>Clear</button>
           </div>
         )}
-        {loading ? <div className="empty-state"><LoaderCircle className="spin" /><p>Loading messages…</p></div> : emails.length === 0 ? (
+        {loading ? <div className="empty-state"><LoaderCircle className="spin" /><p>Loading messages…</p></div> : loadError ? (
+          <div className="empty-state"><OctagonAlert size={38} /><h2>Mail could not be loaded</h2><p>{loadError}</p><button onClick={() => void load()}>Try again</button></div>
+        ) : emails.length === 0 ? (
           <div className="empty-state"><MailOpen size={38} /><h2>Nothing here</h2><p>{search ? "Try a broader search." : starred ? "Star messages to find them here." : "This mailbox is comfortably empty."}</p></div>
         ) : <div className="email-list" role="list">
           {emails.map((email) => {
@@ -294,8 +306,13 @@ function formatSender(email: Email): string {
 
 function formatMailDate(value: string): string {
   const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
   const now = new Date();
-  if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString([], { month: "short", day: "numeric" });
-  return date.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
+  try {
+    if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  } catch {
+    return date.toDateString();
+  }
 }
