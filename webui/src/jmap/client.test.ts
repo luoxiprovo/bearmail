@@ -38,6 +38,35 @@ describe("JMAP session URLs", () => {
     expect(retargeted.apiUrl).toBe("https://mail.example.test/jmap/");
   });
 
+  it("requests the session resource directly and keeps the Authorization header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      url: "https://mail.example.test/jmap/session",
+      json: async () => session("https://mail.example.test/jmap/"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await discoverSession("https://mail.example.test", { header: () => "Basic abc" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://mail.example.test/jmap/session");
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Basic abc");
+  });
+
+  it("uses well-known discovery only when the session URL is missing", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ status: 404, ok: false, url: "https://mail.example.test/jmap/session" })
+      .mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        url: "https://mail.example.test/.well-known/jmap",
+        json: async () => session("https://mail.example.test/jmap/"),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const discovered = await discoverSession("https://mail.example.test", { header: () => "Basic abc" });
+    expect(fetchMock.mock.calls[1][0]).toBe("https://mail.example.test/.well-known/jmap");
+    expect(discovered.session.accounts).toHaveProperty("a");
+  });
+
   it("rewrites loopback URLs returned by discovery to the host the browser reached", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       status: 200,

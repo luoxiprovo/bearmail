@@ -84,8 +84,12 @@ export async function discoverSession(serverInput: string, auth: AuthProvider): 
     headers: { Authorization: auth.header(), Accept: "application/json" },
     cache: "no-store",
   };
-  let response = await fetch(`${origin}/.well-known/jmap`, options);
-  if (response.status === 404) response = await fetch(`${origin}/jmap/session`, options);
+  // WebKit drops Authorization while following the /.well-known/jmap redirect.
+  // The anonymous session that comes back has no accounts, which iPhone Chrome
+  // reports as "No account is available to this user." Ask for the session
+  // resource directly so the credential is on the request the server authenticates.
+  let response = await fetch(`${origin}/jmap/session`, options);
+  if (response.status === 404) response = await fetch(`${origin}/.well-known/jmap`, options);
   if (new URL(response.url).origin !== new URL(origin).origin) {
     throw new JmapError("JMAP discovery redirected to another origin. Enter that server address directly to confirm it.", "crossOriginRedirect");
   }
