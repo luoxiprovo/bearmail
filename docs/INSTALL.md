@@ -420,6 +420,11 @@ sudo systemctl is-enabled stalwart-caddy-cert-sync.timer
 sudo systemctl status --no-pager stalwart-caddy-cert-sync.timer
 ```
 
+The installer masks `exim4.service`, `postfix.service`, and `sendmail.service`.
+Debian starts Exim on package upgrade, and Stalwart's unit stops itself when
+that happens. `stalwart-mta-guard.timer` starts Stalwart again if a distro
+mail agent still wins. Masking Exim stops local submission on `127.0.0.1:25`.
+
 Each command should print `active` or `enabled`. If `curl` is installed, check
 the local readiness endpoints:
 

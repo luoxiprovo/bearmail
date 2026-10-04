@@ -12,6 +12,8 @@ CADDY_MANAGED_MARKER="# STALWART_INSTALLER_MANAGED_CADDYFILE=1"
 CADDY_CERT_SYNC_SCRIPT="/usr/local/libexec/stalwart-caddy-cert-sync"
 CADDY_CERT_SYNC_SERVICE="/etc/systemd/system/stalwart-caddy-cert-sync.service"
 CADDY_CERT_SYNC_TIMER="/etc/systemd/system/stalwart-caddy-cert-sync.timer"
+STALWART_MTA_GUARD_SERVICE="/etc/systemd/system/stalwart-mta-guard.service"
+STALWART_MTA_GUARD_TIMER="/etc/systemd/system/stalwart-mta-guard.timer"
 
 purge="false"
 assume_yes="false"
@@ -351,6 +353,8 @@ delete_account() {
 }
 
 command -v systemctl >/dev/null 2>&1 || err "systemd is required to remove these services."
+stop_and_disable "stalwart-mta-guard.timer"
+stop_and_disable "stalwart-mta-guard.service"
 stop_and_disable "stalwart-caddy-cert-sync.timer"
 stop_and_disable "stalwart-caddy-cert-sync.service"
 stop_and_disable "stalwart-webui.service"
@@ -363,12 +367,17 @@ remove_file "$WEBUI_UNIT_FILE" "WebUI systemd unit"
 remove_file "$STALWART_UNIT_FILE" "Stalwart systemd unit"
 remove_file "$CADDY_CERT_SYNC_TIMER" "Caddy certificate synchronization timer"
 remove_file "$CADDY_CERT_SYNC_SERVICE" "Caddy certificate synchronization service"
+remove_file "$STALWART_MTA_GUARD_TIMER" "Stalwart MTA guard timer"
+remove_file "$STALWART_MTA_GUARD_SERVICE" "Stalwart MTA guard service"
 remove_file "$CADDY_CERT_SYNC_SCRIPT" "Caddy certificate synchronization script"
 if [ "$managed_caddy" = "true" ]; then
     remove_file "$CADDY_CONFIG_FILE" "installer-managed Caddy configuration"
 fi
 remove_tree "${WEBUI_UNIT_FILE}.d" "WebUI systemd drop-ins"
 remove_tree "${STALWART_UNIT_FILE}.d" "Stalwart systemd drop-ins"
+for _unit in exim4.service postfix.service sendmail.service; do
+    systemctl unmask "$_unit" >/dev/null 2>&1 || true
+done
 systemctl daemon-reload
 systemctl reset-failed stalwart.service stalwart-webui.service \
     stalwart-caddy-cert-sync.service caddy.service >/dev/null 2>&1 || true

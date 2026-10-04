@@ -3,6 +3,7 @@
 
 # Replace the Stalwart binary, WebUI, and MCP sidecar on an already-installed
 # BearMail host. Does not change config, Caddy, DNS, CORS, SMTP relay, or mail.
+# Masks exim4, postfix, and sendmail so a package upgrade cannot stop Stalwart.
 #
 # Intended for:
 #   curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/upgrade.sh | sudo bash
@@ -41,6 +42,9 @@ Upgrades an already-installed BearMail host to the published Stalwart binary,
 WebUI, and MCP sidecar. Non-interactive. Does not change configuration,
 Caddy, DNS, CORS, SMTP relay, installer-state, or stored mail. Does not
 accept hostnames, passwords, or API tokens as flags.
+
+Also masks exim4, postfix, and sendmail, and enables stalwart-mta-guard.timer.
+A Debian package upgrade otherwise starts Exim, and systemd then stops Stalwart.
 
 One-liner:
 
@@ -97,6 +101,41 @@ cache_bust_url() {
             printf '%s\n' "$_url"
             ;;
     esac
+}
+
+suppress_distro_mtas() {
+    say "Masking distro mail agents that conflict with Stalwart..."
+    for _unit in exim4.service postfix.service sendmail.service; do
+        systemctl disable --now "$_unit" >/dev/null 2>&1 || true
+        systemctl mask "$_unit" >/dev/null 2>&1 || true
+    done
+    cat > /etc/systemd/system/stalwart-mta-guard.service <<'EOF'
+[Unit]
+Description=Ensure Stalwart is running
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'systemctl is-active --quiet stalwart.service || systemctl start stalwart.service'
+EOF
+    cat > /etc/systemd/system/stalwart-mta-guard.timer <<'EOF'
+[Unit]
+Description=Periodically ensure Stalwart is running
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=30s
+Persistent=true
+Unit=stalwart-mta-guard.service
+
+[Install]
+WantedBy=timers.target
+EOF
+    chmod 0644 /etc/systemd/system/stalwart-mta-guard.service \
+        /etc/systemd/system/stalwart-mta-guard.timer
+    systemctl daemon-reload
+    systemctl enable --now stalwart-mta-guard.timer
 }
 
 download_file() {
@@ -266,6 +305,8 @@ if [ "$dry_run" = "true" ]; then
     else
         say "  Then detect the live stalwart.service binary path and restart it"
     fi
+    say "  Mask exim4.service, postfix.service, and sendmail.service"
+    say "  Enable stalwart-mta-guard.timer"
     say "Does not run install.sh and does not change configuration or DNS."
     exit 0
 fi
@@ -361,6 +402,7 @@ grep -q 'mcp_src="$RETVAL"' "$mcp_sh" || \
 say "Replacing Stalwart binary at ${stalwart_binary}..."
 install_executable_atomically "$new_binary" "$stalwart_binary"
 chmod 0755 "$stalwart_binary"
+suppress_distro_mtas
 systemctl restart "$STALWART_UNIT"
 wait_ready "http://127.0.0.1:8080/healthz/ready" "Stalwart"
 

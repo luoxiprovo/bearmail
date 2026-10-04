@@ -2699,6 +2699,49 @@ install_executable_atomically() {
     fi
 }
 
+# The unit Conflicts= with exim4, postfix, and sendmail. Starting any of
+# those stops Stalwart, and Restart=on-failure does not undo a clean stop.
+# Debian starts Exim when its package is upgraded and on boot when the unit
+# is enabled. Mask the distro agents and keep a timer that starts Stalwart
+# again if one of them still wins.
+suppress_distro_mtas() {
+    local _unit
+    say "Masking distro mail agents that conflict with Stalwart..."
+    for _unit in exim4.service postfix.service sendmail.service; do
+        systemctl disable --now "$_unit" >/dev/null 2>&1 || true
+        systemctl mask "$_unit" >/dev/null 2>&1 || true
+    done
+
+    cat > /etc/systemd/system/stalwart-mta-guard.service <<'EOF'
+[Unit]
+Description=Ensure Stalwart is running
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'systemctl is-active --quiet stalwart.service || systemctl start stalwart.service'
+EOF
+    cat > /etc/systemd/system/stalwart-mta-guard.timer <<'EOF'
+[Unit]
+Description=Periodically ensure Stalwart is running
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=30s
+Persistent=true
+Unit=stalwart-mta-guard.service
+
+[Install]
+WantedBy=timers.target
+EOF
+    ensure chmod 0644 \
+        /etc/systemd/system/stalwart-mta-guard.service \
+        /etc/systemd/system/stalwart-mta-guard.timer
+    systemctl daemon-reload
+    ensure systemctl enable --now stalwart-mta-guard.timer
+}
+
 create_service_linux_systemd() {
     local _bin="$1" _config="$2" _env="$3" _user="$4"
     cat > /etc/systemd/system/stalwart.service <<EOF
@@ -2724,6 +2767,7 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 [Install]
 WantedBy=multi-user.target
 EOF
+    suppress_distro_mtas
     systemctl daemon-reload
     systemctl enable stalwart.service
     systemctl restart stalwart.service
