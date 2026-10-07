@@ -537,12 +537,16 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
         use store::write::BatchBuilder;
         use types::id::Id;
 
+        // Download rules only when an administrator has stored a URL. The
+        // compiled-in default is empty, so a new server does not follow
+        // stalwartlabs/spam-filter.
         if bp.registry.count_object(ObjectType::SpamRule).await? == 0
             && bp
                 .registry
                 .object::<SpamSettings>(Id::singleton())
                 .await?
-                .is_none_or(|spam| spam.spam_filter_rules_url.is_some())
+                .and_then(|spam| spam.spam_filter_rules_url)
+                .is_some()
         {
             let mut batch = BatchBuilder::new();
             batch.schedule_task(Task::SpamFilterMaintenance(TaskSpamFilterMaintenance {

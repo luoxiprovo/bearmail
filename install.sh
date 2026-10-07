@@ -1778,8 +1778,168 @@ EOF
     ensure chmod 0644 "$CADDY_CERT_SYNC_SERVICE" "$CADDY_CERT_SYNC_TIMER"
 }
 
+# DNSBL tag tests from the upstream spam-filter rules call bit_and(). The
+# published Stalwart binary parses settings on every reload and rejects that
+# name. Each current test checks one bit of response octet 3, which is 0..255.
+bit_and_rewrite_js() {
+    cat <<'EOF'
+function rewriteBitAndExpression(expr) {
+  // A DNS response octet is 0..255. One set bit in that range is a run of
+  // equalities, which this binary can already parse.
+  return expr.replace(
+    /bit_and\(\s*octets\[3\]\s*,\s*(1|2|4|8|16|32|64|128)\s*\)\s*!=\s*0/g,
+    function (_match, maskText) {
+      var mask = Number(maskText);
+      var parts = [];
+      var start;
+      for (start = mask; start < 256; start += mask * 2) {
+        var end = start + mask - 1;
+        parts.push("(octets[3] >= " + start + " && octets[3] <= " + end + ")");
+      }
+      return "(" + parts.join(" || ") + ")";
+    }
+  );
+}
+
+function collectBitAndPatches(value, path, patches, unresolved) {
+  if (typeof value === "string") {
+    var rewritten = rewriteBitAndExpression(value);
+    if (rewritten.indexOf("bit_and(") !== -1) unresolved.push(path);
+    else if (rewritten !== value) patches[path] = rewritten;
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach(function (item, index) {
+      collectBitAndPatches(item, path + "/" + index, patches, unresolved);
+    });
+    return;
+  }
+  if (value && typeof value === "object") {
+    Object.keys(value).forEach(function (key) {
+      collectBitAndPatches(value[key], path + "/" + key, patches, unresolved);
+    });
+  }
+}
+EOF
+}
+
+bit_and_tag_patch_js() {
+    cat <<'EOF'
+const fs = require("node:fs");
+const tag = JSON.parse(fs.readFileSync(0, "utf8"));
+const patches = {};
+const unresolved = [];
+collectBitAndPatches(tag, "tag", patches, unresolved);
+if (unresolved.length) {
+  console.error("Unsupported bit_and expression at " + unresolved.join(", "));
+  process.exit(3);
+}
+process.stdout.write(JSON.stringify(patches));
+EOF
+}
+
+bit_and_repair_js() {
+    cat <<'EOF'
+const fs = require("node:fs");
+const username = process.env.STALWART_ADMIN_USERNAME;
+const password = fs.readFileSync(0, "utf8");
+const authorization = "Basic " + Buffer.from(username + ":" + password).toString("base64");
+
+async function jmap(methodCalls) {
+  const response = await fetch("http://127.0.0.1:8080/jmap/", {
+    method: "POST",
+    headers: { Authorization: authorization, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      using: ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
+      methodCalls,
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const text = await response.text();
+  let body;
+  try { body = JSON.parse(text); } catch (error) {
+    throw new Error("Stalwart returned non-JSON (" + response.status + "): " + text.slice(0, 200));
+  }
+  if (!response.ok) {
+    const err = new Error("JMAP HTTP " + response.status + ": " + text.slice(0, 500));
+    if (response.status === 401 || response.status === 403) err.authFailed = true;
+    throw err;
+  }
+  for (const method of body.methodResponses || []) {
+    if (method[0] === "error") {
+      const err = new Error("JMAP error: " + JSON.stringify(method[1]));
+      if (/forbidden|unauthorized|authentication/i.test(String(method[1] && method[1].type || ""))) {
+        err.authFailed = true;
+      }
+      throw err;
+    }
+  }
+  return Object.fromEntries((body.methodResponses || []).map((method) => [method[2], method[1]]));
+}
+
+(async () => {
+  const settings = await jmap([
+    ["x:SpamSettings/set", { update: { singleton: { spamFilterRulesUrl: null } } }, "spamSettings"],
+  ]);
+  const settingsFailed = settings.spamSettings && settings.spamSettings.notUpdated;
+  if (settingsFailed && Object.keys(settingsFailed).length) {
+    throw new Error("Could not disable the spam-filter rules download: " + JSON.stringify(settingsFailed));
+  }
+  const listed = await jmap([
+    ["x:SpamDnsblServer/get", { properties: ["id", "tag"] }, "dnsbl"],
+  ]);
+  const rows = Array.isArray(listed.dnsbl && listed.dnsbl.list) ? listed.dnsbl.list : [];
+  const update = {};
+  let count = 0;
+  for (const row of rows) {
+    if (!row || !row.id || !row.tag) continue;
+    const patches = {};
+    const unresolved = [];
+    collectBitAndPatches(row.tag, "tag", patches, unresolved);
+    if (unresolved.length) {
+      throw new Error("Spam DNSBL " + row.id + " uses bit_and in a form the installer cannot rewrite");
+    }
+    const keys = Object.keys(patches);
+    if (!keys.length) continue;
+    update[row.id] = patches;
+    count += keys.length;
+  }
+  if (!count) return;
+  const updated = await jmap([
+    ["x:SpamDnsblServer/set", { update: update }, "dnsblSet"],
+  ]);
+  const failed = updated.dnsblSet && updated.dnsblSet.notUpdated;
+  if (failed && Object.keys(failed).length) {
+    throw new Error("Spam DNSBL tag update failed: " + JSON.stringify(failed));
+  }
+  console.log("Rewrote " + count + " spam-filter DNSBL bit tests so Stalwart can reload its settings.");
+})().catch((error) => {
+  console.error(error.message);
+  process.exit(error.authFailed ? 2 : 1);
+});
+EOF
+}
+
+node_with_bit_and_rewrite() {
+    local _program="$1"
+    "$NODE_BIN" -e "$(bit_and_rewrite_js)
+${_program}"
+}
+
+rewrite_bit_and_tag_patches() {
+    node_with_bit_and_rewrite "$(bit_and_tag_patch_js)"
+}
+
+repair_stalwart_dnsbl_expressions() {
+    local _username="$1" _secret="$2"
+    printf '%s' "$_secret" | \
+        STALWART_ADMIN_USERNAME="$_username" \
+        node_with_bit_and_rewrite "$(bit_and_repair_js)" || return $?
+}
+
 configure_stalwart_cors() {
     local _origin="$1" _username="$2" _secret="$3"
+    repair_stalwart_dnsbl_expressions "$_username" "$_secret" || return $?
     printf '%s' "$_secret" | \
         STALWART_WEBUI_ORIGIN="$_origin" STALWART_ADMIN_USERNAME="$_username" \
         "$NODE_BIN" -e '
@@ -1975,6 +2135,7 @@ configure_stalwart_smtp_relay() {
     case "$_port" in
         465) _implicit_tls="true" ;;
     esac
+    repair_stalwart_dnsbl_expressions "$_username" "$_admin_secret" || return $?
     printf '%s\n%s' "$_admin_secret" "$_smtp_secret" | \
         STALWART_ADMIN_USERNAME="$_username" \
         RELAY_USERNAME="$_smtp_user" \

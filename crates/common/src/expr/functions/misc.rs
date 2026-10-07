@@ -23,6 +23,13 @@ pub(crate) fn fn_is_number(v: Vec<Variable>) -> Variable {
     matches!(&v[0], Variable::Integer(_) | Variable::Float(_)).into()
 }
 
+pub(crate) fn fn_bit_and(v: Vec<Variable>) -> Variable {
+    match (v[0].to_integer(), v[1].to_integer()) {
+        (Some(lhs), Some(rhs)) => Variable::Integer(lhs & rhs),
+        _ => Variable::Integer(0),
+    }
+}
+
 pub(crate) fn fn_is_ip_addr(v: Vec<Variable>) -> Variable {
     v[0].to_string()
         .as_str()
@@ -75,4 +82,33 @@ pub(crate) fn fn_if_then(v: Vec<Variable>) -> Variable {
     let then = v.next().unwrap();
 
     if condition.to_bool() { iff } else { then }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fn_bit_and;
+    use crate::expr::Variable;
+
+    fn bit_and(left: Variable, right: Variable) -> i64 {
+        match fn_bit_and(vec![left, right]) {
+            Variable::Integer(value) => value,
+            other => panic!("bit_and returned {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bit_and_matches_dnsbl_octet_masks() {
+        assert_eq!(bit_and(Variable::Integer(16), Variable::Integer(16)), 16);
+        assert_eq!(bit_and(Variable::Integer(8), Variable::Integer(16)), 0);
+        assert_eq!(bit_and(Variable::Integer(24), Variable::Integer(16)), 16);
+        assert_eq!(bit_and(Variable::Integer(127), Variable::Integer(2)), 2);
+        assert_eq!(bit_and(Variable::Integer(1), Variable::Integer(2)), 0);
+        assert_eq!(
+            bit_and(
+                Variable::String(crate::expr::StringCow::Borrowed("nope")),
+                Variable::Integer(16)
+            ),
+            0
+        );
+    }
 }
