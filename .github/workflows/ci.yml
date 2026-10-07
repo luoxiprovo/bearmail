@@ -1,6 +1,11 @@
-# BearMail ships Linux x86-64 only (see docs/LIMITATIONS.md).
-# Upstream Stalwart's tag-triggered matrix (ARM, musl, macOS, Windows,
-# FreeBSD, Docker Hub) is disabled so a v* tag does not start those jobs.
+# The published install is Linux x86-64 (see docs/LIMITATIONS.md).
+# apple-silicon compiles a stalwart binary for later macOS packaging. It is
+# not a supported install, and linux-only does not depend on it. A red Mac
+# job does not fail the Linux policy job. Upstream's tag-triggered matrix
+# (ARM, musl, macOS, Windows, FreeBSD, Docker Hub) stays disabled.
+#
+# macos-14 is unsupported after 2026-11-02. macos-26 is the current
+# Apple Silicon GitHub-hosted runner. The job refuses a non-arm64 machine.
 
 name: CI
 
@@ -16,3 +21,60 @@ jobs:
         run: |
           echo "BearMail does not build ARM, macOS, Windows, FreeBSD, or Docker images."
           echo "Release artifacts are the Linux x86-64 binary and WebUI archive on GitHub Releases."
+
+  edge-protocol:
+    name: Edge protocol tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.1
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format bearmail-edge
+        run: cargo fmt --manifest-path edge/Cargo.toml -- --check
+
+      - name: Test bearmail-edge
+        run: cargo test --manifest-path edge/Cargo.toml
+
+  apple-silicon:
+    name: Apple Silicon stalwart binary
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.1
+
+      - name: Confirm Apple Silicon build tools
+        run: |
+          uname -m | grep -qx arm64
+          xcode-select -p
+          clang --version
+          if ! command -v cmake >/dev/null 2>&1; then
+            brew install cmake
+          fi
+          cmake --version
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test bearmail-edge
+        run: cargo test --manifest-path edge/Cargo.toml
+
+      # jemallocator stays on. crates/main links it for every target except
+      # msvc and freebsd, which includes aarch64-apple-darwin.
+      - name: Build stalwart
+        run: cargo build --release -p stalwart
+
+      - name: Upload stalwart binary
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: stalwart-aarch64-apple-darwin
+          path: target/release/stalwart
+          if-no-files-found: error

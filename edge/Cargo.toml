@@ -1,0 +1,16 @@
+# Own workspace: this crate must not resolve or link the mail store.
+[workspace]
+
+[package]
+name = "bearmail-edge"
+description = "BearMail edge tunnel frames. The VM stores no mail."
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only OR LicenseRef-SEL"
+publish = false
+
+[dependencies]
+proxy-header = "=0.1.2"
+
+[dev-dependencies]
+proxy-header = "=0.1.2"

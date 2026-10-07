@@ -29,6 +29,7 @@ members = [
     "crates/migration",
     "tests",
 ]
+exclude = ["edge"]
 
 [profile.dev]
 opt-level = 0

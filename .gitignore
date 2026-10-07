@@ -1,4 +1,5 @@
 /target
+/edge/target
 *.failed
 *_failed
 run.sh
