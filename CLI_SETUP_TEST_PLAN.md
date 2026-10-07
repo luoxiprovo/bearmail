@@ -6,10 +6,10 @@ Verify `CLI_SETUP_SPEC.md`: local-artifact installation, argument-free
 interaction, webpage-schema parity, safe bootstrap persistence, two systemd
 services, exact CORS automation, automatic Caddy publishing, certificate
 synchronization, combined DNS output, optional Brevo or Mailjet SMTP relay,
-and optional name.com DNS publishing.
+and optional name.com or Hostinger DNS publishing.
 
-SMTP relay, name.com publishing, and conflicting old DNS records have a
-focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RELAY_DNS_TEST_PLAN.md).
+SMTP relay, name.com and Hostinger publishing, and conflicting old DNS records
+have a focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RELAY_DNS_TEST_PLAN.md).
 
 ## Automated Rust tests
 
@@ -93,12 +93,16 @@ focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RELAY_DNS
 - manual and automatic DNS-management guidance identifies which forward records
   the operator must add or verify;
 - relay SMTP port 25 is rejected and 587/465 are accepted;
-- the name.com DNS plan uses zone-relative hosts, adds WebUI A/AAAA rows,
+- the DNS plan uses zone-relative hosts, adds WebUI A/AAAA rows,
   skips PTR/CAA, and merges `include:spf.brevo.com` or `include:spf.mailjet.com`
   into SPF for the selected relay;
 - name.com reconciliation replaces differing A/MX/SPF rows, deletes extra
   records and CNAME clashes at the same host, and preserves unrelated TXT and
-  NS records.
+  NS records;
+- Hostinger changes encode MX as `priority hostname` and SRV as
+  `priority weight port target`, replace conflicting A/MX/SPF sets, delete
+  CNAME and ALIAS clashes, preserve unrelated TXT and NS, and write nothing
+  when the zone already matches.
 
 ## Local non-root verification
 
@@ -111,6 +115,7 @@ sh tests/resources/scripts/install_prompt_retry_test.sh
 sh tests/resources/scripts/install_dns_output_test.sh
 sh tests/resources/scripts/install_proxy_config_test.sh
 sh tests/resources/scripts/install_namecom_plan_test.sh
+sh tests/resources/scripts/install_hostinger_plan_test.sh
 cargo fmt --all -- --check
 npm --prefix webui test
 npm --prefix webui run build

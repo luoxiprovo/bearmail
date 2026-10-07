@@ -4,7 +4,7 @@
 #
 # Two modes:
 #   default         Build customer artifacts from this checkout and run install.sh
-#                   (setup, Caddy, CORS, DNS table, SMTP relay, name.com).
+#                   (setup, Caddy, CORS, DNS table, SMTP relay, name.com or Hostinger).
 #   --webui-only    Iterate the WebUI from webui/; no tarball, no Stalwart rebuild,
 #                   no installer wizard.
 #
@@ -43,7 +43,7 @@ Modes
   First-time / customer-like setup (default):
     Builds a community Stalwart binary (no enterprise features), packs webui/ into stalwart-webui.tar.gz
     because install.sh requires that archive, then runs install.sh. That is the
-    only path that asks for Caddy, DNS, Brevo/Mailjet SMTP relay, and name.com.
+    only path that asks for Caddy, DNS, Brevo/Mailjet SMTP relay, and name.com or Hostinger.
     Quick setup asks for a public mail hostname (example: mail.example.com) and
     primary mail domain (example: example.com). Do not accept this VM's cloud
     hostname, such as a name ending in .internal.
@@ -370,7 +370,7 @@ else
     say "    - quick setup: public mail hostname (mail.example.com) and domain (example.com)"
     say "      Do not accept a cloud hostname ending in .internal"
     say "    - SMTP relay (Brevo default, Mailjet optional; recommended on GCP; port 25 is blocked)"
-    say "    - whether to publish the printed DNS table through name.com"
+    say "    - whether to publish the printed DNS table through name.com or Hostinger"
     say ""
     say "  For WebUI-only changes, use: sudo sh ./test_install.sh --webui-only"
     say ""
@@ -401,7 +401,7 @@ if [ "$dry_run" = "true" ]; then
     fi
     say "Dry run: print public hostname examples (mail.example.com / example.com)"
     say "Dry run: exec sh ${INSTALL_SH}"
-    say "Dry run: install.sh handles Caddy, CORS, Brevo/Mailjet SMTP relay, and name.com DNS"
+    say "Dry run: install.sh handles Caddy, CORS, Brevo/Mailjet SMTP relay, and name.com or Hostinger DNS"
     exit 0
 fi
 

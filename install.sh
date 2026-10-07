@@ -88,7 +88,9 @@ main() {
     say ""
     say "Prepare before the later prompts (the installer does not create these"
     say "vendor accounts for you):"
-    say "  • name.com domain on name.com nameservers, plus a production API token"
+    say "  • DNS at name.com or Hostinger, on that provider's nameservers"
+    say "    name.com: account username and a production API token"
+    say "    Hostinger: an API token from hPanel → API"
     say "  • SMTP relay account (Brevo recommended, Mailjet also supported):"
     say "    sender domain plus SMTP login and SMTP key"
     say "You can still install without them, then add DNS and the relay later."
@@ -486,11 +488,9 @@ main() {
     configure_optional_smtp_relay \
         "$_admin_username" "$_admin_secret" "$_mail_domain"
     _smtp_relay="$RETVAL"
-    publish_optional_namecom_dns \
+    publish_optional_dns \
         "$_installer_state" "$_webui_hostname" "$_mail_domain" "$_smtp_relay"
-    if [ "$RETVAL" = "true" ]; then
-        _dns_published="true"
-    fi
+    _dns_published="$RETVAL"
 
     say ""
     say "🎉 Installation complete!"
@@ -530,8 +530,11 @@ main() {
         say "Configure your HTTPS reverse proxy to send ${_webui_origin} to the WebUI"
         say "upstream above, and keep the WebUI port private."
     fi
-    if [ "$_dns_published" = "true" ]; then
+    if [ "$_dns_published" = "name.com" ]; then
         say "Name.com now has the forward-DNS rows for ${_mail_domain}. Wait for"
+        say "propagation before testing the public URLs."
+    elif [ "$_dns_published" = "hostinger" ]; then
+        say "Hostinger now has the forward-DNS rows for ${_mail_domain}. Wait for"
         say "propagation before testing the public URLs."
     elif [ -z "$_smtp_relay" ]; then
         say "If the printed forward-DNS rows are not yet in the authoritative zone,"
@@ -577,10 +580,11 @@ Usage: install.sh
 Interactively install BearMail: a local Stalwart mail engine binary and a
 prebuilt webmail/calendar UI, then configure CORS and start two services.
 
-Prepare a name.com domain (nameservers at name.com) and an SMTP relay account
-(Brevo recommended, Mailjet also supported) before you run this. The installer
-asks for the name.com API token and the relay SMTP login later. No installation
-or setup answer is accepted as a command-line parameter.
+Prepare a name.com or Hostinger domain (nameservers at that provider) and an
+SMTP relay account (Brevo recommended, Mailjet also supported) before you run
+this. The installer asks which DNS provider to use, then the name.com or
+Hostinger API token and the relay SMTP login. No installation or setup answer
+is accepted as a command-line parameter.
 
 The installer asks for paths and public values. Quick setup asks only for the
 public mail hostname (example: mail.example.com) and primary mail domain
@@ -602,9 +606,9 @@ SHA-256 checksum, and installs a private runtime under /opt/stalwart-node/.
 
 After setup, combined DNS records are printed in aligned TYPE, HOST, ANSWER,
 TTL, and PRIO columns. The installer then asks which outbound SMTP relay to
-use (Brevo by default, Mailjet, or skip), and whether the printed DNS rows
-are already in the zone. If they are not, it can publish them through the
-name.com DNS API.
+use (Brevo by default, Mailjet, or skip), whether the printed DNS rows are
+already in the zone, and which DNS provider to use. If they are not already
+published, it can publish them through the name.com or Hostinger DNS API.
 The recommended publishing mode installs Caddy, routes the mail and BearMail
 hostnames to separate localhost upstreams, obtains HTTPS certificates, and
 synchronizes the mail-host certificate into the engine. An explicit
@@ -2092,21 +2096,54 @@ configure_stalwart_smtp_relay() {
         ' || return $?
 }
 
-publish_optional_namecom_dns() {
+publish_optional_dns() {
     local _state="$1" _webui_hostname="$2" _mail_domain="$3" _smtp_relay="$4"
-    local _zone _username _token
+    local _provider
     RETVAL="false"
     say ""
     say "Authoritative DNS"
     say "-----------------"
     say "BearMail and public HTTPS certificates need the printed A/AAAA (and mail)"
-    say "records to resolve to this server. Prepare a name.com API username and"
-    say "production token if the rows are not already in the zone. If they are"
-    say "already published, skip the name.com API."
+    say "records to resolve to this server. If those rows are already in the zone,"
+    say "skip the DNS API. Otherwise choose name.com or Hostinger. The installer"
+    say "never stores the API token in installer-state.json."
     say ""
     if prompt_yes_no "Have you already published the printed forward-DNS records" "no"; then
+        RETVAL="false"
         return 0
     fi
+    say ""
+    prompt_menu "Domain name provider" 1 \
+        "name.com" \
+        "Hostinger" \
+        "Publish the printed rows by hand"
+    _provider="$RETVAL"
+    case "$_provider" in
+        1)
+            publish_optional_namecom_dns \
+                "$_state" "$_webui_hostname" "$_mail_domain" "$_smtp_relay"
+            if [ "$RETVAL" = "true" ]; then
+                RETVAL="name.com"
+            fi
+            ;;
+        2)
+            publish_optional_hostinger_dns \
+                "$_state" "$_webui_hostname" "$_mail_domain" "$_smtp_relay"
+            if [ "$RETVAL" = "true" ]; then
+                RETVAL="hostinger"
+            fi
+            ;;
+        *)
+            say "Add or replace the printed DNS rows by hand."
+            RETVAL="false"
+            ;;
+    esac
+}
+
+publish_optional_namecom_dns() {
+    local _state="$1" _webui_hostname="$2" _mail_domain="$3" _smtp_relay="$4"
+    local _zone _username _token
+    RETVAL="false"
     say ""
     say "Create a production API token at name.com: Account Settings → API Tokens."
     say "Use the account username and token. Two-step verification must allow API"
@@ -2139,6 +2176,42 @@ publish_optional_namecom_dns() {
         prompt_text "name.com API username" "$_username"
         _username="$RETVAL"
         prompt_secret "name.com API token"
+        _token="$RETVAL"
+    done
+}
+
+publish_optional_hostinger_dns() {
+    local _state="$1" _webui_hostname="$2" _mail_domain="$3" _smtp_relay="$4"
+    local _zone _token
+    RETVAL="false"
+    say ""
+    say "Create an API token in Hostinger hPanel → API."
+    say "Hostinger uses that bearer token and does not ask for a username. The"
+    say "domain's nameservers must be Hostinger's. If old records conflict with"
+    say "the Stalwart table, they are listed and replaced only after confirmation."
+    say "The installer never stores the token in installer-state.json."
+    say ""
+    prompt_dns_name "Hostinger domain (DNS zone)" "$_mail_domain"
+    _zone="$RETVAL"
+    prompt_secret "Hostinger API token"
+    _token="$RETVAL"
+    say "🌐 Publishing forward-DNS records through the Hostinger API..."
+    while true; do
+        if printf '%s' "$_token" | \
+            publish_dns_via_hostinger "$_state" "$_webui_hostname" "$_zone" "$_smtp_relay"
+        then
+            if [ "$RETVAL" = "true" ]; then
+                return 0
+            fi
+            say "Hostinger publishing was skipped. Add or replace the printed DNS rows by hand."
+            RETVAL="false"
+            return 0
+        fi
+        printf '  Hostinger rejected that request. Enter the token again, or confirm\n' >&3
+        printf '  the domain is in this Hostinger account and uses Hostinger nameservers.\n' >&3
+        prompt_dns_name "Hostinger domain (DNS zone)" "$_zone"
+        _zone="$RETVAL"
+        prompt_secret "Hostinger API token"
         _token="$RETVAL"
     done
 }
@@ -2193,7 +2266,7 @@ $(combined_forward_dns_records_js)
               continue;
             }
             if (!supported.has(type)) {
-              skipped.push(\`\${type} \${record.host} is not published by the name.com v4 API\`);
+              skipped.push(\`\${type} \${record.host} is not published by the DNS API\`);
               continue;
             }
             if (!answer || answer === '<PUBLIC_IPV4_NOT_DETECTED>') {
@@ -2235,7 +2308,7 @@ namecom_reconcile_js() {
       const exclusiveKey = (row) => {
         const type = recType(row);
         const host = normHost(row.host);
-        if (["A", "AAAA", "CNAME", "ANAME", "MX", "SRV"].includes(type)) return `${type}|${host}`;
+        if (["A", "AAAA", "CNAME", "ANAME", "ALIAS", "MX", "SRV"].includes(type)) return `${type}|${host}`;
         if (type === "TXT") {
           const cls = txtClass(row.answer);
           if (cls !== "other") return `TXT|${host}|${cls}`;
@@ -2282,7 +2355,7 @@ namecom_reconcile_js() {
           } else {
             for (const row of live) {
               if (normHost(row.host) !== host) continue;
-              if (recType(row) === "CNAME" || recType(row) === "ANAME") {
+              if (recType(row) === "CNAME" || recType(row) === "ANAME" || recType(row) === "ALIAS") {
                 markDestroy(row, `${wantedRow.type} conflicts with existing ${recType(row)}`, wantedRow);
               }
             }
@@ -2379,7 +2452,8 @@ print_namecom_conflicts() {
       const fs = require("node:fs");
       const actions = JSON.parse(fs.readFileSync(process.env.NAMECOM_ACTIONS_PATH, "utf8"));
       if (!(actions.conflicts || []).length) process.exit(0);
-      console.log("Existing name.com records conflict with the Stalwart DNS table:");
+      const provider = process.env.DNS_PROVIDER_LABEL || "name.com";
+      console.log(`Existing ${provider} records conflict with the Stalwart DNS table:`);
       for (const conflict of actions.conflicts) {
         if (conflict.action === "replace") {
           console.log(`  replace: ${conflict.existing}`);
@@ -2471,7 +2545,7 @@ $(namecom_request_js)
       process.exit((actions.conflicts || []).length ? 0 : 1);
     '
     then
-        print_namecom_conflicts "$_actions_file"
+        DNS_PROVIDER_LABEL="name.com" print_namecom_conflicts "$_actions_file"
         if ! prompt_yes_no "Replace the conflicting name.com records with the Stalwart DNS table" "yes"; then
             rm -f "$_plan_file" "$_existing_file" "$_actions_file"
             RETVAL="false"
@@ -2501,6 +2575,282 @@ $(namecom_request_js)
               created += 1;
             }
             console.log(\`  name.com DNS: \${created} created, \${updated} updated, \${destroyed} replaced/removed, \${(actions.unchanged || []).length} unchanged.\`);
+          })().catch((error) => { console.error(error.message); process.exit(1); });
+        "
+    then
+        rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+        return 1
+    fi
+    rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+    RETVAL="true"
+    return 0
+}
+
+# Hostinger stores one RRSet per name and type. overwrite=true replaces that
+# whole set, so a TXT update must include unrelated TXT values or they disappear.
+# DELETE removes every record of a name and type; it is only used when the set
+# should be empty (for example a CNAME that cannot coexist with an address).
+# MX content is "<priority> <host>". SRV content is "<priority> <weight> <port> <target>".
+# Apex is "@". NS and SOA are never sent. The token stays out of installer-state.json.
+hostinger_request_js() {
+    cat <<'EOF'
+      const fs = require("node:fs");
+      async function hostingerRequest(method, url, body) {
+        const response = await fetch(url, {
+          method,
+          headers: {
+            Authorization: process.env.HOSTINGER_AUTH,
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: body ? JSON.stringify(body) : undefined,
+          signal: AbortSignal.timeout(20000),
+        });
+        const text = await response.text();
+        let json = {};
+        try { json = text ? JSON.parse(text) : {}; } catch { json = { message: text.slice(0, 200) }; }
+        if (!response.ok) {
+          const detail = json.message || json.details
+            || (json.errors ? JSON.stringify(json.errors).slice(0, 300) : text.slice(0, 300));
+          throw new Error(`Hostinger ${method} ${url} failed (${response.status}): ${detail}`);
+        }
+        return json;
+      }
+EOF
+}
+
+hostinger_changes_js() {
+    cat <<'EOF'
+      function hostingerZoneGroups(payload) {
+        if (Array.isArray(payload)) return payload;
+        if (payload && Array.isArray(payload.data)) return payload.data;
+        if (payload && Array.isArray(payload.zone)) return payload.zone;
+        throw new Error("Hostinger DNS response did not include a record list");
+      }
+
+      function relativeHost(raw, zone) {
+        let name = String(raw ?? "").trim().replace(/\.$/, "").toLowerCase();
+        if (!name || name === "@") return "";
+        if (zone && name === zone) return "";
+        if (zone && name.endsWith("." + zone)) return name.slice(0, -(zone.length + 1));
+        return name;
+      }
+
+      function parseHostingerContent(type, content) {
+        let text = String(content ?? "").trim();
+        if (text.length >= 2 && ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'")))) {
+          text = text.slice(1, -1);
+        }
+        if (type === "MX") {
+          const match = text.match(/^(\d+)\s+(\S+)$/);
+          if (match) return { answer: match[2].replace(/\.$/, ""), priority: Number(match[1]) };
+        }
+        if (type === "SRV") {
+          const match = text.match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)$/);
+          if (match) {
+            return {
+              answer: `${match[2]} ${match[3]} ${match[4].replace(/\.$/, "")}`,
+              priority: Number(match[1]),
+            };
+          }
+        }
+        if (type === "CNAME" || type === "ALIAS" || type === "NS") {
+          return { answer: text.replace(/\.$/, ""), priority: undefined };
+        }
+        return { answer: text, priority: undefined };
+      }
+
+      function flattenHostingerZone(payload, zone) {
+        const rows = [];
+        let index = 0;
+        for (const group of hostingerZoneGroups(payload)) {
+          const type = String(group.type || "").toUpperCase();
+          if (type === "NS" || type === "SOA") continue;
+          const host = relativeHost(group.name, zone);
+          const ttl = Number(group.ttl) || 3600;
+          for (const rec of group.records || []) {
+            if (!String(rec.content ?? "").trim()) continue;
+            const parsed = parseHostingerContent(type, rec.content);
+            rows.push({
+              id: `h${index++}`,
+              host,
+              type,
+              answer: parsed.answer,
+              priority: parsed.priority,
+              ttl,
+              disabled: Boolean(rec.is_disabled),
+            });
+          }
+        }
+        return rows;
+      }
+
+      function hostingerName(host) {
+        const name = String(host ?? "").replace(/\.$/, "").trim();
+        return name === "" || name === "@" ? "@" : name;
+      }
+
+      function recordPriority(row) {
+        if (row.priority == null || row.priority === "") return 0;
+        const value = Number(row.priority);
+        return Number.isFinite(value) ? value : 0;
+      }
+
+      function hostingerContent(row) {
+        const type = String(row.type || "").toUpperCase();
+        const answer = String(row.answer ?? "").trim().replace(/\s+/g, " ");
+        if (type === "MX") return `${recordPriority(row)} ${answer.replace(/\.$/, "")}`;
+        if (type === "SRV") return `${recordPriority(row)} ${answer}`;
+        if (type === "CNAME" || type === "ALIAS") return answer.replace(/\.$/, "");
+        return answer;
+      }
+
+      function groupKey(row) {
+        const type = String(row.type || "").toUpperCase();
+        const host = String(row.host ?? "").replace(/\.$/, "").replace(/^@$/, "").toLowerCase();
+        return `${type}|${host}`;
+      }
+
+      function buildHostingerChanges(existingGroups, plan) {
+        const zone = String(plan.zone || "").replace(/\.$/, "").toLowerCase();
+        const flat = flattenHostingerZone(existingGroups, zone);
+        const actions = reconcileNamecomActions(flat, plan.plan || []);
+        const destroyed = new Set((actions.destroy || []).map((row) => row.id));
+        const updates = new Map((actions.update || []).map((row) => [row.id, row.record]));
+        const touched = new Set();
+        for (const row of actions.destroy || []) {
+          const match = flat.find((item) => item.id === row.id);
+          if (match) touched.add(groupKey(match));
+        }
+        for (const row of actions.update || []) touched.add(groupKey(row.record));
+        for (const row of actions.create || []) touched.add(groupKey(row));
+
+        const puts = [];
+        const deletes = [];
+        for (const key of touched) {
+          const sep = key.indexOf("|");
+          const type = key.slice(0, sep);
+          const host = key.slice(sep + 1);
+          if (type === "NS" || type === "SOA") continue;
+          const kept = [];
+          for (const row of flat) {
+            if (groupKey(row) !== key || destroyed.has(row.id)) continue;
+            kept.push(updates.has(row.id) ? updates.get(row.id) : row);
+          }
+          for (const row of actions.create || []) {
+            if (groupKey(row) === key) kept.push(row);
+          }
+          const name = hostingerName(host);
+          if (!kept.length) {
+            deletes.push({ name, type });
+            continue;
+          }
+          const managedTtls = kept.filter((row) => row.id == null).map((row) => Number(row.ttl) || 3600);
+          const ttlValues = managedTtls.length ? managedTtls : kept.map((row) => Number(row.ttl) || 3600);
+          puts.push({
+            name,
+            type,
+            ttl: Math.max(300, ...ttlValues),
+            records: kept.map((row) => ({ content: hostingerContent(row) })),
+          });
+        }
+        return {
+          zone: plan.zone,
+          skipped: plan.skipped || [],
+          conflicts: actions.conflicts || [],
+          unchanged: actions.unchanged || [],
+          puts,
+          deletes,
+          created: (actions.create || []).length,
+          updated: (actions.update || []).length,
+          destroyed: (actions.destroy || []).length,
+        };
+      }
+
+      const existing = JSON.parse(fs.readFileSync(process.env.HOSTINGER_EXISTING_PATH, "utf8"));
+      const parsed = JSON.parse(fs.readFileSync(process.env.HOSTINGER_PLAN_PATH, "utf8"));
+      process.stdout.write(JSON.stringify(buildHostingerChanges(existing, parsed)));
+EOF
+}
+
+build_hostinger_changes() {
+    local _existing="$1" _plan="$2"
+    HOSTINGER_EXISTING_PATH="$_existing" HOSTINGER_PLAN_PATH="$_plan" "$NODE_BIN" -e "
+$(namecom_reconcile_js)
+$(hostinger_changes_js)
+    "
+}
+
+publish_dns_via_hostinger() {
+    local _state="$1" _webui_hostname="$2" _zone="$3" _smtp_relay="$4"
+    local _plan _token _plan_file _existing_file _actions_file _auth
+    RETVAL="false"
+    _token="$(cat)"
+    if ! _plan="$(build_namecom_dns_plan "$_state" "$_webui_hostname" "$_zone" "$_smtp_relay")"; then
+        return 1
+    fi
+    _plan_file="$(mktemp)"
+    _existing_file="$(mktemp)"
+    _actions_file="$(mktemp)"
+    printf '%s' "$_plan" > "$_plan_file"
+    chmod 0600 "$_plan_file" "$_existing_file" "$_actions_file"
+    _auth="Bearer ${_token}"
+    if ! HOSTINGER_AUTH="$_auth" HOSTINGER_ZONE="$_zone" HOSTINGER_EXISTING_PATH="$_existing_file" \
+        "$NODE_BIN" -e "
+$(hostinger_request_js)
+          const zone = process.env.HOSTINGER_ZONE;
+          const base = 'https://developers.hostinger.com/api/dns/v1/zones/' + encodeURIComponent(zone);
+          (async () => {
+            const listed = await hostingerRequest('GET', base);
+            const groups = Array.isArray(listed) ? listed
+              : (listed && Array.isArray(listed.data) ? listed.data
+              : (listed && Array.isArray(listed.zone) ? listed.zone : null));
+            if (!groups) throw new Error('Hostinger DNS response did not include a record list');
+            fs.writeFileSync(process.env.HOSTINGER_EXISTING_PATH, JSON.stringify(groups));
+          })().catch((error) => { console.error(error.message); process.exit(1); });
+        "
+    then
+        rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+        return 1
+    fi
+    if ! build_hostinger_changes "$_existing_file" "$_plan_file" > "$_actions_file"; then
+        rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+        return 1
+    fi
+    HOSTINGER_ACTIONS_PATH="$_actions_file" "$NODE_BIN" -e '
+      const fs = require("node:fs");
+      const actions = JSON.parse(fs.readFileSync(process.env.HOSTINGER_ACTIONS_PATH, "utf8"));
+      for (const warning of actions.skipped || []) console.log("  skipped: " + warning);
+      if (!(actions.puts || []).length && !(actions.deletes || []).length) {
+        console.log("  Hostinger DNS: all published records already match.");
+      }
+    '
+    if HOSTINGER_ACTIONS_PATH="$_actions_file" "$NODE_BIN" -e '
+      const fs = require("node:fs");
+      const actions = JSON.parse(fs.readFileSync(process.env.HOSTINGER_ACTIONS_PATH, "utf8"));
+      process.exit((actions.conflicts || []).length ? 0 : 1);
+    '
+    then
+        DNS_PROVIDER_LABEL="Hostinger" print_namecom_conflicts "$_actions_file"
+        if ! prompt_yes_no "Replace the conflicting Hostinger records with the Stalwart DNS table" "yes"; then
+            rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+            RETVAL="false"
+            return 0
+        fi
+    fi
+    if ! HOSTINGER_AUTH="$_auth" HOSTINGER_ZONE="$_zone" HOSTINGER_ACTIONS_PATH="$_actions_file" \
+        "$NODE_BIN" -e "
+$(hostinger_request_js)
+          const actions = JSON.parse(fs.readFileSync(process.env.HOSTINGER_ACTIONS_PATH, 'utf8'));
+          const zone = process.env.HOSTINGER_ZONE;
+          const base = 'https://developers.hostinger.com/api/dns/v1/zones/' + encodeURIComponent(zone);
+          (async () => {
+            const deletes = actions.deletes || [];
+            const puts = actions.puts || [];
+            if (deletes.length) await hostingerRequest('DELETE', base, { filters: deletes });
+            if (puts.length) await hostingerRequest('PUT', base, { overwrite: true, zone: puts });
+            const unchanged = (actions.unchanged || []).length;
+            console.log('  Hostinger DNS: ' + (actions.created || 0) + ' created, ' + (actions.updated || 0) + ' updated, ' + (actions.destroyed || 0) + ' replaced/removed, ' + unchanged + ' unchanged.');
           })().catch((error) => { console.error(error.message); process.exit(1); });
         "
     then

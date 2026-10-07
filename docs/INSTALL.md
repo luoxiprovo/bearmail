@@ -10,11 +10,11 @@ server. When you finish, two systemd services and two HTTPS hostnames are
 live: the mail engine (Stalwart) on `mail.example.com`, and BearMail on
 `https://webmail.example.com`.
 
-Create the **name.com** domain/account and an **SMTP relay** account (**Brevo**
-recommended, Mailjet also supported) **before** you run `install.sh`. The
-installer will ask for those credentials; it does not register the vendors
-for you. Details and every prompt are in the
-[BearMail README](../README.md).
+Create the **name.com** or **Hostinger** domain/account and an **SMTP relay**
+account (**Brevo** recommended, Mailjet also supported) **before** you run
+`install.sh`. The installer will ask which DNS provider to use and for those
+credentials; it does not register the vendors for you. Details and every
+prompt are in the [BearMail README](../README.md).
 
 The combined installer is interactive. `install.sh` itself does not download
 or build either application. The easiest path is `release_install.sh`, which
@@ -38,8 +38,8 @@ curl -fsSL https://YOUR-DOMAIN/release_install.sh | sudo bash
 
 The bootstrapper always fetches `install.sh`, `stalwart`, and
 `stalwart-webui.tar.gz` from GitHub unless `BEARMAIL_DOWNLOAD_BASE` is set.
-It then starts the usual interactive setup. Prepare the name.com and SMTP
-relay accounts first; the wizard will ask for them.
+It then starts the usual interactive setup. Prepare the name.com or Hostinger
+account and the SMTP relay account first; the wizard will ask for them.
 
 Preview the download plan without changing the system:
 
@@ -53,8 +53,8 @@ curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_in
 
 | Prepare | Why the installer needs it |
 | --- | --- |
-| name.com domain on name.com nameservers | Zone for `mail.` and `webmail.` plus the printed MX/SPF/DKIM rows |
-| name.com production API token | Optional auto-publish of that DNS table |
+| name.com domain on name.com nameservers, or a Hostinger domain on Hostinger nameservers | Zone for `mail.` and `webmail.` plus the printed MX/SPF/DKIM rows |
+| name.com production API token, or a Hostinger API token | Optional auto-publish of that DNS table. The installer asks which provider to use |
 | Brevo account (default), SMTP login and SMTP key; or Mailjet API key and secret | Outbound mail when the VPS blocks TCP 25 |
 
 ### Server
@@ -94,7 +94,8 @@ The build machine needs:
 - Node.js 22.12 or later with npm; and
 - a checkout of this repository.
 
-Choose these hostnames before starting. They must live in the name.com zone:
+Choose these hostnames before starting. They must live in the name.com or
+Hostinger zone:
 
 | Value | Example | Requirement |
 | --- | --- | --- |
@@ -266,8 +267,9 @@ The installer then:
    and installs a certificate synchronization timer;
 6. prints the URLs and combined DNS table;
 7. asks which outbound SMTP relay to use (Brevo by default, Mailjet, or skip); and
-8. if the printed DNS rows are not already in the zone, can publish them
-   through the name.com DNS API.
+8. if the printed DNS rows are not already in the zone, asks which domain
+   name provider to use and can publish them through the name.com or
+   Hostinger DNS API.
 
 If setup uses an external directory, or if this is a reinstall, the installer
 prompts for a Stalwart administrator username and password or app password. The
@@ -278,24 +280,37 @@ password input is hidden.
 The installer prints a `TYPE`, `HOST`, `ANSWER`, `TTL`, and `PRIO` table, then
 asks whether those rows are already in the authoritative zone.
 
-If they are not, it asks for a name.com API username and token and the DNS
-zone (default: the mail domain). It creates, updates, or replaces A, AAAA, MX,
-TXT, CNAME, and SRV records through `https://api.name.com/v4`. If the zone
-already has records that conflict with the Stalwart table—an old A/AAAA
-address, extra MX hosts, a previous SPF/DKIM/DMARC TXT, or a CNAME/ANAME on a
-name that now needs an address record—the installer lists them and asks
-whether to replace them (default yes). It deletes extras at that host after
-confirmation. Site-verification TXT records and NS records are left in place.
-CAA, TLSA, NS, and PTR rows from the printed table are skipped. The token is
-typed with echo disabled and is not saved in `installer-state.json`.
+If they are not, it asks you to choose **name.com** (default), **Hostinger**,
+or **publish the printed rows by hand**.
 
-If you already published the table by hand, answer yes and skip name.com.
+name.com asks for an API username, a production token, and the DNS zone
+(default: the mail domain). It creates, updates, or replaces A, AAAA, MX, TXT,
+CNAME, and SRV records through `https://api.name.com/v4`.
+
+Hostinger asks for an API token from hPanel → API and the same DNS zone. It
+does not ask for a username. It writes the same record types through
+`https://developers.hostinger.com/api/dns/v1/zones/{domain}` with a bearer
+token. Apex records use `@`. MX values are sent as `priority hostname`, and
+SRV values as `priority weight port target`. Hostinger replaces a whole name
+and type at once, so an SPF update also sends any unrelated TXT values at
+that name and keeps them.
+
+For either provider, if the zone already has records that conflict with the
+Stalwart table—an old A/AAAA address, extra MX hosts, a previous
+SPF/DKIM/DMARC TXT, or a CNAME/ANAME/ALIAS on a name that now needs an address
+record—the installer lists them and asks whether to replace them (default
+yes). It deletes extras at that host after confirmation. Site-verification TXT
+records and NS records are left in place. CAA, TLSA, NS, and PTR rows from
+the printed table are skipped. The token is typed with echo disabled and is
+not saved in `installer-state.json`.
+
+If you already published the table by hand, answer yes and skip the DNS API.
 
 When Stalwart automatic DNS management is enabled, still verify the mail and
 WebUI A/AAAA rows; those hostnames must resolve to this server.
 
 - Replace `<PUBLIC_IPV4_NOT_DETECTED>` with the server's public IPv4 address
-  before expecting name.com to publish an A record.
+  before expecting name.com or Hostinger to publish an A record.
 - When a long HOST or ANSWER wraps onto another terminal line, join the parts
   without spaces before publishing it by hand.
 
@@ -328,9 +343,9 @@ points remote outbound routing at it while keeping local-domain delivery local.
 Secrets are not command-line arguments. See
 [How to set up a Brevo SMTP relay](BREVO_SMTP_RELAY.md).
 
-If you also publish DNS through name.com after choosing Brevo, the installer
-merges `include:spf.brevo.com` into existing SPF TXT rows. Add Brevo's DKIM
-selector from the Brevo dashboard separately.
+If you also publish DNS through name.com or Hostinger after choosing Brevo, the
+installer merges `include:spf.brevo.com` into existing SPF TXT rows. Add
+Brevo's DKIM selector from the Brevo dashboard separately.
 
 ### Mailjet
 
@@ -344,7 +359,7 @@ selector from the Brevo dashboard separately.
 The installer creates or updates an `MtaRoute` named `mailjet` and points
 remote outbound routing at it. See
 [How to set up a Mailjet SMTP relay](MAILJET_SMTP_RELAY.md).
-Name.com publishing merges `include:spf.mailjet.com` into SPF.
+name.com or Hostinger publishing merges `include:spf.mailjet.com` into SPF.
 
 After DNS resolves and you create a user in the Stalwart admin panel, that user
 can sign in to the WebUI and send mail.
@@ -651,14 +666,16 @@ those values again instead of exiting. After a successful configuration,
 create a user and send from the WebUI only after the domain is authenticated
 in the selected relay.
 
-### name.com DNS publishing fails
+### DNS publishing fails
 
-Confirm the API username and production token, that the zone is in that
-name.com account, and that two-step verification allows API access. The
-installer repeats those questions after an API error. If old records conflict,
-it lists replacements and deletions and asks before changing them. CAA and
-reverse-DNS rows are never sent to name.com. NS records and unrelated
-verification TXT records are not deleted.
+For name.com, confirm the API username and production token, that the zone is
+in that name.com account, and that two-step verification allows API access.
+For Hostinger, confirm the API token, that the zone is in that Hostinger
+account, and that the domain uses Hostinger nameservers. The installer repeats
+those questions after an API error. If old records conflict, it lists
+replacements and deletions and asks before changing them. CAA and reverse-DNS
+rows are never sent. NS records and unrelated verification TXT records are not
+deleted.
 
 ### The WebUI works locally but not publicly
 
@@ -682,5 +699,5 @@ sudo systemctl start stalwart-caddy-cert-sync.service
 - [Installer test plan](../CLI_SETUP_TEST_PLAN.md)
 - [Brevo SMTP relay](BREVO_SMTP_RELAY.md)
 - [Mailjet SMTP relay](MAILJET_SMTP_RELAY.md)
-- [SMTP relay and name.com DNS test plan](INSTALLER_RELAY_DNS_TEST_PLAN.md)
+- [SMTP relay and DNS provider test plan](INSTALLER_RELAY_DNS_TEST_PLAN.md)
 - [WebUI documentation](../webui/README.md)

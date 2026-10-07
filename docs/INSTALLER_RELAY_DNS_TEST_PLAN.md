@@ -1,9 +1,9 @@
-# Test plan: SMTP relay and name.com DNS in the combined installer
+# Test plan: SMTP relay and DNS publishing in the combined installer
 
 This plan verifies the end-of-install Brevo (default) or Mailjet SMTP relay
-and name.com DNS publishing added to `install.sh`. Automated checks run
-without root, a relay account, or name.com. Live account steps need a
-disposable Linux VM.
+and name.com or Hostinger DNS publishing added to `install.sh`. Automated
+checks run without root, a relay account, or a DNS provider. Live account
+steps need a disposable Linux VM.
 
 Related: [CLI_SETUP_TEST_PLAN.md](../CLI_SETUP_TEST_PLAN.md),
 [CLI_SETUP_SPEC.md](../CLI_SETUP_SPEC.md),
@@ -21,6 +21,7 @@ sh tests/resources/scripts/install_prompt_retry_test.sh
 sh tests/resources/scripts/install_dns_output_test.sh
 sh tests/resources/scripts/install_proxy_config_test.sh
 sh tests/resources/scripts/install_namecom_plan_test.sh
+sh tests/resources/scripts/install_hostinger_plan_test.sh
 ```
 
 If ShellCheck is installed:
@@ -47,12 +48,14 @@ git diff --check
 | `install_dns_output_test.sh` | `PASS: installer separates forward-zone records from reverse DNS guidance` |
 | `install_proxy_config_test.sh` | `PASS: installer renders isolated Caddy routes and certificate synchronization` |
 | `install_namecom_plan_test.sh` | three PASS lines: zone-relative Brevo SPF merge, Mailjet SPF merge, and conflict reconciliation |
+| `install_hostinger_plan_test.sh` | two PASS lines: conflict replacement with MX/SRV encoding, and no writes when the zone already matches |
 
 ### Coverage those scripts must prove
 
 1. Relay SMTP port `25` is rejected; `587` is accepted after a retry.
 2. Combined DNS table includes mail and WebUI A rows, excludes PTR.
-3. name.com plan uses zone-relative hosts (`mail`, `webmail`, `@` as `""`).
+3. The shared DNS plan uses zone-relative hosts (`mail`, `webmail`, apex as `""`).
+   Hostinger publishes that apex as `@`.
 4. Choosing Brevo merges `include:spf.brevo.com` into SPF TXT rows; choosing
    Mailjet merges `include:spf.mailjet.com`.
 5. CAA and out-of-zone hosts are skipped, not published.
@@ -69,12 +72,16 @@ git diff --check
 
 Inspect `install.sh` (no execution as root):
 
-- Relay secrets and name.com token are not passed as command-line arguments.
-- `installer-state.json` writing still deletes `administrator`.
+- Relay secrets and DNS tokens are not passed as command-line arguments.
+- `installer-state.json` writing still deletes `administrator` and does not
+  store the name.com or Hostinger token.
 - Completion asks which SMTP relay to use (Brevo default) after the DNS table,
   then asks whether DNS is already published (default no).
-- Conflicting name.com records print a replace/delete list and prompt
-  `Replace the conflicting name.com records with the Stalwart DNS table`.
+- If it is not, the provider menu is name.com (default), Hostinger, or publish
+  by hand.
+- Conflicting records print a replace/delete list and prompt
+  `Replace the conflicting name.com records with the Stalwart DNS table` or
+  `Replace the conflicting Hostinger records with the Stalwart DNS table`.
 - Declining that prompt skips publishing without treating it as a credential
   failure.
 
@@ -90,7 +97,7 @@ and a Brevo account.
 2. After the DNS table, accept **Brevo** as the outbound SMTP relay.
 3. Enter `smtp-relay.brevo.com`, port `587`, SMTP login, SMTP key.
 4. Answer **no** to already-published DNS.
-5. Enter name.com zone, username, and token.
+5. Choose **name.com**. Enter the zone, username, and token.
 6. If conflicts are listed, answer **yes** to replace them.
 7. Create a user in Stalwart admin. After DNS/TLS, send mail from the WebUI to
    an external inbox. Confirm the message in Brevo activity.
@@ -140,9 +147,22 @@ prints URLs and warns that outbound TCP 25 may be blocked.
 - Wrong name.com token: questions repeat; a correct retry publishes.
 - Relay port `25`: re-prompt; `587` or `465` continues.
 
+## D. Live Brevo + Hostinger (disposable VM)
+
+Same as section C, with a Hostinger domain on Hostinger nameservers and an
+API token from hPanel → API. At the provider menu choose **Hostinger**. The
+prompts are the zone and the token; there is no username.
+
+Pass: Hostinger shows the same A, AAAA, MX, SPF, and SRV rows. MX content is
+`10 mail.example.com` (priority, then host). SRV content is
+`priority weight port target`. Apex names are `@`. NS records and an unrelated
+TXT stay. A conflicting CNAME or ALIAS at `mail` or `webmail` is removed.
+Declining the replace prompt does not call the update API. A wrong token
+repeats the token question.
+
 ## Exit criteria
 
 Section A must pass on this tree. Section B must match `install.sh`.
-Sections C1–C5 are required before calling the feature done on GCP; if a live
-Brevo or name.com account is unavailable, list that gap explicitly and do
-not mark C as passed.
+Sections C and D are required before calling the feature done on a live
+domain; if a Brevo, name.com, or Hostinger account is unavailable, list that
+gap explicitly and do not mark that section as passed.

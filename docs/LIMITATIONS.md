@@ -13,11 +13,11 @@ You need all of these before the installer can finish:
 | Linux **x86-64** VM with systemd | Only published binary. No ARM, no Docker, no Kubernetes in this release. |
 | Public IPv4 and inbound **80/443** | Caddy issues certificates and serves `mail.` / `webmail.` |
 | SSH access and `sudo` | The installer writes systemd units and `/opt`. |
-| A **name.com** domain on name.com nameservers, plus a production API token | Automated DNS. Other registrars are a manual zone. |
+| A **name.com** or **Hostinger** domain on that provider's nameservers, plus an API token | Automated DNS. Other registrars are a manual zone. |
 | **Brevo** SMTP login + SMTP key (Mailjet works) | Cloud VMs usually block outbound TCP 25. |
 | One dedicated agent mailbox | Do not point MCP at `admin` or a founder inbox. |
 
-Have the name.com token and relay credentials in front of you. The wizard asks for them.
+Have the name.com or Hostinger token and relay credentials in front of you. The wizard asks which DNS provider to use.
 
 ## What this release does not include
 
@@ -54,7 +54,7 @@ Have the name.com token and relay credentials in front of you. The wizard asks f
 | --- | --- |
 | Human WebUI / IMAP password or `app_…` app password | People and mail clients. |
 | Stalwart API key `API_…` | MCP / agents (`BEARMAIL_TOKEN`, Bearer). |
-| name.com / Brevo / Mailjet keys | Installer and outbound relay only. Not mailbox login. |
+| name.com / Hostinger / Brevo / Mailjet keys | Installer and outbound relay only. Not mailbox login. |
 
 ## Reporting
 

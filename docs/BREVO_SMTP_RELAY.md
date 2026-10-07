@@ -37,7 +37,7 @@ allowed. Adding only one mailbox is not enough for a real mail server.
 
 ## 3. Publish SPF
 
-When the installer publishes DNS through name.com after you choose Brevo, it
+When the installer publishes DNS through name.com or Hostinger after you choose Brevo, it
 merges `include:spf.brevo.com` into existing SPF TXT rows. If you publish DNS
 by hand, merge Brevo into the existing SPF. Keep any `ip4:`, `ip6:`, `a`, or
 `mx` terms from the mail engine:
