@@ -6,9 +6,9 @@ Verify `CLI_SETUP_SPEC.md`: local-artifact installation, argument-free
 interaction, webpage-schema parity, safe bootstrap persistence, two systemd
 services, exact CORS automation, automatic Caddy publishing, certificate
 synchronization, combined DNS output, optional Brevo or Mailjet SMTP relay,
-and optional name.com or Hostinger DNS publishing.
+and optional name.com, Hostinger, or GoDaddy DNS publishing.
 
-SMTP relay, name.com and Hostinger publishing, and conflicting old DNS records
+SMTP relay, name.com, Hostinger, and GoDaddy publishing, and conflicting old DNS records
 have a focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RELAY_DNS_TEST_PLAN.md).
 
 ## Automated Rust tests
@@ -103,6 +103,10 @@ have a focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RE
   `priority weight port target`, replace conflicting A/MX/SPF sets, delete
   CNAME and ALIAS clashes, preserve unrelated TXT and NS, and write nothing
   when the zone already matches.
+- GoDaddy changes encode MX as a hostname plus priority and SRV as service,
+  protocol, weight, port, and target, raise TTL into 600..86400, replace
+  conflicting A/MX/SPF records by record id, delete CNAME clashes, preserve
+  unrelated TXT and NS, and write nothing when the zone already matches.
 
 ## Local non-root verification
 
@@ -116,6 +120,7 @@ sh tests/resources/scripts/install_dns_output_test.sh
 sh tests/resources/scripts/install_proxy_config_test.sh
 sh tests/resources/scripts/install_namecom_plan_test.sh
 sh tests/resources/scripts/install_hostinger_plan_test.sh
+sh tests/resources/scripts/install_godaddy_plan_test.sh
 cargo fmt --all -- --check
 npm --prefix webui test
 npm --prefix webui run build

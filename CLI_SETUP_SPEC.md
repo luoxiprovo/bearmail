@@ -196,19 +196,24 @@ After printing the table, the installer asks:
   persistent installer state.
 - whether the printed forward-DNS rows are already in the authoritative zone.
   If they are not, it asks which domain name provider to use: name.com
-  (default), Hostinger, or publish the printed rows by hand. name.com asks
-  for an API username, token, and DNS zone (default: the mail domain) and
+  (default), Hostinger, GoDaddy, or publish the printed rows by hand. name.com
+  asks for an API username, token, and DNS zone (default: the mail domain) and
   creates, updates, or replaces supported records through
   `https://api.name.com/v4`. Hostinger asks for an API token and the same DNS
   zone, with no username, and writes the same record types through
-  `https://developers.hostinger.com/api/dns/v1/zones/{domain}`. Conflicting
-  records at the same host (old A/AAAA addresses, extra MX targets,
-  SPF/DKIM/DMARC TXT, and CNAME/ANAME/ALIAS that cannot coexist with an
-  address record) are listed and, after confirmation (default yes), deleted
-  or updated. Unrelated verification TXT records and NS records are left
-  unchanged. When a Brevo relay was just configured, SPF TXT answers gain
-  `include:spf.brevo.com`. When a Mailjet relay was just configured, they
-  gain `include:spf.mailjet.com`. CAA, TLSA, NS, and PTR are not published.
+  `https://developers.hostinger.com/api/dns/v1/zones/{domain}`. GoDaddy asks
+  for a production personal access token and the same DNS zone, with no
+  username, and writes the same record types through
+  `https://api.godaddy.com/v3/domains/zones/{domain}/dns-records`. The token
+  needs `domains.domain:read` and `domains.dns:update`. GoDaddy TTLs are
+  clamped to 600..86400. Nameservers are not changed. Conflicting records at
+  the same host (old A/AAAA addresses, extra MX targets, SPF/DKIM/DMARC TXT,
+  and CNAME/ANAME/ALIAS that cannot coexist with an address record) are listed
+  and, after confirmation (default yes), deleted or updated. Unrelated
+  verification TXT records and NS records are left unchanged. When a Brevo
+  relay was just configured, SPF TXT answers gain `include:spf.brevo.com`.
+  When a Mailjet relay was just configured, they gain
+  `include:spf.mailjet.com`. CAA, TLSA, NS, and PTR are not published.
   Invalid provider credentials are explained and the questions repeat.
 
 The completion message shows the Stalwart admin URL, WebUI public URL, localhost
@@ -245,7 +250,7 @@ public DNS resolves.
     or `mailjet` route and remote outbound strategy without placing relay
     secrets in arguments or installer state.
 16. When forward DNS is not already published, the operator chooses name.com,
-    Hostinger, or manual publishing. Provider credentials are accepted
+    Hostinger, GoDaddy, or manual publishing. Provider credentials are accepted
     interactively and only supported record types are created or updated.
     Conflicting records at the same host are listed and replaced only after
     confirmation; NS and unrelated verification TXT records are preserved.

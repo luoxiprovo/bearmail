@@ -10,7 +10,7 @@ server. When you finish, two systemd services and two HTTPS hostnames are
 live: the mail engine (Stalwart) on `mail.example.com`, and BearMail on
 `https://webmail.example.com`.
 
-Create the **name.com** or **Hostinger** domain/account and an **SMTP relay**
+Create the **name.com**, **Hostinger**, or **GoDaddy** domain/account and an **SMTP relay**
 account (**Brevo** recommended, Mailjet also supported) **before** you run
 `install.sh`. The installer will ask which DNS provider to use and for those
 credentials; it does not register the vendors for you. Details and every
@@ -38,8 +38,8 @@ curl -fsSL https://YOUR-DOMAIN/release_install.sh | sudo bash
 
 The bootstrapper always fetches `install.sh`, `stalwart`, and
 `stalwart-webui.tar.gz` from GitHub unless `BEARMAIL_DOWNLOAD_BASE` is set.
-It then starts the usual interactive setup. Prepare the name.com or Hostinger
-account and the SMTP relay account first; the wizard will ask for them.
+It then starts the usual interactive setup. Prepare the name.com, Hostinger,
+or GoDaddy account and the SMTP relay account first; the wizard will ask for them.
 
 Preview the download plan without changing the system:
 
@@ -53,8 +53,8 @@ curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_in
 
 | Prepare | Why the installer needs it |
 | --- | --- |
-| name.com domain on name.com nameservers, or a Hostinger domain on Hostinger nameservers | Zone for `mail.` and `webmail.` plus the printed MX/SPF/DKIM rows |
-| name.com production API token, or a Hostinger API token | Optional auto-publish of that DNS table. The installer asks which provider to use |
+| name.com, Hostinger, or GoDaddy domain on that provider's nameservers | Zone for `mail.` and `webmail.` plus the printed MX/SPF/DKIM rows |
+| name.com, Hostinger, or GoDaddy API token | Optional auto-publish of that DNS table. The installer asks which provider to use |
 | Brevo account (default), SMTP login and SMTP key; or Mailjet API key and secret | Outbound mail when the VPS blocks TCP 25 |
 
 ### Server
@@ -94,8 +94,8 @@ The build machine needs:
 - Node.js 22.12 or later with npm; and
 - a checkout of this repository.
 
-Choose these hostnames before starting. They must live in the name.com or
-Hostinger zone:
+Choose these hostnames before starting. They must live in the name.com,
+Hostinger, or GoDaddy zone:
 
 | Value | Example | Requirement |
 | --- | --- | --- |
@@ -268,8 +268,8 @@ The installer then:
 6. prints the URLs and combined DNS table;
 7. asks which outbound SMTP relay to use (Brevo by default, Mailjet, or skip); and
 8. if the printed DNS rows are not already in the zone, asks which domain
-   name provider to use and can publish them through the name.com or
-   Hostinger DNS API.
+   name provider to use and can publish them through the name.com, Hostinger,
+   or GoDaddy DNS API.
 
 If setup uses an external directory, or if this is a reinstall, the installer
 prompts for a Stalwart administrator username and password or app password. The
@@ -281,7 +281,7 @@ The installer prints a `TYPE`, `HOST`, `ANSWER`, `TTL`, and `PRIO` table, then
 asks whether those rows are already in the authoritative zone.
 
 If they are not, it asks you to choose **name.com** (default), **Hostinger**,
-or **publish the printed rows by hand**.
+**GoDaddy**, or **publish the printed rows by hand**.
 
 name.com asks for an API username, a production token, and the DNS zone
 (default: the mail domain). It creates, updates, or replaces A, AAAA, MX, TXT,
@@ -295,7 +295,19 @@ SRV values as `priority weight port target`. Hostinger replaces a whole name
 and type at once, so an SPF update also sends any unrelated TXT values at
 that name and keeps them.
 
-For either provider, if the zone already has records that conflict with the
+GoDaddy asks for a production personal access token from
+[developer.godaddy.com](https://developer.godaddy.com/) and the same DNS zone.
+Under Personal Access Tokens, choose Domains & DNS and allow domain read plus
+DNS update (`domains.domain:read` and `domains.dns:update`). It does not ask
+for a username, and it does not change nameservers. It writes the same record
+types through `https://api.godaddy.com/v3/domains/zones/{domain}/dns-records`
+with a bearer token. Apex records use `@`. MX uses a hostname plus a separate
+priority. SRV uses service, protocol, weight, port, and target. Each record
+is created, updated, or deleted on its own, so unrelated TXT values stay in
+place. GoDaddy's shortest TTL is 600 seconds, and its longest is 86400.
+The domain must use GoDaddy nameservers.
+
+For each provider, if the zone already has records that conflict with the
 Stalwart table—an old A/AAAA address, extra MX hosts, a previous
 SPF/DKIM/DMARC TXT, or a CNAME/ANAME/ALIAS on a name that now needs an address
 record—the installer lists them and asks whether to replace them (default
@@ -310,7 +322,7 @@ When Stalwart automatic DNS management is enabled, still verify the mail and
 WebUI A/AAAA rows; those hostnames must resolve to this server.
 
 - Replace `<PUBLIC_IPV4_NOT_DETECTED>` with the server's public IPv4 address
-  before expecting name.com or Hostinger to publish an A record.
+  before expecting name.com, Hostinger, or GoDaddy to publish an A record.
 - When a long HOST or ANSWER wraps onto another terminal line, join the parts
   without spaces before publishing it by hand.
 
@@ -343,7 +355,7 @@ points remote outbound routing at it while keeping local-domain delivery local.
 Secrets are not command-line arguments. See
 [How to set up a Brevo SMTP relay](BREVO_SMTP_RELAY.md).
 
-If you also publish DNS through name.com or Hostinger after choosing Brevo, the
+If you also publish DNS through name.com, Hostinger, or GoDaddy after choosing Brevo, the
 installer merges `include:spf.brevo.com` into existing SPF TXT rows. Add
 Brevo's DKIM selector from the Brevo dashboard separately.
 
@@ -359,7 +371,7 @@ Brevo's DKIM selector from the Brevo dashboard separately.
 The installer creates or updates an `MtaRoute` named `mailjet` and points
 remote outbound routing at it. See
 [How to set up a Mailjet SMTP relay](MAILJET_SMTP_RELAY.md).
-name.com or Hostinger publishing merges `include:spf.mailjet.com` into SPF.
+name.com, Hostinger, or GoDaddy publishing merges `include:spf.mailjet.com` into SPF.
 
 After DNS resolves and you create a user in the Stalwart admin panel, that user
 can sign in to the WebUI and send mail.
@@ -671,11 +683,13 @@ in the selected relay.
 For name.com, confirm the API username and production token, that the zone is
 in that name.com account, and that two-step verification allows API access.
 For Hostinger, confirm the API token, that the zone is in that Hostinger
-account, and that the domain uses Hostinger nameservers. The installer repeats
-those questions after an API error. If old records conflict, it lists
-replacements and deletions and asks before changing them. CAA and reverse-DNS
-rows are never sent. NS records and unrelated verification TXT records are not
-deleted.
+account, and that the domain uses Hostinger nameservers. For GoDaddy, confirm
+the production personal access token includes domain read and DNS update, that
+the zone is in that GoDaddy account, and that the domain uses GoDaddy
+nameservers. The installer repeats those questions after an API error. If old
+records conflict, it lists replacements and deletions and asks before changing
+them. CAA and reverse-DNS rows are never sent. NS records and unrelated
+verification TXT records are not deleted.
 
 ### The WebUI works locally but not publicly
 

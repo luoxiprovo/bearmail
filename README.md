@@ -21,7 +21,7 @@ finishes you have:
 - webmail and calendar on `https://webmail.example.com`;
 - HTTPS via Caddy;
 - outbound through Brevo (Mailjet optional) when the VPS blocks TCP 25;
-- DNS through **name.com** or **Hostinger** (other registrars are manual).
+- DNS through **name.com**, **Hostinger**, or **GoDaddy** (other registrars are manual).
 
 ![BearMail architecture: MCP hosts spawn bearmail-mcp; the sidecar talks JMAP to Stalwart; humans use the WebUI; the rest of the world stays on SMTP and iMIP.](docs/img/architecture.png)
 
@@ -51,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_in
 
 That downloads `install.sh`, the `stalwart` binary, and
 `stalwart-webui.tar.gz` from this GitHub repo, then starts the interactive
-setup. Prepare the [DNS provider](#1-domain-at-namecom-or-hostinger) and
+setup. Prepare the [DNS provider](#1-domain-at-namecom-hostinger-or-godaddy) and
 [SMTP relay](#2-smtp-relay-account-brevo-recommended) accounts first. The
 wizard will ask for them.
 
@@ -133,11 +133,11 @@ hard-refresh webmail so the browser loads the new assets.
 Do this **before** you run the installer. The script will ask for the values;
 it does not create the vendor accounts for you.
 
-### 1. Domain at name.com or Hostinger
+### 1. Domain at name.com, Hostinger, or GoDaddy
 
 The installer asks which provider owns the DNS zone. Automated publishing
-works for **name.com** and **Hostinger**. Any other registrar is a manual
-zone: the installer prints the table and you add the rows yourself.
+works for **name.com**, **Hostinger**, and **GoDaddy**. Any other registrar
+is a manual zone: the installer prints the table and you add the rows yourself.
 
 #### name.com
 
@@ -155,6 +155,20 @@ zone: the installer prints the table and you add the rows yourself.
 2. Keep the domain on **Hostinger nameservers**.
 3. In hPanel, open **API** and create an API token.
 4. Keep the **token** ready. Hostinger does not ask for a username. The
+   installer types the token with echo off and does not save it in
+   `installer-state.json`.
+
+#### GoDaddy
+
+1. Buy or transfer a domain at [GoDaddy](https://www.godaddy.com/).
+2. Keep the domain on **GoDaddy nameservers**. The installer does not change
+   nameservers.
+3. Sign in at [developer.godaddy.com](https://developer.godaddy.com/) and open
+   **Personal Access Tokens**. Generate a **production** token.
+4. Under **Domains & DNS**, allow domain read and DNS update
+   (`domains.domain:read` and `domains.dns:update`). Leave nameserver
+   replacement off.
+5. Keep the **token** ready. GoDaddy does not ask for a username. The
    installer types the token with echo off and does not save it in
    `installer-state.json`.
 
@@ -180,7 +194,7 @@ available.
    (the part after `@`, such as `example.com`).
 3. Publish Brevo’s domain-ownership TXT (Brevo code) and DKIM as shown there.
    The installer can merge `include:spf.brevo.com` into SPF when it publishes
-   DNS through name.com or Hostinger. Add Brevo’s DKIM selector from the
+   DNS through name.com, Hostinger, or GoDaddy. Add Brevo’s DKIM selector from the
    dashboard yourself.
 4. **Settings → SMTP & API → SMTP**
    ([SMTP page](https://app.brevo.com/settings/keys/smtp)).
@@ -196,8 +210,8 @@ is implicit TLS. See [Brevo SMTP relay](docs/BREVO_SMTP_RELAY.md).
 1. Create an account at [app.mailjet.com](https://app.mailjet.com/).
 2. **Account settings → Senders & Domains** → add your mail domain.
 3. Publish Mailjet’s domain-ownership TXT and DKIM. The installer can merge
-   `include:spf.mailjet.com` into SPF when it publishes DNS through name.com
-   or Hostinger.
+   `include:spf.mailjet.com` into SPF when it publishes DNS through name.com,
+   Hostinger, or GoDaddy.
 4. **Account settings → SMTP and SEND API settings**
    ([relay page](https://app.mailjet.com/account/relay)).
 5. Copy the **API key** (SMTP username) and **secret key** (SMTP password).
@@ -362,13 +376,15 @@ Default **no**. If you answer no, choose the domain name provider:
 | --- | --- |
 | name.com (default) | Zone (usually `example.com`), API username, production API token |
 | Hostinger | Zone (usually `example.com`), API token from hPanel → API |
+| GoDaddy | Zone (usually `example.com`), production API token from developer.godaddy.com |
 | Publish by hand | Nothing else. Add the printed rows yourself |
 
 If existing records conflict (old A/MX/SPF), the installer lists them and
-asks **Replace the conflicting name.com records** or **Replace the
-conflicting Hostinger records** (default yes). Site verification TXT and NS
-records are left alone. Reverse DNS (PTR) is **not** in this table; set it
-at the VPS provider if you send without a relay.
+asks **Replace the conflicting name.com records**, **Replace the conflicting
+Hostinger records**, or **Replace the conflicting GoDaddy records** (default
+yes). Site verification TXT and NS records are left alone. Reverse DNS (PTR)
+is **not** in this table; set it at the VPS provider if you send without a
+relay.
 
 Wait for DNS to resolve, then open:
 

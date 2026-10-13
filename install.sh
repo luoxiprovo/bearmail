@@ -88,9 +88,10 @@ main() {
     say ""
     say "Prepare before the later prompts (the installer does not create these"
     say "vendor accounts for you):"
-    say "  • DNS at name.com or Hostinger, on that provider's nameservers"
+    say "  • DNS at name.com, Hostinger, or GoDaddy, on that provider's nameservers"
     say "    name.com: account username and a production API token"
     say "    Hostinger: an API token from hPanel → API"
+    say "    GoDaddy: a production API token from developer.godaddy.com"
     say "  • SMTP relay account (Brevo recommended, Mailjet also supported):"
     say "    sender domain plus SMTP login and SMTP key"
     say "You can still install without them, then add DNS and the relay later."
@@ -536,6 +537,9 @@ main() {
     elif [ "$_dns_published" = "hostinger" ]; then
         say "Hostinger now has the forward-DNS rows for ${_mail_domain}. Wait for"
         say "propagation before testing the public URLs."
+    elif [ "$_dns_published" = "godaddy" ]; then
+        say "GoDaddy now has the forward-DNS rows for ${_mail_domain}. Wait for"
+        say "propagation before testing the public URLs."
     elif [ -z "$_smtp_relay" ]; then
         say "If the printed forward-DNS rows are not yet in the authoritative zone,"
         say "add them before public login."
@@ -580,11 +584,11 @@ Usage: install.sh
 Interactively install BearMail: a local Stalwart mail engine binary and a
 prebuilt webmail/calendar UI, then configure CORS and start two services.
 
-Prepare a name.com or Hostinger domain (nameservers at that provider) and an
-SMTP relay account (Brevo recommended, Mailjet also supported) before you run
-this. The installer asks which DNS provider to use, then the name.com or
-Hostinger API token and the relay SMTP login. No installation or setup answer
-is accepted as a command-line parameter.
+Prepare a name.com, Hostinger, or GoDaddy domain (nameservers at that
+provider) and an SMTP relay account (Brevo recommended, Mailjet also
+supported) before you run this. The installer asks which DNS provider to use,
+then that provider's API token and the relay SMTP login. No installation or
+setup answer is accepted as a command-line parameter.
 
 The installer asks for paths and public values. Quick setup asks only for the
 public mail hostname (example: mail.example.com) and primary mail domain
@@ -608,7 +612,8 @@ After setup, combined DNS records are printed in aligned TYPE, HOST, ANSWER,
 TTL, and PRIO columns. The installer then asks which outbound SMTP relay to
 use (Brevo by default, Mailjet, or skip), whether the printed DNS rows are
 already in the zone, and which DNS provider to use. If they are not already
-published, it can publish them through the name.com or Hostinger DNS API.
+published, it can publish them through the name.com, Hostinger, or GoDaddy
+DNS API.
 The recommended publishing mode installs Caddy, routes the mail and BearMail
 hostnames to separate localhost upstreams, obtains HTTPS certificates, and
 synchronizes the mail-host certificate into the engine. An explicit
@@ -2266,8 +2271,8 @@ publish_optional_dns() {
     say "-----------------"
     say "BearMail and public HTTPS certificates need the printed A/AAAA (and mail)"
     say "records to resolve to this server. If those rows are already in the zone,"
-    say "skip the DNS API. Otherwise choose name.com or Hostinger. The installer"
-    say "never stores the API token in installer-state.json."
+    say "skip the DNS API. Otherwise choose name.com, Hostinger, or GoDaddy. The"
+    say "installer never stores the API token in installer-state.json."
     say ""
     if prompt_yes_no "Have you already published the printed forward-DNS records" "no"; then
         RETVAL="false"
@@ -2277,6 +2282,7 @@ publish_optional_dns() {
     prompt_menu "Domain name provider" 1 \
         "name.com" \
         "Hostinger" \
+        "GoDaddy" \
         "Publish the printed rows by hand"
     _provider="$RETVAL"
     case "$_provider" in
@@ -2292,6 +2298,13 @@ publish_optional_dns() {
                 "$_state" "$_webui_hostname" "$_mail_domain" "$_smtp_relay"
             if [ "$RETVAL" = "true" ]; then
                 RETVAL="hostinger"
+            fi
+            ;;
+        3)
+            publish_optional_godaddy_dns \
+                "$_state" "$_webui_hostname" "$_mail_domain" "$_smtp_relay"
+            if [ "$RETVAL" = "true" ]; then
+                RETVAL="godaddy"
             fi
             ;;
         *)
@@ -2373,6 +2386,43 @@ publish_optional_hostinger_dns() {
         prompt_dns_name "Hostinger domain (DNS zone)" "$_zone"
         _zone="$RETVAL"
         prompt_secret "Hostinger API token"
+        _token="$RETVAL"
+    done
+}
+
+publish_optional_godaddy_dns() {
+    local _state="$1" _webui_hostname="$2" _mail_domain="$3" _smtp_relay="$4"
+    local _zone _token
+    RETVAL="false"
+    say ""
+    say "Create a production API token at developer.godaddy.com → Personal Access Tokens."
+    say "Under Domains & DNS, allow domain read and DNS update. GoDaddy uses that"
+    say "bearer token and does not ask for a username. The domain's nameservers must"
+    say "be GoDaddy's. If old records conflict with the Stalwart table, they are"
+    say "listed and replaced only after confirmation. The installer never stores"
+    say "the token in installer-state.json."
+    say ""
+    prompt_dns_name "GoDaddy domain (DNS zone)" "$_mail_domain"
+    _zone="$RETVAL"
+    prompt_secret "GoDaddy API token"
+    _token="$RETVAL"
+    say "🌐 Publishing forward-DNS records through the GoDaddy API..."
+    while true; do
+        if printf '%s' "$_token" | \
+            publish_dns_via_godaddy "$_state" "$_webui_hostname" "$_zone" "$_smtp_relay"
+        then
+            if [ "$RETVAL" = "true" ]; then
+                return 0
+            fi
+            say "GoDaddy publishing was skipped. Add or replace the printed DNS rows by hand."
+            RETVAL="false"
+            return 0
+        fi
+        printf '  GoDaddy rejected that request. Enter the token again, or confirm\n' >&3
+        printf '  the domain is in this GoDaddy account and uses GoDaddy nameservers.\n' >&3
+        prompt_dns_name "GoDaddy domain (DNS zone)" "$_zone"
+        _zone="$RETVAL"
+        prompt_secret "GoDaddy API token"
         _token="$RETVAL"
     done
 }
@@ -3012,6 +3062,324 @@ $(hostinger_request_js)
             if (puts.length) await hostingerRequest('PUT', base, { overwrite: true, zone: puts });
             const unchanged = (actions.unchanged || []).length;
             console.log('  Hostinger DNS: ' + (actions.created || 0) + ' created, ' + (actions.updated || 0) + ' updated, ' + (actions.destroyed || 0) + ' replaced/removed, ' + unchanged + ' unchanged.');
+          })().catch((error) => { console.error(error.message); process.exit(1); });
+        "
+    then
+        rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+        return 1
+    fi
+    rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+    RETVAL="true"
+    return 0
+}
+
+# GoDaddy v3 updates one record at a time. A personal access token is sent as
+# Authorization: Bearer. Apex is "@". MX keeps priority beside data. SRV is
+# stored as service, protocol, weight, port, and target, while the reconciler
+# still sees the zone-relative owner (_imaps._tcp). TTL must be 600..86400.
+# NS and SOA are never sent. Unrelated TXT records are left untouched because
+# each write names a recordId. The token stays out of installer-state.json.
+godaddy_request_js() {
+    cat <<'EOF'
+      const fs = require("node:fs");
+      async function godaddyRequest(method, url, body) {
+        const response = await fetch(url, {
+          method,
+          headers: {
+            Authorization: process.env.GODADDY_AUTH,
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: body ? JSON.stringify(body) : undefined,
+          signal: AbortSignal.timeout(20000),
+        });
+        const text = await response.text();
+        let json = {};
+        try { json = text ? JSON.parse(text) : {}; } catch { json = { message: text.slice(0, 200) }; }
+        if (!response.ok) {
+          const detail = json.message || json.code
+            || (json.fields ? JSON.stringify(json.fields).slice(0, 300) : text.slice(0, 300));
+          throw new Error(`GoDaddy ${method} ${url} failed (${response.status}): ${detail}`);
+        }
+        return json;
+      }
+EOF
+}
+
+godaddy_changes_js() {
+    cat <<'EOF'
+      function godaddyItems(payload) {
+        if (Array.isArray(payload)) return payload;
+        if (payload && Array.isArray(payload.items)) return payload.items;
+        if (payload && Array.isArray(payload.records)) return payload.records;
+        throw new Error("GoDaddy DNS response did not include a record list");
+      }
+
+      function relativeHost(raw, zone) {
+        let name = String(raw ?? "").trim().replace(/\.$/, "").toLowerCase();
+        if (!name || name === "@") return "";
+        if (zone && name === zone) return "";
+        if (zone && name.endsWith("." + zone)) return name.slice(0, -(zone.length + 1));
+        return name;
+      }
+
+      function stripQuotes(value) {
+        let text = String(value ?? "").trim();
+        if (text.length >= 2 && ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'")))) {
+          text = text.slice(1, -1);
+        }
+        return text;
+      }
+
+      function stripDot(value) {
+        return String(value ?? "").trim().replace(/\.$/, "");
+      }
+
+      function godaddyTtl(value) {
+        const ttl = Number(value);
+        const chosen = Number.isFinite(ttl) && ttl > 0 ? ttl : 3600;
+        return Math.min(86400, Math.max(600, chosen));
+      }
+
+      function clampInt(value, fallback) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return fallback;
+        return Math.min(65535, Math.max(0, Math.trunc(number)));
+      }
+
+      function srvOwner(record, zone) {
+        const service = stripDot(record.service).toLowerCase();
+        const protocol = stripDot(record.protocol).toLowerCase();
+        const name = relativeHost(record.name, zone);
+        if (service && protocol) {
+          const prefix = service + "." + protocol;
+          if (!name) return prefix;
+          if (name === prefix || name.startsWith(prefix + ".")) return name;
+          return prefix + "." + name;
+        }
+        return name;
+      }
+
+      function flattenGodaddyZone(payload, zone) {
+        const rows = [];
+        for (const rec of godaddyItems(payload)) {
+          const type = String(rec.type || "").toUpperCase();
+          if (type === "NS" || type === "SOA") continue;
+          if (!rec.recordId) throw new Error("GoDaddy DNS record is missing recordId");
+          const host = type === "SRV" ? srvOwner(rec, zone) : relativeHost(rec.name, zone);
+          let answer = stripQuotes(rec.data);
+          let priority;
+          if (type === "MX") {
+            answer = stripDot(answer);
+            priority = rec.priority == null || rec.priority === "" ? undefined : Number(rec.priority);
+          } else if (type === "SRV") {
+            const weight = rec.weight == null || rec.weight === "" ? 0 : Number(rec.weight);
+            const port = rec.port == null || rec.port === "" ? 0 : Number(rec.port);
+            answer = weight + " " + port + " " + stripDot(stripQuotes(rec.data));
+            priority = rec.priority == null || rec.priority === "" ? undefined : Number(rec.priority);
+          } else if (type === "CNAME" || type === "ANAME" || type === "ALIAS") {
+            answer = stripDot(answer);
+          }
+          if (!String(answer || "").trim()) continue;
+          rows.push({
+            id: rec.recordId,
+            host,
+            type,
+            answer,
+            priority,
+            ttl: Number(rec.ttl) || 3600,
+          });
+        }
+        return rows;
+      }
+
+      function godaddyName(host) {
+        const name = String(host ?? "").replace(/\.$/, "").trim();
+        return name === "" || name === "@" ? "@" : name;
+      }
+
+      function splitSrvHost(host) {
+        const name = String(host ?? "").replace(/\.$/, "").trim().toLowerCase();
+        const match = name.match(/^(_[^.]+)\.(_[^.]+)(?:\.(.*))?$/);
+        if (!match) return null;
+        return { service: match[1], protocol: match[2], name: match[3] || "@" };
+      }
+
+      function parseSrvAnswer(answer) {
+        const match = String(answer ?? "").trim().match(/^(\d+)\s+(\d+)\s+(\S+)$/);
+        if (!match) return null;
+        return { weight: Number(match[1]), port: Number(match[2]), data: stripDot(match[3]) };
+      }
+
+      function godaddyRecord(row) {
+        const type = String(row.type || "").toUpperCase();
+        if (type === "NS" || type === "SOA") {
+          throw new Error("GoDaddy DNS does not publish " + type + " records");
+        }
+        const ttl = godaddyTtl(row.ttl);
+        if (type === "MX") {
+          return {
+            type,
+            name: godaddyName(row.host),
+            data: stripDot(row.answer),
+            priority: clampInt(row.priority, 10),
+            ttl,
+          };
+        }
+        if (type === "SRV") {
+          const owner = splitSrvHost(row.host);
+          const parsed = parseSrvAnswer(row.answer);
+          if (!owner || !parsed || !parsed.data) {
+            throw new Error("GoDaddy SRV record could not be encoded: " + row.host + " " + row.answer);
+          }
+          return {
+            type,
+            name: owner.name,
+            service: owner.service,
+            protocol: owner.protocol,
+            data: parsed.data,
+            priority: clampInt(row.priority, 0),
+            weight: clampInt(parsed.weight, 0),
+            port: clampInt(parsed.port, 0),
+            ttl,
+          };
+        }
+        const data = type === "CNAME" || type === "ANAME" || type === "ALIAS"
+          ? stripDot(row.answer)
+          : String(row.answer ?? "").trim();
+        return { type, name: godaddyName(row.host), data, ttl };
+      }
+
+      function buildGodaddyChanges(existingPayload, plan) {
+        const zone = String(plan.zone || "").replace(/\.$/, "").toLowerCase();
+        const wanted = (plan.plan || []).map((row) => Object.assign({}, row, { ttl: godaddyTtl(row.ttl) }));
+        const flat = flattenGodaddyZone(existingPayload, zone);
+        const actions = reconcileNamecomActions(flat, wanted);
+        const posts = [];
+        const puts = [];
+        const deletes = [];
+        for (const row of actions.destroy || []) {
+          if (!row.id) throw new Error("GoDaddy DNS record is missing recordId");
+          deletes.push(row.id);
+        }
+        for (const row of actions.update || []) {
+          if (!row.id) throw new Error("GoDaddy DNS record is missing recordId");
+          puts.push({ recordId: row.id, record: godaddyRecord(row.record) });
+        }
+        for (const row of actions.create || []) posts.push(godaddyRecord(row));
+        return {
+          zone: plan.zone,
+          skipped: plan.skipped || [],
+          conflicts: actions.conflicts || [],
+          unchanged: actions.unchanged || [],
+          posts,
+          puts,
+          deletes,
+          created: (actions.create || []).length,
+          updated: (actions.update || []).length,
+          destroyed: (actions.destroy || []).length,
+        };
+      }
+
+      const existing = JSON.parse(fs.readFileSync(process.env.GODADDY_EXISTING_PATH, "utf8"));
+      const parsed = JSON.parse(fs.readFileSync(process.env.GODADDY_PLAN_PATH, "utf8"));
+      process.stdout.write(JSON.stringify(buildGodaddyChanges(existing, parsed)));
+EOF
+}
+
+build_godaddy_changes() {
+    local _existing="$1" _plan="$2"
+    GODADDY_EXISTING_PATH="$_existing" GODADDY_PLAN_PATH="$_plan" "$NODE_BIN" -e "
+$(namecom_reconcile_js)
+$(godaddy_changes_js)
+    "
+}
+
+publish_dns_via_godaddy() {
+    local _state="$1" _webui_hostname="$2" _zone="$3" _smtp_relay="$4"
+    local _plan _token _plan_file _existing_file _actions_file _auth
+    RETVAL="false"
+    _token="$(cat)"
+    if ! _plan="$(build_namecom_dns_plan "$_state" "$_webui_hostname" "$_zone" "$_smtp_relay")"; then
+        return 1
+    fi
+    _plan_file="$(mktemp)"
+    _existing_file="$(mktemp)"
+    _actions_file="$(mktemp)"
+    printf '%s' "$_plan" > "$_plan_file"
+    chmod 0600 "$_plan_file" "$_existing_file" "$_actions_file"
+    _auth="Bearer ${_token}"
+    if ! GODADDY_AUTH="$_auth" GODADDY_ZONE="$_zone" GODADDY_EXISTING_PATH="$_existing_file" \
+        "$NODE_BIN" -e "
+$(godaddy_request_js)
+          const zone = process.env.GODADDY_ZONE;
+          const base = 'https://api.godaddy.com/v3/domains/zones/' + encodeURIComponent(zone) + '/dns-records';
+          (async () => {
+            const records = [];
+            let page = 1;
+            for (;;) {
+              if (page > 100) throw new Error('GoDaddy DNS zone has too many pages to publish safely');
+              const listed = await godaddyRequest('GET', base + '?page=' + page + '&pageSize=100&totalRequired=true');
+              const items = Array.isArray(listed) ? listed
+                : (listed && Array.isArray(listed.items) ? listed.items
+                : (listed && Array.isArray(listed.records) ? listed.records : null));
+              if (!items) throw new Error('GoDaddy DNS response did not include a record list');
+              records.push(...items);
+              const totalPages = Number(listed && listed.totalPages) || 0;
+              if (items.length < 100) break;
+              if (totalPages && page >= totalPages) break;
+              page += 1;
+            }
+            fs.writeFileSync(process.env.GODADDY_EXISTING_PATH, JSON.stringify(records));
+          })().catch((error) => { console.error(error.message); process.exit(1); });
+        "
+    then
+        rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+        return 1
+    fi
+    if ! build_godaddy_changes "$_existing_file" "$_plan_file" > "$_actions_file"; then
+        rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+        return 1
+    fi
+    GODADDY_ACTIONS_PATH="$_actions_file" "$NODE_BIN" -e '
+      const fs = require("node:fs");
+      const actions = JSON.parse(fs.readFileSync(process.env.GODADDY_ACTIONS_PATH, "utf8"));
+      for (const warning of actions.skipped || []) console.log("  skipped: " + warning);
+      if (!(actions.posts || []).length && !(actions.puts || []).length && !(actions.deletes || []).length) {
+        console.log("  GoDaddy DNS: all published records already match.");
+      }
+    '
+    if GODADDY_ACTIONS_PATH="$_actions_file" "$NODE_BIN" -e '
+      const fs = require("node:fs");
+      const actions = JSON.parse(fs.readFileSync(process.env.GODADDY_ACTIONS_PATH, "utf8"));
+      process.exit((actions.conflicts || []).length ? 0 : 1);
+    '
+    then
+        DNS_PROVIDER_LABEL="GoDaddy" print_namecom_conflicts "$_actions_file"
+        if ! prompt_yes_no "Replace the conflicting GoDaddy records with the Stalwart DNS table" "yes"; then
+            rm -f "$_plan_file" "$_existing_file" "$_actions_file"
+            RETVAL="false"
+            return 0
+        fi
+    fi
+    if ! GODADDY_AUTH="$_auth" GODADDY_ZONE="$_zone" GODADDY_ACTIONS_PATH="$_actions_file" \
+        "$NODE_BIN" -e "
+$(godaddy_request_js)
+          const actions = JSON.parse(fs.readFileSync(process.env.GODADDY_ACTIONS_PATH, 'utf8'));
+          const zone = process.env.GODADDY_ZONE;
+          const base = 'https://api.godaddy.com/v3/domains/zones/' + encodeURIComponent(zone) + '/dns-records';
+          (async () => {
+            for (const recordId of actions.deletes || []) {
+              await godaddyRequest('DELETE', base + '/' + encodeURIComponent(recordId));
+            }
+            for (const row of actions.puts || []) {
+              await godaddyRequest('PUT', base + '/' + encodeURIComponent(row.recordId), row.record);
+            }
+            for (const row of actions.posts || []) {
+              await godaddyRequest('POST', base, row);
+            }
+            const unchanged = (actions.unchanged || []).length;
+            console.log('  GoDaddy DNS: ' + (actions.created || 0) + ' created, ' + (actions.updated || 0) + ' updated, ' + (actions.destroyed || 0) + ' replaced/removed, ' + unchanged + ' unchanged.');
           })().catch((error) => { console.error(error.message); process.exit(1); });
         "
     then

@@ -23,6 +23,8 @@ printf '%s\n' "$help_out" | grep -q 'name.com' || \
     fail "help does not mention name.com DNS publish"
 printf '%s\n' "$help_out" | grep -q 'Hostinger' || \
     fail "help does not mention Hostinger DNS publish"
+printf '%s\n' "$help_out" | grep -q 'GoDaddy' || \
+    fail "help does not mention GoDaddy DNS publish"
 printf '%s\n' "$help_out" | grep -q 'install.sh' || \
     fail "help does not say it runs install.sh"
 
@@ -42,8 +44,8 @@ printf '%s\n' "$dry_out" | grep -q 'exec sh .*/install.sh' || \
     fail "dry-run does not exec install.sh"
 printf '%s\n' "$dry_out" | grep -q 'SMTP relay' || \
     fail "dry-run does not mention SMTP relay"
-printf '%s\n' "$dry_out" | grep -q 'name.com or Hostinger DNS' || \
-    fail "dry-run does not mention name.com or Hostinger DNS"
+printf '%s\n' "$dry_out" | grep -q 'name.com, Hostinger, or GoDaddy DNS' || \
+    fail "dry-run does not mention name.com, Hostinger, or GoDaddy DNS"
 
 printf '%s\n' "$help_out" | grep -q -- '--webui-only' || \
     fail "help does not document --webui-only"

@@ -1,7 +1,7 @@
 # Test plan: SMTP relay and DNS publishing in the combined installer
 
 This plan verifies the end-of-install Brevo (default) or Mailjet SMTP relay
-and name.com or Hostinger DNS publishing added to `install.sh`. Automated
+and name.com, Hostinger, or GoDaddy DNS publishing added to `install.sh`. Automated
 checks run without root, a relay account, or a DNS provider. Live account
 steps need a disposable Linux VM.
 
@@ -22,6 +22,7 @@ sh tests/resources/scripts/install_dns_output_test.sh
 sh tests/resources/scripts/install_proxy_config_test.sh
 sh tests/resources/scripts/install_namecom_plan_test.sh
 sh tests/resources/scripts/install_hostinger_plan_test.sh
+sh tests/resources/scripts/install_godaddy_plan_test.sh
 ```
 
 If ShellCheck is installed:
@@ -49,13 +50,15 @@ git diff --check
 | `install_proxy_config_test.sh` | `PASS: installer renders isolated Caddy routes and certificate synchronization` |
 | `install_namecom_plan_test.sh` | three PASS lines: zone-relative Brevo SPF merge, Mailjet SPF merge, and conflict reconciliation |
 | `install_hostinger_plan_test.sh` | two PASS lines: conflict replacement with MX/SRV encoding, and no writes when the zone already matches |
+| `install_godaddy_plan_test.sh` | three PASS lines: conflict replacement with MX/SRV encoding, no writes when the zone already matches, and TTL clamped to 600..86400 |
 
 ### Coverage those scripts must prove
 
 1. Relay SMTP port `25` is rejected; `587` is accepted after a retry.
 2. Combined DNS table includes mail and WebUI A rows, excludes PTR.
 3. The shared DNS plan uses zone-relative hosts (`mail`, `webmail`, apex as `""`).
-   Hostinger publishes that apex as `@`.
+   Hostinger and GoDaddy publish that apex as `@`. GoDaddy clamps TTL to
+   600..86400.
 4. Choosing Brevo merges `include:spf.brevo.com` into SPF TXT rows; choosing
    Mailjet merges `include:spf.mailjet.com`.
 5. CAA and out-of-zone hosts are skipped, not published.
@@ -74,14 +77,15 @@ Inspect `install.sh` (no execution as root):
 
 - Relay secrets and DNS tokens are not passed as command-line arguments.
 - `installer-state.json` writing still deletes `administrator` and does not
-  store the name.com or Hostinger token.
+  store the name.com, Hostinger, or GoDaddy token.
 - Completion asks which SMTP relay to use (Brevo default) after the DNS table,
   then asks whether DNS is already published (default no).
-- If it is not, the provider menu is name.com (default), Hostinger, or publish
-  by hand.
+- If it is not, the provider menu is name.com (default), Hostinger, GoDaddy,
+  or publish by hand.
 - Conflicting records print a replace/delete list and prompt
-  `Replace the conflicting name.com records with the Stalwart DNS table` or
-  `Replace the conflicting Hostinger records with the Stalwart DNS table`.
+  `Replace the conflicting name.com records with the Stalwart DNS table`,
+  `Replace the conflicting Hostinger records with the Stalwart DNS table`, or
+  `Replace the conflicting GoDaddy records with the Stalwart DNS table`.
 - Declining that prompt skips publishing without treating it as a credential
   failure.
 
@@ -160,9 +164,24 @@ TXT stay. A conflicting CNAME or ALIAS at `mail` or `webmail` is removed.
 Declining the replace prompt does not call the update API. A wrong token
 repeats the token question.
 
+## E. Live Brevo + GoDaddy (disposable VM)
+
+Same as section C, with a GoDaddy domain on GoDaddy nameservers and a
+production personal access token from developer.godaddy.com. The token needs
+`domains.domain:read` and `domains.dns:update`. At the provider menu choose
+**GoDaddy**. The prompts are the zone and the token; there is no username.
+
+Pass: GoDaddy shows the same A, AAAA, MX, SPF, and SRV rows. Apex names are
+`@`. MX is a hostname with priority 10. SRV `_imaps._tcp` is service
+`_imaps`, protocol `_tcp`, weight and port from the table, and the mail host
+as data. TTL is at least 600. NS records and an unrelated TXT stay. A
+conflicting CNAME at `mail` or `webmail` is removed. Nameservers are
+unchanged. Declining the replace prompt does not call the update API. A wrong
+token repeats the token question.
+
 ## Exit criteria
 
 Section A must pass on this tree. Section B must match `install.sh`.
-Sections C and D are required before calling the feature done on a live
-domain; if a Brevo, name.com, or Hostinger account is unavailable, list that
-gap explicitly and do not mark that section as passed.
+Sections C, D, and E are required before calling the feature done on a live
+domain; if a Brevo, name.com, Hostinger, or GoDaddy account is unavailable,
+list that gap explicitly and do not mark that section as passed.
