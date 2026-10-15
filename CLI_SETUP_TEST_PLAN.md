@@ -103,7 +103,8 @@ have a focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RE
   `priority weight port target`, replace conflicting A/MX/SPF sets, delete
   CNAME and ALIAS clashes, preserve unrelated TXT and NS, and write nothing
   when the zone already matches.
-- GoDaddy changes encode MX as a hostname plus priority and SRV as service,
+- GoDaddy changes encode MX as a hostname plus priority, send CNAME, MX, and
+  SRV hostnames with a trailing dot, and encode SRV as service,
   protocol, weight, port, and target, raise TTL into 600..86400, replace
   conflicting A/MX/SPF records by record id, delete CNAME clashes, preserve
   unrelated TXT and NS, and write nothing when the zone already matches.

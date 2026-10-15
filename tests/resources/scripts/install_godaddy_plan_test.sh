@@ -90,6 +90,13 @@ printf '%s\n' '{
       "answer": "0 993 mail.example.test",
       "ttl": 3600,
       "priority": 0
+    },
+    {
+      "recordType": "CNAME",
+      "host": "autoconfig.example.test",
+      "answer": "mail.example.test",
+      "ttl": 3600,
+      "priority": null
     }
   ]
 }' > "$STATE_FILE"
@@ -139,7 +146,7 @@ CHANGES_FILE="$CHANGES_FILE" "$NODE_BIN" -e '
   }
   if (Object.prototype.hasOwnProperty.call(mailA.record, "priority")) fail("A record included a priority");
   const mx = put("rec_mx1");
-  if (!mx || mx.record.name !== "@" || mx.record.data !== "mail.example.test" || mx.record.priority !== 10) {
+  if (!mx || mx.record.name !== "@" || mx.record.data !== "mail.example.test." || mx.record.priority !== 10) {
     fail("apex MX was not encoded: " + JSON.stringify(mx));
   }
   const txt = put("rec_spf");
@@ -163,8 +170,12 @@ CHANGES_FILE="$CHANGES_FILE" "$NODE_BIN" -e '
   if (!srv || srv.record.name !== "@" || srv.record.service !== "_imaps" || srv.record.protocol !== "_tcp") {
     fail("SRV owner was not split into service and protocol: " + JSON.stringify(srv));
   }
-  if (srv.record.priority !== 0 || srv.record.weight !== 0 || srv.record.port !== 993 || srv.record.data !== "mail.example.test") {
+  if (srv.record.priority !== 0 || srv.record.weight !== 0 || srv.record.port !== 993 || srv.record.data !== "mail.example.test.") {
     fail("SRV target was not encoded: " + JSON.stringify(srv.record));
+  }
+  const cname = post("CNAME", "autoconfig");
+  if (!cname || cname.data !== "mail.example.test.") {
+    fail("CNAME target was not an absolute name: " + JSON.stringify(cname));
   }
   const bodies = (changes.posts || []).concat((changes.puts || []).map((row) => row.record));
   if (bodies.some((row) => row.type === "NS" || row.type === "SOA" || row.type === "PTR" || row.type === "CAA" || row.name === "www")) {

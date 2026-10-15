@@ -3074,9 +3074,11 @@ $(hostinger_request_js)
 }
 
 # GoDaddy v3 updates one record at a time. A personal access token is sent as
-# Authorization: Bearer. Apex is "@". MX keeps priority beside data. SRV is
-# stored as service, protocol, weight, port, and target, while the reconciler
-# still sees the zone-relative owner (_imaps._tcp). TTL must be 600..86400.
+# Authorization: Bearer. Apex is "@". MX keeps priority beside data. CNAME,
+# MX, and SRV targets are absolute names ending in "." because GoDaddy rejects
+# a hostname without that dot as a schema error. SRV is stored as service,
+# protocol, weight, port, and target, while the reconciler still sees the
+# zone-relative owner (_imaps._tcp). TTL must be 600..86400.
 # NS and SOA are never sent. Unrelated TXT records are left untouched because
 # each write names a recordId. The token stays out of installer-state.json.
 godaddy_request_js() {
@@ -3097,9 +3099,12 @@ godaddy_request_js() {
         let json = {};
         try { json = text ? JSON.parse(text) : {}; } catch { json = { message: text.slice(0, 200) }; }
         if (!response.ok) {
-          const detail = json.message || json.code
-            || (json.fields ? JSON.stringify(json.fields).slice(0, 300) : text.slice(0, 300));
-          throw new Error(`GoDaddy ${method} ${url} failed (${response.status}): ${detail}`);
+          const fields = Array.isArray(json.fields) && json.fields.length
+            ? " fields=" + JSON.stringify(json.fields).slice(0, 500)
+            : "";
+          const detail = (json.message || json.code || text.slice(0, 300)) + fields;
+          const label = body && body.type ? ` (${body.type} ${body.name || "@"})` : "";
+          throw new Error(`GoDaddy ${method} ${url} failed (${response.status}): ${detail}${label}`);
         }
         return json;
       }
@@ -3133,6 +3138,11 @@ godaddy_changes_js() {
 
       function stripDot(value) {
         return String(value ?? "").trim().replace(/\.$/, "");
+      }
+
+      function absoluteName(value) {
+        const name = stripDot(value);
+        return name ? name + "." : name;
       }
 
       function godaddyTtl(value) {
@@ -3208,7 +3218,7 @@ godaddy_changes_js() {
       function parseSrvAnswer(answer) {
         const match = String(answer ?? "").trim().match(/^(\d+)\s+(\d+)\s+(\S+)$/);
         if (!match) return null;
-        return { weight: Number(match[1]), port: Number(match[2]), data: stripDot(match[3]) };
+        return { weight: Number(match[1]), port: Number(match[2]), data: absoluteName(match[3]) };
       }
 
       function godaddyRecord(row) {
@@ -3221,7 +3231,7 @@ godaddy_changes_js() {
           return {
             type,
             name: godaddyName(row.host),
-            data: stripDot(row.answer),
+            data: absoluteName(row.answer),
             priority: clampInt(row.priority, 10),
             ttl,
           };
@@ -3237,7 +3247,7 @@ godaddy_changes_js() {
             name: owner.name,
             service: owner.service,
             protocol: owner.protocol,
-            data: parsed.data,
+            data: absoluteName(parsed.data),
             priority: clampInt(row.priority, 0),
             weight: clampInt(parsed.weight, 0),
             port: clampInt(parsed.port, 0),
@@ -3245,7 +3255,7 @@ godaddy_changes_js() {
           };
         }
         const data = type === "CNAME" || type === "ANAME" || type === "ALIAS"
-          ? stripDot(row.answer)
+          ? absoluteName(row.answer)
           : String(row.answer ?? "").trim();
         return { type, name: godaddyName(row.host), data, ttl };
       }
