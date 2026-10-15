@@ -3074,12 +3074,13 @@ $(hostinger_request_js)
 }
 
 # GoDaddy v3 updates one record at a time. A personal access token is sent as
-# Authorization: Bearer. Apex is "@". MX keeps priority beside data. CNAME
-# and MX hostnames end in "." because GoDaddy rejects those without the dot.
-# An SRV target does not: GoDaddy's SRV value is a hostname such as
-# mail.example.com, and a trailing dot fails schema validation. SRV is stored
-# as service, protocol, weight, port, and target, while the reconciler still
-# sees the zone-relative owner (_imaps._tcp). TTL must be 600..86400.
+# Authorization: Bearer. Apex is "@". MX keeps priority beside data. CNAME,
+# MX, and SRV targets are absolute names ending in ".". GoDaddy treats an SRV
+# target without that dot as a name relative to _service._protocol.@ and
+# rejects it. The SRV name is the service and protocol (_imaps._tcp), not @.
+# SRV is stored as service, protocol, weight, port, and target, while the
+# reconciler still sees the zone-relative owner (_imaps._tcp).
+# TTL must be 600..86400.
 # NS and SOA are never sent. Unrelated TXT records are left untouched because
 # each write names a recordId. The token stays out of installer-state.json.
 godaddy_request_js() {
@@ -3100,10 +3101,12 @@ godaddy_request_js() {
         let json = {};
         try { json = text ? JSON.parse(text) : {}; } catch { json = { message: text.slice(0, 200) }; }
         if (!response.ok) {
-          const fields = Array.isArray(json.fields) && json.fields.length
-            ? " fields=" + JSON.stringify(json.fields).slice(0, 500)
+          const detailItems = Array.isArray(json.details) ? json.details
+            : (Array.isArray(json.fields) ? json.fields : []);
+          const extra = detailItems.length
+            ? " " + detailItems.map((item) => item.description || item.message || JSON.stringify(item)).join("; ").slice(0, 500)
             : "";
-          const detail = (json.message || json.code || text.slice(0, 300)) + fields;
+          const detail = (json.message || json.code || text.slice(0, 300)) + extra;
           const label = body && body.type
             ? ` (${body.type} ${body.name || "@"}${body.service ? " " + body.service + "." + body.protocol : ""})`
             : "";
@@ -3245,12 +3248,15 @@ godaddy_changes_js() {
           if (!owner || !parsed || !parsed.data) {
             throw new Error("GoDaddy SRV record could not be encoded: " + row.host + " " + row.answer);
           }
+          const serviceName = owner.name === "@"
+            ? owner.service + "." + owner.protocol
+            : owner.service + "." + owner.protocol + "." + owner.name;
           return {
             type,
-            name: owner.name,
+            name: serviceName,
             service: owner.service,
             protocol: owner.protocol,
-            data: stripDot(parsed.data),
+            data: absoluteName(parsed.data),
             priority: clampInt(row.priority, 0),
             weight: clampInt(parsed.weight, 0),
             port: clampInt(parsed.port, 0),

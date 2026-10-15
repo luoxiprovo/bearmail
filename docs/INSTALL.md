@@ -302,9 +302,10 @@ DNS update (`domains.domain:read` and `domains.dns:update`). It does not ask
 for a username, and it does not change nameservers. It writes the same record
 types through `https://api.godaddy.com/v3/domains/zones/{domain}/dns-records`
 with a bearer token. Apex records use `@`. MX uses a hostname plus a separate
-priority. CNAME and MX hostnames are sent with a trailing dot. An SRV
-target is sent without one, which is the hostname form GoDaddy accepts.
-SRV uses service, protocol, weight, port, and target. Each record
+priority. CNAME, MX, and SRV hostnames are sent with a trailing dot.
+An SRV name is `_service._protocol`, not `@`. GoDaddy turns `@` into
+`_service._protocol.@` and rejects that name. SRV uses service, protocol,
+weight, port, and target. Each record
 is created, updated, or deleted on its own, so unrelated TXT values stay in
 place. GoDaddy's shortest TTL is 600 seconds, and its longest is 86400.
 The domain must use GoDaddy nameservers.

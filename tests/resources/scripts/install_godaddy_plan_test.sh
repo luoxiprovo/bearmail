@@ -167,10 +167,10 @@ CHANGES_FILE="$CHANGES_FILE" "$NODE_BIN" -e '
   const webAAAA = post("AAAA", "webmail");
   if (!webAAAA || webAAAA.data !== "2001:db8::4") fail("WebUI AAAA record was not created");
   const srv = put("rec_srv");
-  if (!srv || srv.record.name !== "@" || srv.record.service !== "_imaps" || srv.record.protocol !== "_tcp") {
+  if (!srv || srv.record.name !== "_imaps._tcp" || srv.record.service !== "_imaps" || srv.record.protocol !== "_tcp") {
     fail("SRV owner was not split into service and protocol: " + JSON.stringify(srv));
   }
-  if (srv.record.priority !== 0 || srv.record.weight !== 0 || srv.record.port !== 993 || srv.record.data !== "mail.example.test") {
+  if (srv.record.priority !== 0 || srv.record.weight !== 0 || srv.record.port !== 993 || srv.record.data !== "mail.example.test.") {
     fail("SRV target was not encoded: " + JSON.stringify(srv.record));
   }
   const cname = post("CNAME", "autoconfig");
