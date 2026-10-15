@@ -3074,11 +3074,12 @@ $(hostinger_request_js)
 }
 
 # GoDaddy v3 updates one record at a time. A personal access token is sent as
-# Authorization: Bearer. Apex is "@". MX keeps priority beside data. CNAME,
-# MX, and SRV targets are absolute names ending in "." because GoDaddy rejects
-# a hostname without that dot as a schema error. SRV is stored as service,
-# protocol, weight, port, and target, while the reconciler still sees the
-# zone-relative owner (_imaps._tcp). TTL must be 600..86400.
+# Authorization: Bearer. Apex is "@". MX keeps priority beside data. CNAME
+# and MX hostnames end in "." because GoDaddy rejects those without the dot.
+# An SRV target does not: GoDaddy's SRV value is a hostname such as
+# mail.example.com, and a trailing dot fails schema validation. SRV is stored
+# as service, protocol, weight, port, and target, while the reconciler still
+# sees the zone-relative owner (_imaps._tcp). TTL must be 600..86400.
 # NS and SOA are never sent. Unrelated TXT records are left untouched because
 # each write names a recordId. The token stays out of installer-state.json.
 godaddy_request_js() {
@@ -3103,7 +3104,9 @@ godaddy_request_js() {
             ? " fields=" + JSON.stringify(json.fields).slice(0, 500)
             : "";
           const detail = (json.message || json.code || text.slice(0, 300)) + fields;
-          const label = body && body.type ? ` (${body.type} ${body.name || "@"})` : "";
+          const label = body && body.type
+            ? ` (${body.type} ${body.name || "@"}${body.service ? " " + body.service + "." + body.protocol : ""})`
+            : "";
           throw new Error(`GoDaddy ${method} ${url} failed (${response.status}): ${detail}${label}`);
         }
         return json;
@@ -3218,7 +3221,7 @@ godaddy_changes_js() {
       function parseSrvAnswer(answer) {
         const match = String(answer ?? "").trim().match(/^(\d+)\s+(\d+)\s+(\S+)$/);
         if (!match) return null;
-        return { weight: Number(match[1]), port: Number(match[2]), data: absoluteName(match[3]) };
+        return { weight: Number(match[1]), port: Number(match[2]), data: stripDot(match[3]) };
       }
 
       function godaddyRecord(row) {
@@ -3247,7 +3250,7 @@ godaddy_changes_js() {
             name: owner.name,
             service: owner.service,
             protocol: owner.protocol,
-            data: absoluteName(parsed.data),
+            data: stripDot(parsed.data),
             priority: clampInt(row.priority, 0),
             weight: clampInt(parsed.weight, 0),
             port: clampInt(parsed.port, 0),
