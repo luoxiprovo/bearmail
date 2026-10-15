@@ -1,25 +1,24 @@
 # Contributing
 
-Thank you for your interest in contributing to Stalwart. We appreciate the support and enthusiasm of the open-source community. To keep the project maintainable and the review process sustainable, contributions are subject to the policies described below. Please read them in full before opening a pull request.
+Thank you for contributing to BearMail. Bugs, questions, and feature requests belong on this repository's [issue tracker](https://github.com/luoxiprovo/bearmail/issues).
 
-## Vouched Contributors Only
+## Issues
 
-Due to the high volume of low-quality, AI-generated submissions, pull requests are limited to a list of vouched contributors. Pull requests opened by anyone who is not on this list are closed automatically.
+Open an issue here for:
 
-To be added as a vouched contributor, post a message at [support.stalw.art](https://support.stalw.art) explaining the code changes you would like to submit, and include a link to the proposed change (a branch, diff, or draft). Once a maintainer has reviewed your request and vouched for you, you will be able to open pull requests directly.
+- a bug in the installer, mail setup, WebUI, or MCP sidecar
+- a question about configuration or expected behavior
+- a feature request
 
-This policy lets us focus limited review capacity on contributions from people who have taken the time to understand the codebase and discuss their changes first.
+Do not open a public issue for an exploitable vulnerability. Use a private [security advisory](https://github.com/luoxiprovo/bearmail/security/advisories/new) on this repository.
 
 ## What Contributions Are Accepted
 
-At this stage of the project we accept a narrow set of contributions:
-
-- **Bug fixes.** Corrections to existing, incorrect behavior are welcome. Please include steps to reproduce the bug and describe the fix.
+- **Bug fixes.** Include steps to reproduce the bug and describe the fix.
+- **Small improvements** to the installer, WebUI, MCP sidecar, and docs.
 - **Translations.** Additions and corrections to existing translations are welcome.
 
-New features are generally **not** accepted, unless they involve only a few lines of code. Larger features fall outside the scope of what we can review and integrate while the architecture is still evolving.
-
-If you would like to see a new feature, please request it at [support.stalw.art](https://support.stalw.art) under the **Feature Ideas** category rather than opening a pull request. This lets the community discuss and prioritize ideas before any code is written.
+Open a feature request issue before a large pull request, so the change can be discussed on this repository first.
 
 ## No AI-Generated Code
 
@@ -31,12 +30,12 @@ Using AI as a fancy autocomplete is perfectly fine. What matters is that every l
 
 ## Pull Request Process
 
-Once you are a vouched contributor:
+Open a pull request on this repository.
 
 1. Keep each pull request small and focused on a single logical change.
 2. Match the style and conventions of the surrounding code.
 3. Make sure the project builds and the test suite passes before opening the pull request.
-4. In the pull request description, explain what the change does and why, and link to the [support.stalw.art](https://support.stalw.art) discussion where the change was vouched.
+4. In the pull request description, explain what the change does and why, and link the issue it addresses.
 
 ## Code of Conduct
 

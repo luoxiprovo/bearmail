@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a problem with the BearMail installer, mail setup, WebUI, or MCP sidecar.
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        File this on the BearMail repository. Include enough detail for someone else to reproduce it.
+
+        For an exploitable vulnerability, open a private [security advisory](https://github.com/luoxiprovo/bearmail/security/advisories/new) instead of a public issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Installer answers, commands, or clicks that lead to the problem.
+      placeholder: |
+        1. Run release_install.sh
+        2. Choose Hostinger for DNS
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: BearMail version
+      description: Release tag, commit, or the date you installed.
+      placeholder: v0.1.0
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where it shows up
+      options:
+        - Installer or DNS
+        - Mail (SMTP, IMAP, JMAP)
+        - WebUI
+        - MCP sidecar
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste the relevant log lines. Remove passwords, API keys, and tokens.
+      render: text
