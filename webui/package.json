@@ -14,22 +14,22 @@
     "lint": "tsc -b --pretty false"
   },
   "dependencies": {
-    "dompurify": "3.4.13",
-    "lucide-react": "1.28.0",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "dompurify": "3.4.17",
+    "lucide-react": "1.61.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "6.9.1",
-    "@testing-library/react": "16.3.0",
-    "@types/node": "24.10.1",
-    "@types/react": "19.2.2",
-    "@types/react-dom": "19.2.2",
-    "@vitejs/plugin-react": "6.0.5",
-    "jsdom": "27.2.0",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "jsdom": "27.4.0",
     "typescript": "7.0.2",
-    "vite": "8.2.0",
-    "vitest": "4.1.10"
+    "vite": "8.3.5",
+    "vitest": "4.1.12"
   },
   "engines": {
     "node": ">=22.12"
