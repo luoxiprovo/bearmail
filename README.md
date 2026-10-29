@@ -49,9 +49,10 @@ On a Linux **x86-64** server with systemd, from an SSH session:
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sudo bash
 ```
 
-That downloads `install.sh`, the `stalwart` binary, and
-`stalwart-webui.tar.gz` from this GitHub repo, then starts the interactive
-setup. Prepare the [DNS provider](#1-domain-at-namecom-hostinger-or-godaddy) and
+That downloads `install.sh`, the `stalwart` binary,
+`stalwart-webui.tar.gz`, and `mcp_install.sh` from this GitHub repo, then
+starts the interactive setup. After setup finishes, it installs the MCP
+sidecar. Prepare the [DNS provider](#1-domain-at-namecom-hostinger-or-godaddy) and
 [SMTP relay](#2-smtp-relay-account-brevo-recommended) accounts first. The
 wizard will ask for them.
 
@@ -60,6 +61,16 @@ Preview the download plan without changing the system:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sh -s -- --dry-run
 ```
+
+For a shorter setup that keeps the recommended paths, Caddy, quick setup, and
+Brevo, and asks for the portal URL, mail hostname, mail domain, Brevo SMTP
+login and API key, and the DNS provider:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/easy_install.sh | sudo bash
+```
+
+`mcp_install.sh` remains available on its own for a server that already has BearMail.
 
 ### 1 GB VMs (e2-micro)
 
@@ -75,7 +86,8 @@ Preview with `sudo bash -s -- --dry-run`. Details:
 
 ### AI agents (MCP)
 
-On a server that already has BearMail, add the MCP sidecar. This does not
+A fresh `release_install.sh` run installs the MCP sidecar after mail setup.
+On a server that already has BearMail, add it with the same script. This does not
 replace Stalwart, Caddy, DNS, or stored mail:
 
 ```sh

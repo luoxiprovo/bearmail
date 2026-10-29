@@ -11,7 +11,7 @@ curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_in
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sudo bash
 ```
 
-Save the printed administrator username and password. After DNS resolves:
+That installs mail, webmail, and the MCP sidecar at `/opt/bearmail-mcp`. Save the printed administrator username and password. After DNS resolves:
 
 - Admin: `https://mail.example.com/admin/`
 - Webmail: `https://webmail.example.com/`

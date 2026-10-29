@@ -8,9 +8,11 @@ prebuilt `stalwart-webui.tar.gz` in one directory on a new Linux server. Running
 interactive flow while keeping two systemd services and two public hostnames.
 
 `release_install.sh` is the network entrypoint. It downloads those three
-published files from GitHub (or `BEARMAIL_DOWNLOAD_BASE`) into
-`/var/tmp/bearmail-install` and execs `install.sh`. It may be served from a
-static site such as Vercel. It accepts only `--help` and `--dry-run`.
+published files, plus `mcp_install.sh`, from GitHub (or `BEARMAIL_DOWNLOAD_BASE`)
+into `/var/tmp/bearmail-install`, runs `install.sh`, then runs `mcp_install.sh`.
+`mcp_install.sh` remains the standalone installer for a host that already has
+BearMail. The release script may be served from a static site such as Vercel.
+It accepts only `--help` and `--dry-run`.
 
 The webpage is not part of first-run Stalwart bootstrap. All bootstrap fields
 available on the webpage remain available in the terminal wizard.

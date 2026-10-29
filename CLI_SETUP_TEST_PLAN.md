@@ -46,7 +46,8 @@ have a focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RE
 - `shellcheck -s dash` passes when ShellCheck is installed;
 - only `-h` and `--help` are accepted by `install.sh`;
 - `release_install.sh` is the curl entrypoint: it downloads the published
-  `install.sh`, `stalwart`, and `stalwart-webui.tar.gz`, then execs `install.sh`;
+  `install.sh`, `stalwart`, `stalwart-webui.tar.gz`, and `mcp_install.sh`,
+  runs `install.sh`, then runs `mcp_install.sh`;
 - every public answer is read from `/dev/tty`;
 - `install.sh` itself has no source build, release download, artifact URL, or
   answer-bearing public CLI flag;

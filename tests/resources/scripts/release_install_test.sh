@@ -17,6 +17,7 @@ sh -n "$RELEASE_SH" || fail "release_install.sh is not valid POSIX sh"
 help_out="$(sh "$RELEASE_SH" --help)"
 printf '%s\n' "$help_out" | grep -q 'sudo bash' || fail "help does not show the curl | sudo bash invocation"
 printf '%s\n' "$help_out" | grep -q 'install.sh' || fail "help does not say it runs install.sh"
+printf '%s\n' "$help_out" | grep -q 'mcp_install.sh' || fail "help does not say it runs mcp_install.sh"
 printf '%s\n' "$help_out" | grep -q 'x86-64' || fail "help does not mention the published binary architecture"
 
 if sh "$RELEASE_SH" --nope >/dev/null 2>&1; then
@@ -28,14 +29,22 @@ printf '%s\n' "$dry_out" | grep -q 'raw.githubusercontent.com/luoxiprovo/bearmai
     fail "dry-run does not print the install.sh URL"
 printf '%s\n' "$dry_out" | grep -q '/stalwart$' || fail "dry-run does not print the stalwart URL"
 printf '%s\n' "$dry_out" | grep -q 'stalwart-webui.tar.gz' || fail "dry-run does not print the WebUI archive URL"
+printf '%s\n' "$dry_out" | grep -q 'raw.githubusercontent.com/luoxiprovo/bearmail/main/mcp_install.sh' || \
+    fail "dry-run does not print the mcp_install.sh URL"
 printf '%s\n' "$dry_out" | grep -q '/var/tmp/bearmail-install/install.sh' || \
-    fail "dry-run does not say it will exec the downloaded installer"
+    fail "dry-run does not say it will run the downloaded installer"
+printf '%s\n' "$dry_out" | grep -q '/var/tmp/bearmail-install/mcp_install.sh' || \
+    fail "dry-run does not say it will run the MCP installer"
 
 override_out="$(BEARMAIL_DOWNLOAD_BASE=https://example.test/bearmail BEARMAIL_WORK_DIR=/tmp/bm sh "$RELEASE_SH" --dry-run)"
 printf '%s\n' "$override_out" | grep -q 'https://example.test/bearmail/install.sh' || \
     fail "BEARMAIL_DOWNLOAD_BASE is not honored"
+printf '%s\n' "$override_out" | grep -q 'https://example.test/bearmail/mcp_install.sh' || \
+    fail "BEARMAIL_DOWNLOAD_BASE is not applied to mcp_install.sh"
 printf '%s\n' "$override_out" | grep -q '/tmp/bm/install.sh' || \
     fail "BEARMAIL_WORK_DIR is not honored"
+printf '%s\n' "$override_out" | grep -q '/tmp/bm/mcp_install.sh' || \
+    fail "BEARMAIL_WORK_DIR is not applied to mcp_install.sh"
 
 grep -q 'od -An -t x1 -j 18 -N 2' "$RELEASE_SH" || \
     fail "x86-64 ELF check must read raw bytes (od -t x1), not host-endian x2"

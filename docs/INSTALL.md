@@ -36,10 +36,25 @@ run the same command against that URL:
 curl -fsSL https://YOUR-DOMAIN/release_install.sh | sudo bash
 ```
 
-The bootstrapper always fetches `install.sh`, `stalwart`, and
-`stalwart-webui.tar.gz` from GitHub unless `BEARMAIL_DOWNLOAD_BASE` is set.
-It then starts the usual interactive setup. Prepare the name.com, Hostinger,
+The bootstrapper always fetches `install.sh`, `stalwart`,
+`stalwart-webui.tar.gz`, and `mcp_install.sh` from GitHub unless
+`BEARMAIL_DOWNLOAD_BASE` is set. It then starts the usual interactive setup
+and, after that succeeds, runs `mcp_install.sh`. Prepare the name.com, Hostinger,
 or GoDaddy account and the SMTP relay account first; the wizard will ask for them.
+A host that already has BearMail can still run `mcp_install.sh` by itself.
+
+The shorter path is `easy_install.sh`. It downloads the same artifacts, saves
+the web archive as `bearmail-webui.tar.gz`, and runs `install.sh` with the
+recommended defaults already selected:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/easy_install.sh | sudo bash
+```
+
+It asks for the BearMail portal URL, the public mail hostname, the primary
+mail domain, confirmation before applying server setup, the Brevo SMTP login
+and API key, and the DNS provider, zone, and token. Preview with
+`sh -s -- --dry-run`.
 
 Preview the download plan without changing the system:
 
@@ -520,7 +535,8 @@ it finishes, hard-refresh the webmail URL so the browser loads the new assets.
 
 ## Add the MCP sidecar from a checkout
 
-After BearMail is installed, add the MCP sidecar from a checkout that already
+`release_install.sh` already runs this step on a new install. After BearMail
+is installed without that step, add the MCP sidecar from a checkout that already
 has `mcp_install.sh` and the `mcp/` tree:
 
 ```sh

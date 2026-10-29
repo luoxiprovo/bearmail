@@ -1,7 +1,9 @@
 #!/usr/bin/env sh
 # shellcheck shell=dash
 
-# Download the published BearMail artifacts and run the interactive installer.
+# Download the published BearMail artifacts, run the interactive installer,
+# then install the MCP sidecar. mcp_install.sh stays a standalone script for
+# a host that already has BearMail.
 # Intended for:
 #   curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sudo bash
 # The same file can be served from a Vercel (or other) static site; artifacts
@@ -29,8 +31,9 @@ usage() {
     cat <<'EOF'
 Usage: curl -fsSL <release_install.sh URL> | sudo bash
 
-Downloads the published Stalwart binary, WebUI archive, and install.sh, then
-runs the same interactive installer as a local copy of those three files.
+Downloads the published Stalwart binary, WebUI archive, install.sh, and
+mcp_install.sh. It runs the interactive installer, then the MCP sidecar.
+Hosts that already have BearMail can still run mcp_install.sh alone.
 
 This wrapper is safe to host on Vercel or GitHub. It does not accept mail
 hostnames, passwords, or API tokens as flags; those questions are asked by
@@ -118,7 +121,7 @@ done
 say "BearMail release installer"
 say "  Artifacts: ${BEARMAIL_DOWNLOAD_BASE}"
 say "  Staging:   ${WORK_DIR}"
-say "  Files:     install.sh, stalwart, stalwart-webui.tar.gz"
+say "  Files:     install.sh, stalwart, stalwart-webui.tar.gz, mcp_install.sh"
 say ""
 
 if [ "$dry_run" = "true" ]; then
@@ -126,7 +129,9 @@ if [ "$dry_run" = "true" ]; then
     say "  ${BEARMAIL_DOWNLOAD_BASE}/install.sh"
     say "  ${BEARMAIL_DOWNLOAD_BASE}/stalwart"
     say "  ${BEARMAIL_DOWNLOAD_BASE}/stalwart-webui.tar.gz"
+    say "  ${BEARMAIL_DOWNLOAD_BASE}/mcp_install.sh"
     say "then run: sh ${WORK_DIR}/install.sh"
+    say "then run: sh ${WORK_DIR}/mcp_install.sh"
     exit 0
 fi
 
@@ -163,21 +168,39 @@ chmod 0700 "$WORK_DIR"
 download_file "${BEARMAIL_DOWNLOAD_BASE}/install.sh" "${WORK_DIR}/install.sh" "install.sh"
 download_file "${BEARMAIL_DOWNLOAD_BASE}/stalwart" "${WORK_DIR}/stalwart" "stalwart (this is large; wait for it)"
 download_file "${BEARMAIL_DOWNLOAD_BASE}/stalwart-webui.tar.gz" "${WORK_DIR}/stalwart-webui.tar.gz" "stalwart-webui.tar.gz"
+download_file "${BEARMAIL_DOWNLOAD_BASE}/mcp_install.sh" "${WORK_DIR}/mcp_install.sh" "mcp_install.sh"
 
 require_min_size "${WORK_DIR}/install.sh" 10000 "install.sh"
 require_min_size "${WORK_DIR}/stalwart" 1000000 "stalwart"
 require_min_size "${WORK_DIR}/stalwart-webui.tar.gz" 10000 "stalwart-webui.tar.gz"
+require_min_size "${WORK_DIR}/mcp_install.sh" 1000 "mcp_install.sh"
 grep -q 'BearMail' "${WORK_DIR}/install.sh" || err "The downloaded install.sh does not look like the BearMail installer."
+grep -q 'bearmail-mcp' "${WORK_DIR}/mcp_install.sh" || err "The downloaded mcp_install.sh does not look like the BearMail MCP installer."
+if grep -q 'mcp_src="$(fetch_mcp_sources)"' "${WORK_DIR}/mcp_install.sh"; then
+    err "Downloaded mcp_install.sh is stale (captures download logs as the MCP path). Re-run in a minute, or: sudo sh ./mcp_install.sh"
+fi
+grep -q 'mcp_src="$RETVAL"' "${WORK_DIR}/mcp_install.sh" || \
+    err "Downloaded mcp_install.sh is too old. Update GitHub main, or run: sudo sh ./mcp_install.sh"
 assert_elf_x86_64 "${WORK_DIR}/stalwart"
 tar -tzf "${WORK_DIR}/stalwart-webui.tar.gz" >/dev/null \
     || err "The downloaded WebUI archive is not a readable gzip tar."
-chmod 0755 "${WORK_DIR}/install.sh" "${WORK_DIR}/stalwart"
+chmod 0755 "${WORK_DIR}/install.sh" "${WORK_DIR}/stalwart" "${WORK_DIR}/mcp_install.sh"
 
 say ""
 say "Artifacts are ready in ${WORK_DIR}."
 say "Starting interactive setup. Accept the default Stalwart binary and WebUI"
 say "archive paths unless you have a reason to change them."
+say "The MCP sidecar is installed after that setup finishes."
 say ""
 
 cd "$WORK_DIR"
-exec sh ./install.sh
+sh ./install.sh
+
+say ""
+say "BearMail is installed. Adding the MCP sidecar for AI agents..."
+say ""
+# Keep MCP staging out of the release artifact directory. A caller-exported
+# BEARMAIL_WORK_DIR is the release staging path, not the MCP build path.
+if ! BEARMAIL_WORK_DIR="${WORK_DIR}/mcp" sh ./mcp_install.sh; then
+    err "BearMail is installed, but the MCP sidecar failed. Re-run: sudo sh ${WORK_DIR}/mcp_install.sh"
+fi

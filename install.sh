@@ -98,14 +98,26 @@ main() {
     say ""
 
     # Select the filesystem layout interactively.
-    local _prefix=""
-    prompt_menu "Installation layout" 1 \
-        "Standard system paths (recommended)" \
-        "Custom self-contained prefix"
-    if [ "$RETVAL" -eq 2 ]; then
-        prompt_absolute_prefix "Absolute installation prefix" "/opt/stalwart" \
-            "custom installation prefix"
-        _prefix="$RETVAL"
+    local _prefix="" _easy_mode="false" _webui_archive_name="stalwart-webui.tar.gz"
+    local _webui_prefix_default="/opt/stalwart-webui" _portal_label
+    _portal_label="Public WebUI origin (exact HTTPS URL, no path)"
+    if [ "${BEARMAIL_EASY:-}" = "1" ]; then
+        _easy_mode="true"
+        _webui_archive_name="bearmail-webui.tar.gz"
+        _webui_prefix_default="/opt/bearmail-webui"
+        _portal_label="Bearmail portal url (The url human access Bearmail, you should input your domain here)"
+    fi
+    if [ "$_easy_mode" = "true" ]; then
+        say "Installation layout: Standard system paths"
+    else
+        prompt_menu "Installation layout" 1 \
+            "Standard system paths (recommended)" \
+            "Custom self-contained prefix"
+        if [ "$RETVAL" -eq 2 ]; then
+            prompt_absolute_prefix "Absolute installation prefix" "/opt/stalwart" \
+                "custom installation prefix"
+            _prefix="$RETVAL"
+        fi
     fi
 
     # Derive install paths — FHS by default, self-contained under a custom prefix
@@ -128,30 +140,57 @@ main() {
     local _source_binary _webui_archive _webui_prefix _webui_port _webui_origin
     local _webui_hostname _webui_stage _setup_result_file _installer_state
     local _proxy_mode
-    prompt_executable_file "Path to the compiled Stalwart binary" "${_script_dir}/stalwart" \
-        "The Stalwart artifact must be an executable regular file."
-    _source_binary="$RETVAL"
-    prompt_regular_file "Path to the prebuilt WebUI tar archive" "${_script_dir}/stalwart-webui.tar.gz" \
-        "The WebUI artifact must be a regular file."
-    _webui_archive="$RETVAL"
-    prompt_webui_prefix "WebUI installation prefix" "/opt/stalwart-webui" \
-        "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir" "$NODE_INSTALL_ROOT"
-    _webui_prefix="$RETVAL"
-    prompt_webui_port "WebUI local service port" "8081"
-    _webui_port="$RETVAL"
-    prompt_https_origin "Public WebUI origin (exact HTTPS URL, no path)" \
-        "https://bearmail.example.com"
+    if [ "$_easy_mode" = "true" ]; then
+        _source_binary="${_script_dir}/stalwart"
+        say "Stalwart binary: ${_source_binary}"
+        [ -f "$_source_binary" ] && [ -x "$_source_binary" ] || \
+            err "❌ Install failed: The Stalwart artifact must be an executable regular file (${_source_binary})."
+        _webui_archive="${_script_dir}/${_webui_archive_name}"
+        say "WebUI archive: ${_webui_archive}"
+        [ -f "$_webui_archive" ] || \
+            err "❌ Install failed: The WebUI artifact must be a regular file (${_webui_archive})."
+        _webui_prefix="$_webui_prefix_default"
+        say "WebUI installation prefix: ${_webui_prefix}"
+        _webui_port="8081"
+        say "WebUI local service port: ${_webui_port}"
+        while true; do
+            prompt_text "$_portal_label" ""
+            if normalize_easy_portal "$RETVAL"; then
+                break
+            fi
+            printf '  %s\n' "$VALIDATION_ERROR" >&3
+        done
+    else
+        prompt_executable_file "Path to the compiled Stalwart binary" "${_script_dir}/stalwart" \
+            "The Stalwart artifact must be an executable regular file."
+        _source_binary="$RETVAL"
+        prompt_regular_file "Path to the prebuilt WebUI tar archive" "${_script_dir}/stalwart-webui.tar.gz" \
+            "The WebUI artifact must be a regular file."
+        _webui_archive="$RETVAL"
+        prompt_webui_prefix "WebUI installation prefix" "/opt/stalwart-webui" \
+            "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir" "$NODE_INSTALL_ROOT"
+        _webui_prefix="$RETVAL"
+        prompt_webui_port "WebUI local service port" "8081"
+        _webui_port="$RETVAL"
+        prompt_https_origin "$_portal_label" \
+            "https://bearmail.example.com"
+    fi
     _webui_origin="$RETVAL"
     origin_hostname "$_webui_origin"
     _webui_hostname="$RETVAL"
-    prompt_menu "HTTPS publishing" 1 \
-        "Configure Caddy automatically (recommended)" \
-        "Use an existing operator-managed reverse proxy"
+    if [ "$_easy_mode" = "true" ]; then
+        say "HTTPS publishing: Configure Caddy automatically"
+        RETVAL=1
+    else
+        prompt_menu "HTTPS publishing" 1 \
+            "Configure Caddy automatically (recommended)" \
+            "Use an existing operator-managed reverse proxy"
+    fi
     if [ "$RETVAL" -eq 1 ]; then
         _proxy_mode="caddy"
         while [ "$_webui_origin" != "https://${_webui_hostname}" ]; do
             printf '  Automatic Caddy publishing uses standard HTTPS port 443.\n' >&3
-            prompt_https_origin "Public WebUI origin (exact HTTPS URL, no path or custom port)" \
+            prompt_https_origin "$_portal_label" \
                 "https://${_webui_hostname}"
             _webui_origin="$RETVAL"
             origin_hostname "$_webui_origin"
@@ -185,7 +224,9 @@ main() {
         say "${_webui_origin} to 127.0.0.1:${_webui_port}."
     fi
     say ""
-    if ! prompt_yes_no "Install both services and run interactive server setup" "no"; then
+    if [ "$_easy_mode" = "true" ]; then
+        say "Installing both services and running server setup."
+    elif ! prompt_yes_no "Install both services and run interactive server setup" "no"; then
         err "Installation cancelled; no system files were changed."
     fi
 
@@ -230,6 +271,9 @@ main() {
 
     prepare_node_runtime "$_tmp"
     if paths_overlap "$_webui_prefix" "$NODE_BIN"; then
+        if [ "$_easy_mode" = "true" ]; then
+            err "❌ Install failed: The WebUI prefix ${_webui_prefix} overlaps the Node.js runtime ${NODE_BIN}."
+        fi
         printf '  The WebUI prefix must not contain or be contained by the selected Node.js executable (%s).\n' \
             "$NODE_BIN" >&3
         prompt_webui_prefix "WebUI installation prefix" "$_webui_prefix" \
@@ -299,16 +343,31 @@ main() {
     if [ ! -e "$_config_file" ]; then
         _fresh_setup="true"
         say "🧭 Starting interactive command-line setup..."
-        print_server_identity_help
-        if ! env \
-            STALWART_SETUP_DATA_PATH="$_data_dir" \
-            STALWART_SETUP_LOG_PATH="$_log_dir" \
-            STALWART_SETUP_PUBLIC_IPV4="$_public_ipv4" \
-            STALWART_SETUP_PUBLIC_IPV6="$_public_ipv6" \
-            STALWART_SETUP_RESULT_PATH="$_setup_result_file" \
-            "$_bin_file" --config="$_config_file" --setup <&3
-        then
-            err "❌ Command-line setup failed. Correct the error, then rerun the installer. The service was not installed or started."
+        if [ "$_easy_mode" = "true" ]; then
+            say "Setup mode: Quick setup"
+            prompt_dns_name "Public mail hostname (This will be your admin portal)" ""
+            _easy_host="$RETVAL"
+            prompt_dns_name "Primary mail domain: eg, if you want admin@example.com as email address, input example.com here" ""
+            _easy_domain="$RETVAL"
+            if ! run_easy_stalwart_setup \
+                "$_bin_file" "$_config_file" "$_setup_result_file" \
+                "$_data_dir" "$_log_dir" "$_public_ipv4" "$_public_ipv6" \
+                "$_easy_host" "$_easy_domain" "$_tmp"
+            then
+                err "❌ Command-line setup failed. Correct the error, then rerun the installer. The service was not installed or started."
+            fi
+        else
+            print_server_identity_help
+            if ! env \
+                STALWART_SETUP_DATA_PATH="$_data_dir" \
+                STALWART_SETUP_LOG_PATH="$_log_dir" \
+                STALWART_SETUP_PUBLIC_IPV4="$_public_ipv4" \
+                STALWART_SETUP_PUBLIC_IPV6="$_public_ipv6" \
+                STALWART_SETUP_RESULT_PATH="$_setup_result_file" \
+                "$_bin_file" --config="$_config_file" --setup <&3
+            then
+                err "❌ Command-line setup failed. Correct the error, then rerun the installer. The service was not installed or started."
+            fi
         fi
         if [ ! -f "$_config_file" ] || [ ! -s "$_config_file" ]; then
             err "❌ Command-line setup returned without creating a non-empty ${_config_file}. The service was not installed or started."
@@ -812,7 +871,11 @@ prompt_https_origin() {
     local _label="$1" _default="$2"
     while true; do
         prompt_text "$_label" "$_default"
-        if normalize_https_origin "$RETVAL"; then
+        if [ "${_easy_mode:-}" = "true" ]; then
+            if normalize_easy_portal "$RETVAL"; then
+                return 0
+            fi
+        elif normalize_https_origin "$RETVAL"; then
             return 0
         fi
         printf '  %s\n' "$VALIDATION_ERROR" >&3
@@ -884,10 +947,14 @@ confirm_dedicated_webui_origin() {
     local _mode="$1" _mail_hostname="$2" _mail_domain="$3" _suggested
     suggested_webui_origin "$_mail_domain"
     _suggested="$RETVAL"
+    local _origin_label="Public WebUI origin (exact HTTPS URL, no path)"
+    if [ "${_easy_mode:-}" = "true" ]; then
+        _origin_label="Bearmail portal url (The url human access Bearmail, you should input your domain here)"
+    fi
     if is_example_webui_placeholder "$_webui_hostname"; then
         printf '  The WebUI origin is still the installer example (%s).\n' "$_webui_origin" >&3
         printf '  Use a dedicated hostname in your mail domain, typically %s\n' "$_suggested" >&3
-        prompt_https_origin "Public WebUI origin (exact HTTPS URL, no path)" "$_suggested"
+        prompt_https_origin "$_origin_label" "$_suggested"
         _webui_origin="$RETVAL"
         origin_hostname "$_webui_origin"
         _webui_hostname="$RETVAL"
@@ -899,7 +966,7 @@ confirm_dedicated_webui_origin() {
         while webui_hostname_conflicts "$_mode" "$_mail_hostname" "$_mail_domain" "$_webui_hostname" || \
             { [ "$_mode" = "caddy" ] && [ "$_webui_origin" != "https://${_webui_hostname}" ]; }
         do
-            prompt_https_origin "Public WebUI origin (exact HTTPS URL, no path)" \
+            prompt_https_origin "$_origin_label" \
                 "$_suggested"
             _webui_origin="$RETVAL"
             origin_hostname "$_webui_origin"
@@ -1378,6 +1445,121 @@ origin_hostname() {
     local _authority
     _authority="${1#https://}"
     RETVAL="${_authority%%:*}"
+}
+
+# Easy install accepts a bare domain and stores an https origin.
+normalize_easy_portal() {
+    local _input="$1"
+    _input=$(printf '%s' "$_input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    case "$_input" in
+        https://*) ;;
+        http://*) _input="https://${_input#http://}" ;;
+        '')
+            VALIDATION_ERROR="Enter the BearMail portal domain, for example bearmail.example.com."
+            return 1
+            ;;
+        *) _input="https://${_input}" ;;
+    esac
+    while [ "${_input%/}" != "$_input" ]; do
+        _input="${_input%/}"
+    done
+    normalize_https_origin "$_input"
+}
+
+# DNS zone default. Outside easy mode this is the primary mail domain.
+# In easy mode, a portal domain entered first wins when the mail domain is
+# a subdomain of it (mail.example.com under example.com, or users.bearos.si
+# under bearos.si).
+easy_dns_zone_default() {
+    local _portal="$1" _mail="$2" _first
+    if [ "${_easy_mode:-}" != "true" ]; then
+        RETVAL="$_mail"
+        return 0
+    fi
+    _first="$_portal"
+    case "$_first" in
+        bearmail.*) _first="${_first#bearmail.}" ;;
+        webmail.*) _first="${_first#webmail.}" ;;
+        mail.*) _first="${_first#mail.}" ;;
+    esac
+    case "$_mail" in
+        "$_first"|*."$_first")
+            RETVAL="$_first"
+            return 0
+            ;;
+    esac
+    case "$_first" in
+        "$_mail"|*."$_mail")
+            RETVAL="$_mail"
+            return 0
+            ;;
+    esac
+    RETVAL="$_mail"
+}
+
+# Drive the published Stalwart quick-setup wizard. The binary still asks its
+# own questions; easy install answers the fixed ones and keeps the apply prompt.
+run_easy_stalwart_setup() {
+    local _bin="$1" _config="$2" _result="$3" _data="$4" _log="$5"
+    local _ipv4="$6" _ipv6="$7" _host="$8" _domain="$9" _work="${10}"
+    local _out="${_work}/setup-stdout" _errf="${_work}/setup-stderr"
+    local _fifo="${_work}/setup-stdin" _pid="" _i=0
+    need_cmd mkfifo
+    rm -f "$_fifo" "$_out" "$_errf"
+    mkfifo "$_fifo"
+    : >"$_out"
+    # Linux allows a read-write open so this does not wait for the wizard.
+    exec 4<>"$_fifo"
+    printf '1\n%s\n%s\n' "$_host" "$_domain" >&4
+    env \
+        STALWART_SETUP_DATA_PATH="$_data" \
+        STALWART_SETUP_LOG_PATH="$_log" \
+        STALWART_SETUP_PUBLIC_IPV4="$_ipv4" \
+        STALWART_SETUP_PUBLIC_IPV6="$_ipv6" \
+        STALWART_SETUP_RESULT_PATH="$_result" \
+        "$_bin" --config="$_config" --setup <"$_fifo" >"$_out" 2>"$_errf" &
+    _pid=$!
+    while [ "$_i" -lt 600 ]; do
+        if grep -q 'Apply this configuration' "$_out" 2>/dev/null; then
+            break
+        fi
+        if ! kill -0 "$_pid" 2>/dev/null; then
+            printf '%s\n' "Server setup stopped before confirmation." >&2
+            [ -s "$_errf" ] && cat "$_errf" >&2
+            [ -s "$_out" ] && cat "$_out" >&2
+            exec 4>&-
+            return 1
+        fi
+        _i=$((_i + 1))
+        sleep 0.2
+    done
+    if ! grep -q 'Apply this configuration' "$_out" 2>/dev/null; then
+        printf '%s\n' "Server setup did not reach confirmation." >&2
+        [ -s "$_errf" ] && cat "$_errf" >&2
+        [ -s "$_out" ] && cat "$_out" >&2
+        kill "$_pid" 2>/dev/null || true
+        wait "$_pid" 2>/dev/null || true
+        exec 4>&-
+        return 1
+    fi
+    say ""
+    sed -n '/Setup summary:/,/Apply this configuration/p' "$_out" | sed '/Apply this configuration/d' >&3
+    if prompt_yes_no "Apply this configuration" "yes"; then
+        printf 'y\n' >&4
+    else
+        printf 'n\nn\n' >&4
+        wait "$_pid" 2>/dev/null || true
+        exec 4>&-
+        err "Setup cancelled; no configuration was written."
+    fi
+    if ! wait "$_pid"; then
+        printf '%s\n' "Server setup failed while applying the configuration." >&2
+        [ -s "$_errf" ] && cat "$_errf" >&2
+        exec 4>&-
+        return 1
+    fi
+    exec 4>&-
+    return 0
 }
 
 validate_caddy_config_ownership() {
@@ -2043,15 +2225,20 @@ configure_optional_smtp_relay() {
     say "Brevo is the default. Mailjet remains available. Have the SMTP login and"
     say "SMTP key ready (not the website password)."
     say ""
-    prompt_menu "Outbound SMTP relay" 1 \
-        "Brevo (recommended)" \
-        "Mailjet" \
-        "Skip (direct MX; needs outbound TCP 25)"
-    case "$RETVAL" in
-        1) _provider="brevo" ;;
-        2) _provider="mailjet" ;;
-        *) RETVAL=""; return 0 ;;
-    esac
+    if [ "${_easy_mode:-}" = "true" ]; then
+        say "Outbound SMTP relay: Brevo"
+        _provider="brevo"
+    else
+        prompt_menu "Outbound SMTP relay" 1 \
+            "Brevo (recommended)" \
+            "Mailjet" \
+            "Skip (direct MX; needs outbound TCP 25)"
+        case "$RETVAL" in
+            1) _provider="brevo" ;;
+            2) _provider="mailjet" ;;
+            *) RETVAL=""; return 0 ;;
+        esac
+    fi
     say ""
     if [ "$_provider" = "brevo" ]; then
         say "In the Brevo app, complete these steps, then return here with the SMTP"
@@ -2069,12 +2256,21 @@ configure_optional_smtp_relay() {
         say "  See https://developers.brevo.com/docs/smtp-integration and"
         say "  docs/BREVO_SMTP_RELAY.md for the full walkthrough."
         say ""
-        prompt_dns_name "Brevo SMTP host" "smtp-relay.brevo.com"
-        _host="$RETVAL"
-        prompt_relay_port "Brevo SMTP port" "587"
-        _port="$RETVAL"
-        _user_label="Brevo SMTP login (username)"
-        _secret_label="Brevo SMTP key (password)"
+        if [ "${_easy_mode:-}" = "true" ]; then
+            _host="smtp-relay.brevo.com"
+            _port="587"
+            say "Brevo SMTP host: ${_host}"
+            say "Brevo SMTP port: ${_port}"
+            _user_label="Brevo SMTP login (username)"
+            _secret_label="Brevo SMTP API key"
+        else
+            prompt_dns_name "Brevo SMTP host" "smtp-relay.brevo.com"
+            _host="$RETVAL"
+            prompt_relay_port "Brevo SMTP port" "587"
+            _port="$RETVAL"
+            _user_label="Brevo SMTP login (username)"
+            _secret_label="Brevo SMTP key (password)"
+        fi
     else
         say "In the Mailjet app, complete these steps, then return here with the SMTP"
         say "API key and secret key (not the Mailjet website login):"
@@ -2274,7 +2470,9 @@ publish_optional_dns() {
     say "skip the DNS API. Otherwise choose name.com, Hostinger, or GoDaddy. The"
     say "installer never stores the API token in installer-state.json."
     say ""
-    if prompt_yes_no "Have you already published the printed forward-DNS records" "no"; then
+    if [ "${_easy_mode:-}" = "true" ]; then
+        say "Forward-DNS records are not published yet."
+    elif prompt_yes_no "Have you already published the printed forward-DNS records" "no"; then
         RETVAL="false"
         return 0
     fi
@@ -2325,7 +2523,8 @@ publish_optional_namecom_dns() {
     say "conflict with the Stalwart table, they are listed and replaced only after"
     say "confirmation. The installer never stores the token in installer-state.json."
     say ""
-    prompt_dns_name "name.com domain (DNS zone)" "$_mail_domain"
+    easy_dns_zone_default "$_webui_hostname" "$_mail_domain"
+    prompt_dns_name "name.com domain (DNS zone)" "$RETVAL"
     _zone="$RETVAL"
     prompt_text "name.com API username" ""
     _username="$RETVAL"
@@ -2365,7 +2564,8 @@ publish_optional_hostinger_dns() {
     say "the Stalwart table, they are listed and replaced only after confirmation."
     say "The installer never stores the token in installer-state.json."
     say ""
-    prompt_dns_name "Hostinger domain (DNS zone)" "$_mail_domain"
+    easy_dns_zone_default "$_webui_hostname" "$_mail_domain"
+    prompt_dns_name "Hostinger domain (DNS zone)" "$RETVAL"
     _zone="$RETVAL"
     prompt_secret "Hostinger API token"
     _token="$RETVAL"
@@ -2402,7 +2602,8 @@ publish_optional_godaddy_dns() {
     say "listed and replaced only after confirmation. The installer never stores"
     say "the token in installer-state.json."
     say ""
-    prompt_dns_name "GoDaddy domain (DNS zone)" "$_mail_domain"
+    easy_dns_zone_default "$_webui_hostname" "$_mail_domain"
+    prompt_dns_name "GoDaddy domain (DNS zone)" "$RETVAL"
     _zone="$RETVAL"
     prompt_secret "GoDaddy API token"
     _token="$RETVAL"

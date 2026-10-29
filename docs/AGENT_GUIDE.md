@@ -32,7 +32,7 @@ Optional, not secret: `GET {mail origin}/.well-known/mcp.json` — discovery JSO
 | **You (the agent)** | Ask for those items, configure the MCP host, call `whoami`, then use mail and calendar tools. |
 | **MCP server (`bearmail-mcp`)** | Translates tools to JMAP. It is not Stalwart. It is not compiled into the mail binary. |
 
-The mail-server sidecar install (owner only, already-installed BearMail):
+A new `release_install.sh` run installs this sidecar after mail setup. On a host that already has BearMail, the owner runs:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/mcp_install.sh | sudo bash
