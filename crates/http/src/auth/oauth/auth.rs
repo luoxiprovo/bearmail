@@ -61,6 +61,7 @@ pub struct OAuthMetadata {
     pub token_endpoint_auth_methods_supported: &'static [&'static str],
     pub code_challenge_methods_supported: &'static [&'static str],
     pub authorization_response_iss_parameter_supported: bool,
+    pub client_id_metadata_document_supported: bool,
 }
 
 pub trait OAuthApiHandler: Sync + Send {
@@ -570,6 +571,7 @@ impl OAuthApiHandler for Server {
             ],
             code_challenge_methods_supported: &["S256"],
             authorization_response_iss_parameter_supported: true,
+            client_id_metadata_document_supported: true,
             issuer: base_url.to_string(),
         })
         .into_http_response()

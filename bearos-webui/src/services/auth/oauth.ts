@@ -17,6 +17,7 @@ const SESSION_PREFIX = 'stalwart-oauth-';
 export interface DiscoveryResponse {
   authorization_endpoint: string;
   token_endpoint: string;
+  registration_endpoint?: string;
   end_session_endpoint?: string;
   revocation_endpoint?: string;
   scopes_supported?: string[];
@@ -142,18 +143,61 @@ function getRedirectUri(): string {
   return `${window.location.origin}${basePath}/oauth/callback`;
 }
 
+export function resolveRegistrationEndpoint(endpoint: string, origin: string): string {
+  const trimmed = endpoint.trim();
+  if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) return trimmed;
+  const base = origin.replace(/\/+$/, '');
+  if (trimmed.startsWith('/')) return `${base}${trimmed}`;
+  return new URL(trimmed, `${base}/`).toString();
+}
+
+async function registerPublicClient(registrationEndpoint: string, redirectUri: string, scope: string): Promise<string> {
+  const response = await fetch(resolveRegistrationEndpoint(registrationEndpoint, window.location.origin), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      redirect_uris: [redirectUri],
+      client_name: 'BearOS',
+      client_uri: window.location.origin,
+      application_type: 'web',
+      token_endpoint_auth_method: 'none',
+      response_types: ['code'],
+      grant_types: ['authorization_code', 'refresh_token'],
+      ...(scope ? { scope } : {}),
+    }),
+  });
+
+  const body = (await response.json().catch(() => ({}))) as {
+    client_id?: string;
+    error?: string;
+    error_description?: string;
+  };
+  if (!response.ok || !body.client_id) {
+    const detail = body.error_description || body.error || `${response.status} ${response.statusText}`;
+    throw new Error(
+      i18n.t('oauth.registrationFailed', 'Could not register this admin UI for sign-in: {{detail}}', { detail }),
+    );
+  }
+  return body.client_id;
+}
+
 export async function startAuthFlow(username: string, returnUrl?: string | null): Promise<void> {
   const discovery = await discover(username);
   const { authorization_endpoint, token_endpoint, end_session_endpoint, revocation_endpoint } = discovery;
+  const scope = selectScopes(discovery);
 
-  const clientId = resolveOAuthClientId(discovery.client_id_metadata_document_supported === true);
+  let clientId = resolveOAuthClientId(discovery.client_id_metadata_document_supported === true);
   if (!clientId) {
-    throw new Error(
-      i18n.t(
-        'oauth.clientIdUnavailable',
-        'Sign-in is not configured: the identity provider does not support client metadata documents and no OAuth client id is configured for this application.',
-      ),
-    );
+    const registrationEndpoint = discovery.registration_endpoint?.trim();
+    if (!registrationEndpoint) {
+      throw new Error(
+        i18n.t(
+          'oauth.clientIdUnavailable',
+          'Sign-in is not configured: the identity provider does not support client metadata documents and no OAuth client id is configured for this application.',
+        ),
+      );
+    }
+    clientId = await registerPublicClient(registrationEndpoint, getRedirectUri(), scope);
   }
 
   const codeVerifier = generateCodeVerifier();
@@ -197,7 +241,6 @@ export async function startAuthFlow(username: string, returnUrl?: string | null)
     prompt: 'login',
   });
 
-  const scope = selectScopes(discovery);
   if (scope) {
     params.set('scope', scope);
   }

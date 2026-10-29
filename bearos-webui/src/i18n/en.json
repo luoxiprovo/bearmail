@@ -383,6 +383,7 @@
     "missingData": "Missing OAuth session data. Please try logging in again.",
     "missingParams": "Missing authorization code or state parameter",
     "processing": "Completing sign in...",
+    "registrationFailed": "Could not register this admin UI for sign-in: {{detail}}",
     "stateMismatch": "State parameter mismatch. Please try logging in again.",
     "title": "Signing in",
     "tokenExchangeFailed": "Token exchange failed: {{status}} {{statusText}}"

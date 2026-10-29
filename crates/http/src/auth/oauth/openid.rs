@@ -27,6 +27,8 @@ pub struct OpenIdMetadata {
     pub claims_supported: &'static [&'static str],
     pub code_challenge_methods_supported: &'static [&'static str],
     pub authorization_response_iss_parameter_supported: bool,
+    /// BearOS uses this to sign in with `/oauth-client.json` when no client id is built in.
+    pub client_id_metadata_document_supported: bool,
 }
 
 pub trait OpenIdHandler: Sync + Send {
@@ -105,6 +107,7 @@ impl OpenIdHandler for Server {
             ],
             code_challenge_methods_supported: &["S256"],
             authorization_response_iss_parameter_supported: true,
+            client_id_metadata_document_supported: true,
             issuer: base_url.to_string(),
         })
         .into_http_response()

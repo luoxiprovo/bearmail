@@ -12,6 +12,7 @@ BearOS 2.0.2 is a modified community build of Stalwart WebUI 2.0.2. It is licens
 - Object pickers in forms are now scoped to the tenant of the record being edited: for objects that belong to a tenant (`memberTenantId`), only options from the same tenant are offered.
 
 ### Fixed
+- Admin sign-in registers a public OAuth client when the server does not advertise a client-metadata document and no client id is configured.
 
 ## [2.0.1] - 2026-10-27
 
