@@ -62,15 +62,54 @@ Preview the download plan without changing the system:
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sh -s -- --dry-run
 ```
 
-For a shorter setup that keeps the recommended paths, Caddy, quick setup, and
-Brevo, and asks for the portal URL, mail hostname, mail domain, Brevo SMTP
-login and API key, and the DNS provider:
+### Easy install
+
+Use `easy_install.sh` on a new Linux **x86-64** server when you want the
+recommended layout and only the questions that identify your domain. It
+downloads the same published files as `release_install.sh`, saves the web
+archive as `bearmail-webui.tar.gz`, runs the short setup, then installs the
+MCP sidecar. Prepare the [DNS provider](#1-domain-at-namecom-hostinger-or-godaddy)
+and [Brevo SMTP relay](#2-smtp-relay-account-brevo-recommended) first.
+
+From an SSH session:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/easy_install.sh | sudo bash
 ```
 
-`mcp_install.sh` remains available on its own for a server that already has BearMail.
+Preview the download plan without changing the system:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/easy_install.sh | sh -s -- --dry-run
+```
+
+These choices are already made. The installer prints them and does not ask:
+
+| Choice | Value |
+| --- | --- |
+| Layout | Standard system paths |
+| Stalwart binary | `/var/tmp/bearmail-install/stalwart` |
+| Web archive | `/var/tmp/bearmail-install/bearmail-webui.tar.gz` |
+| Web files | `/opt/bearmail-webui` on port `8081` |
+| HTTPS | Caddy, automatic |
+| Server setup | Quick setup |
+| Outbound mail | Brevo at `smtp-relay.brevo.com:587` |
+| DNS rows | Treated as not published yet, then sent to the provider you pick |
+
+It still asks you for:
+
+1. **BearMail portal URL.** The address people open in a browser. Type the domain; `https://` is added if you leave it off. Example: `bearmail.example.com`.
+2. **Public mail hostname.** The admin and mail hostname. Example: `mail.example.com`.
+3. **Primary mail domain.** The part after `@`. Example: `example.com` for `admin@example.com`.
+4. **Apply this configuration.** Review the setup summary. Press Enter to accept.
+5. **Brevo SMTP login** and **Brevo SMTP API key.** From Brevo → SMTP & API → SMTP. This is not the Brevo website password.
+6. **Domain name provider.** name.com, Hostinger, GoDaddy, or publish the printed rows by hand.
+7. **DNS zone and API token** for that provider. The zone starts as your mail domain. If the portal domain is the parent of that mail domain, it starts as the portal domain instead. Example: portal `bearos.si` and mail domain `users.bearos.si` defaults the zone to `bearos.si`.
+8. Whether to **replace conflicting DNS records** with the BearMail table.
+
+When it finishes, the mail engine, the BearMail web UI, and the MCP sidecar are installed. Create a mailbox and a Stalwart API key (`API_…`) before an agent connects. See [AI agents (MCP)](#ai-agents-mcp).
+
+A host that already has BearMail does not need `easy_install.sh`. Add MCP alone with `mcp_install.sh`, or use `release_install.sh` when you want every install question.
 
 ### 1 GB VMs (e2-micro)
 
