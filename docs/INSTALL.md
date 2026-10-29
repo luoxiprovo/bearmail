@@ -570,20 +570,27 @@ checkout, `sudo sh ./small-memory-optimize.sh` is the same. Safe to re-run.
 
 ## Upgrade in place
 
-To replace the Stalwart binary, WebUI, and MCP sidecar without changing
-configuration, Caddy, DNS, CORS, the SMTP relay, or stored mail:
+To replace the Stalwart binary, BearOS admin UI, BearMail web UI, and MCP
+sidecar from GitHub without changing configuration, Caddy, DNS, CORS, the
+SMTP relay, or stored mail:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/upgrade.sh | sudo bash
 ```
 
 Preview with `sudo bash -s -- --dry-run`. The script is non-interactive. It
-does not run `install.sh` and does not ask for hostnames or passwords. After
-it finishes, hard-refresh the webmail URL.
+does not run `install.sh` and does not ask for hostnames or passwords. It
+downloads `stalwart`, `stalwart-webui.tar.gz`, and `bearos-webui/webui.zip`,
+reinstalls the MCP sidecar, and asks the running Stalwart to refetch the
+BearOS bundle. That refetch uses a one-shot local admin which the script
+removes before it exits. After it finishes, hard-refresh `/admin` and the
+webmail URL.
 
 From a checkout that already has `update.sh` and `mcp_install.sh`,
-`sudo sh ./upgrade.sh` is the same and still downloads the published binary
-and WebUI unless you pass `--local`.
+`sudo sh ./upgrade.sh` is the same and still downloads the published binary,
+BearOS zip, and BearMail web UI unless you pass `--local`. `--local` uses
+the binary and `stalwart-webui.tar.gz` beside the script. BearOS is still
+read from the URL embedded in that binary.
 
 ## Reinstall or update everything
 

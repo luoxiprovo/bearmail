@@ -1,9 +1,14 @@
 #!/usr/bin/env sh
 # shellcheck shell=dash
 
-# Replace the Stalwart binary, WebUI, and MCP sidecar on an already-installed
-# BearMail host. Does not change config, Caddy, DNS, CORS, SMTP relay, or mail.
-# Masks exim4, postfix, and sendmail so a package upgrade cannot stop Stalwart.
+# Replace the Stalwart binary, BearOS admin UI, BearMail web UI, and MCP
+# sidecar on an already-installed BearMail host. Does not change config,
+# Caddy, DNS, CORS, SMTP relay, or mail. Masks exim4, postfix, and sendmail
+# so a package upgrade cannot stop Stalwart.
+#
+# BearOS is not in stalwart-webui.tar.gz. Stalwart caches bearos-webui/webui.zip
+# and only downloads it again when asked. This script makes that request with
+# a one-shot local admin, then removes the admin and restarts Stalwart.
 #
 # Intended for:
 #   curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/upgrade.sh | sudo bash
@@ -24,6 +29,14 @@ use_local="false"
 stalwart_binary=""
 stalwart_config=""
 tmp=""
+refresh_dropin=""
+refresh_admin_active="false"
+bearos_url=""
+bearos_asset=""
+bearos_admin_user=""
+bearos_admin_pass=""
+JMAP_URL="http://127.0.0.1:8080/jmap/"
+READY_URL="http://127.0.0.1:8080/healthz/ready"
 
 say() {
     printf '%s\n' "$1"
@@ -38,10 +51,17 @@ usage() {
     cat <<'EOF'
 Usage: curl -fsSL <upgrade.sh URL> | sudo bash
 
-Upgrades an already-installed BearMail host to the published Stalwart binary,
-WebUI, and MCP sidecar. Non-interactive. Does not change configuration,
-Caddy, DNS, CORS, SMTP relay, installer-state, or stored mail. Does not
-accept hostnames, passwords, or API tokens as flags.
+Upgrades an already-installed BearMail host from GitHub:
+
+  - Stalwart binary
+  - BearOS admin UI (bearos-webui/webui.zip)
+  - BearMail web UI (stalwart-webui.tar.gz)
+  - MCP sidecar
+
+Non-interactive. Does not change configuration, Caddy, DNS, CORS, SMTP
+relay, installer-state, or stored mail. Does not accept hostnames,
+passwords, or API tokens as flags. The BearOS refresh uses a one-shot
+local admin that is removed before the script exits.
 
 Also masks exim4, postfix, and sendmail, and enables stalwart-mta-guard.timer.
 A Debian package upgrade otherwise starts Exim, and systemd then stops Stalwart.
@@ -69,10 +89,29 @@ The currently published Stalwart binary is Linux x86-64.
 EOF
 }
 
+remove_refresh_admin_file() {
+    if [ "$refresh_admin_active" != "true" ]; then
+        return 0
+    fi
+    refresh_admin_active="false"
+    if [ -n "$refresh_dropin" ]; then
+        rm -f "$refresh_dropin"
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+}
+
 cleanup() {
+    _restart_after_admin="$refresh_admin_active"
+    remove_refresh_admin_file
+    if [ "$_restart_after_admin" = "true" ] && command -v systemctl >/dev/null 2>&1; then
+        systemctl restart "$STALWART_UNIT" >/dev/null 2>&1 || true
+    fi
     if [ -n "$tmp" ] && [ -d "$tmp" ]; then
         rm -rf "$tmp"
     fi
+    bearos_admin_pass=""
 }
 
 trap cleanup EXIT INT HUP TERM
@@ -221,6 +260,186 @@ wait_ready() {
     err "${_label} did not become ready at ${_url}."
 }
 
+detect_bearos_url() {
+    bearos_url=$(grep -a -o 'https://[[:alnum:]./_-]*bearos-webui/webui.zip' "$1" 2>/dev/null | sed -n '1p' || true)
+    if [ -z "$bearos_url" ]; then
+        bearos_url="${BEARMAIL_DOWNLOAD_BASE}/bearos-webui/webui.zip"
+    fi
+}
+
+read_bearos_asset() {
+    bearos_asset=""
+    _index_html=""
+    if command -v python3 >/dev/null 2>&1; then
+        _index_html=$(python3 -c '
+import sys, zipfile
+try:
+    sys.stdout.write(zipfile.ZipFile(sys.argv[1]).read("index.html").decode("utf-8", "replace"))
+except Exception:
+    sys.exit(1)
+' "$1") || return 1
+    elif command -v unzip >/dev/null 2>&1; then
+        _index_html=$(unzip -p "$1" index.html 2>/dev/null) || return 1
+    else
+        say "python3 and unzip are not installed. The upgrade will check that /admin responds, not the bundle hash."
+        return 0
+    fi
+    bearos_asset=$(printf '%s\n' "$_index_html" | sed -n 's/.*\(assets\/index-[A-Za-z0-9_-][A-Za-z0-9_-]*\.js\).*/\1/p' | sed -n '1p')
+    [ -n "$bearos_asset" ] || return 1
+    return 0
+}
+
+prepare_temp_admin() {
+    bearos_admin_user="bearmail-upgrade"
+    bearos_admin_pass="$(od -An -tx1 -N 18 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
+    if [ -z "$bearos_admin_pass" ]; then
+        bearos_admin_pass="$(date +%s)$$"
+    fi
+    refresh_dropin="/etc/systemd/system/${STALWART_UNIT}.d/bearmail-upgrade-admin.conf"
+    mkdir -p "$(dirname "$refresh_dropin")" || return 1
+    _staged="${refresh_dropin}.new.$$"
+    printf '%s\n' '[Service]' \
+        "Environment=STALWART_RECOVERY_ADMIN=${bearos_admin_user}:${bearos_admin_pass}" \
+        > "$_staged" || {
+            rm -f "$_staged"
+            return 1
+        }
+    chmod 0600 "$_staged" || {
+        rm -f "$_staged"
+        return 1
+    }
+    mv -f "$_staged" "$refresh_dropin" || {
+        rm -f "$_staged"
+        return 1
+    }
+    refresh_admin_active="true"
+    systemctl daemon-reload || return 1
+    return 0
+}
+
+clear_refresh_admin() {
+    _was_active="$refresh_admin_active"
+    bearos_admin_pass=""
+    remove_refresh_admin_file
+    if [ "$_was_active" != "true" ]; then
+        return 0
+    fi
+    say "Removing the temporary upgrade admin and restarting Stalwart..."
+    systemctl restart "$STALWART_UNIT"
+    wait_ready "$READY_URL" "Stalwart"
+}
+
+post_update_apps() {
+    _out="${tmp}/update-apps.json"
+    _body='{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":[["x:Action/set",{"create":{"refresh":{"@type":"UpdateApps"}}},"0"]]}'
+    _hdr="${tmp}/jmap-auth-header"
+    _try=0
+    if ! command -v base64 >/dev/null 2>&1; then
+        err "base64 is required to refresh the BearOS admin UI."
+    fi
+    _b64=$(printf '%s:%s' "$bearos_admin_user" "$bearos_admin_pass" | base64 | tr -d '\n')
+    printf 'Authorization: Basic %s\n' "$_b64" > "$_hdr"
+    chmod 0600 "$_hdr"
+    while [ "$_try" -lt 5 ]; do
+        _code="000"
+        rm -f "$_out"
+        if command -v curl >/dev/null 2>&1; then
+            _code=$(curl --silent --show-error \
+                --header @"$_hdr" \
+                --header 'Content-Type: application/json' \
+                --output "$_out" \
+                --write-out '%{http_code}' \
+                --connect-timeout 15 \
+                --max-time 180 \
+                --data "$_body" \
+                "$JMAP_URL") || _code="000"
+        elif command -v wget >/dev/null 2>&1; then
+            if wget -q -O "$_out" \
+                --header="Authorization: Basic ${_b64}" \
+                --header='Content-Type: application/json' \
+                --post-data="$_body" \
+                --timeout=180 \
+                "$JMAP_URL"; then
+                _code="200"
+            else
+                _code="000"
+            fi
+        else
+            rm -f "$_hdr"
+            err "curl or wget is required to refresh the BearOS admin UI."
+        fi
+        if [ "$_code" = "200" ] && [ -s "$_out" ] \
+            && ! grep -q '"notCreated"' "$_out" \
+            && grep -q '"created"' "$_out"; then
+            rm -f "$_hdr"
+            return 0
+        fi
+        _try=$((_try + 1))
+        sleep 2
+    done
+    rm -f "$_hdr"
+    _snippet=""
+    if [ -f "$_out" ]; then
+        _snippet=$(sed -n '1,5p' "$_out" | tr '\n' ' ')
+    fi
+    printf 'BearOS refresh response (HTTP %s): %s\n' "$_code" "$_snippet" >&2
+    return 1
+}
+
+verify_bearos_served() {
+    _html="${tmp}/admin-index.html"
+    rm -f "$_html"
+    if command -v curl >/dev/null 2>&1; then
+        curl --silent --show-error --fail --max-time 20 \
+            --output "$_html" "http://127.0.0.1:8080/admin/index.html" \
+            || curl --silent --show-error --fail --max-time 20 \
+                --output "$_html" "http://127.0.0.1:8080/admin/" \
+            || return 1
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "$_html" --timeout=20 "http://127.0.0.1:8080/admin/index.html" \
+            || wget -q -O "$_html" --timeout=20 "http://127.0.0.1:8080/admin/" \
+            || return 1
+    else
+        return 1
+    fi
+    [ -s "$_html" ] || return 1
+    if [ -n "$bearos_asset" ] && ! grep -F -q "$bearos_asset" "$_html"; then
+        printf '%s\n' "The admin UI responded, but it is not the BearOS bundle downloaded from GitHub." >&2
+        return 1
+    fi
+    return 0
+}
+
+refresh_bearos_bundle() {
+    _prepared="false"
+    if prepare_temp_admin; then
+        _prepared="true"
+    else
+        printf '%s\n' "Could not prepare the temporary admin used to refresh BearOS." >&2
+        remove_refresh_admin_file
+    fi
+    say "Restarting Stalwart with the new binary..."
+    systemctl restart "$STALWART_UNIT"
+    wait_ready "$READY_URL" "Stalwart"
+    if [ "$_prepared" != "true" ]; then
+        return 1
+    fi
+    say "Asking Stalwart to download the BearOS admin UI..."
+    _updated="false"
+    if post_update_apps; then
+        _updated="true"
+    else
+        printf '%s\n' "Stalwart did not accept the BearOS refresh." >&2
+    fi
+    bearos_admin_pass=""
+    clear_refresh_admin
+    if [ "$_updated" != "true" ]; then
+        return 1
+    fi
+    say "Checking that /admin is serving the downloaded BearOS bundle..."
+    verify_bearos_served
+}
+
 detect_stalwart() {
     if [ -f "$STALWART_UNIT_FILE" ]; then
         _exec="$(unit_value "$STALWART_UNIT_FILE" "ExecStart")"
@@ -282,7 +501,7 @@ say "  Leaves unchanged: config, Caddy, DNS, CORS, SMTP relay, mailboxes"
 say ""
 
 if [ "$dry_run" = "true" ]; then
-    say "Dry run: would replace the Stalwart binary, WebUI, and MCP sidecar."
+    say "Dry run: would update the Stalwart binary, BearOS admin UI, BearMail web UI, and MCP sidecar."
     if [ "$use_local" = "true" ] && [ -n "$script_dir" ]; then
         say "  Local ${script_dir}/stalwart"
         say "  Local ${script_dir}/stalwart-webui.tar.gz"
@@ -290,6 +509,7 @@ if [ "$dry_run" = "true" ]; then
         say "  Download ${BEARMAIL_DOWNLOAD_BASE}/stalwart"
         say "  Download ${BEARMAIL_DOWNLOAD_BASE}/stalwart-webui.tar.gz"
     fi
+    say "  Refetch BearOS admin UI from bearos-webui/webui.zip, then remove the temporary admin"
     if [ -n "$script_dir" ] && [ -f "${script_dir}/update.sh" ]; then
         say "  Use local ${script_dir}/update.sh"
     else
@@ -357,6 +577,7 @@ tmp="$(mktemp -d "${WORK_DIR}/stage.XXXXXX")"
 
 new_binary="${tmp}/stalwart"
 webui_archive="${tmp}/stalwart-webui.tar.gz"
+bearos_zip="${tmp}/bearos-webui.zip"
 update_sh=""
 mcp_sh=""
 
@@ -399,22 +620,42 @@ fi
 grep -q 'mcp_src="$RETVAL"' "$mcp_sh" || \
     err "Downloaded mcp_install.sh is too old. Update GitHub main, or run: sudo sh ./mcp_install.sh"
 
+detect_bearos_url "$new_binary"
+download_file "$bearos_url" "$bearos_zip" "BearOS admin UI (bearos-webui/webui.zip)"
+require_min_size "$bearos_zip" 100000 "BearOS admin UI"
+if command -v od >/dev/null 2>&1; then
+    _zip_magic=$(od -An -t x1 -N 4 "$bearos_zip" | tr -d ' \n')
+    [ "$_zip_magic" = "504b0304" ] || [ "$_zip_magic" = "504b0506" ] || [ "$_zip_magic" = "504b0708" ] || \
+        err "The BearOS download is not a zip file."
+fi
+read_bearos_asset "$bearos_zip" || \
+    err "The BearOS download does not contain the admin bundle (index.html)."
+
 say "Replacing Stalwart binary at ${stalwart_binary}..."
 install_executable_atomically "$new_binary" "$stalwart_binary"
 chmod 0755 "$stalwart_binary"
 suppress_distro_mtas
-systemctl restart "$STALWART_UNIT"
-wait_ready "http://127.0.0.1:8080/healthz/ready" "Stalwart"
 
-say "Updating the WebUI (preserving dist/config.json)..."
+bearos_failed="false"
+if ! refresh_bearos_bundle; then
+    bearos_failed="true"
+    printf '%s\n' "BearOS admin UI was not refreshed. The Stalwart binary, BearMail web UI, and MCP sidecar will still be updated." >&2
+fi
+
+say "Updating the BearMail web UI (preserving dist/config.json)..."
 sh "$update_sh" --archive "$webui_archive"
 
 say "Installing or updating the MCP sidecar..."
 BEARMAIL_WORK_DIR="${tmp}/mcp" sh "$mcp_sh"
 
+if [ "$bearos_failed" = "true" ]; then
+    err "The Stalwart binary, BearMail web UI, and MCP sidecar were updated. The BearOS admin UI was not. Confirm this host can download ${bearos_url}, then rerun the upgrade."
+fi
+
 say ""
 say "Upgrade complete."
 say "  Stalwart binary: ${stalwart_binary}"
+say "  BearOS admin UI: refetched from ${bearos_url}. Hard-refresh /admin."
+say "  BearMail web UI: updated. Hard-refresh webmail."
 say "  Config unchanged: ${stalwart_config}"
-say "  WebUI: hard-refresh the browser so it loads the new assets."
 say "  MCP: node /opt/bearmail-mcp/dist/stdio.js   Guide: docs/AGENT_GUIDE.md"

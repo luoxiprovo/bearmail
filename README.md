@@ -167,17 +167,19 @@ Copy-paste configs: [`mcp/mcp.json.example`](mcp/mcp.json.example) (Cursor),
 
 ### Upgrade (keep config)
 
-On a host that already has BearMail, replace the Stalwart binary, WebUI, and
-MCP sidecar. This does not change `config.json`, Caddy, DNS, CORS, the SMTP
-relay, or stored mail, and it does not ask setup questions:
+On a host that already has BearMail, replace the Stalwart binary, BearOS admin UI,
+BearMail web UI, and MCP sidecar from GitHub. This does not change `config.json`,
+Caddy, DNS, CORS, the SMTP relay, or stored mail, and it does not ask setup questions:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/upgrade.sh | sudo bash
 ```
 
 Preview with `sudo bash -s -- --dry-run`. Do not rerun `install.sh` for this
-update: that wizard re-asks CORS, relay, and DNS. After it finishes,
-hard-refresh webmail so the browser loads the new assets.
+update: that wizard re-asks CORS, relay, and DNS. The script refetches
+`bearos-webui/webui.zip` through Stalwart, then removes the one-shot admin it
+used for that call. After it finishes, hard-refresh `/admin` and webmail so
+the browser loads the new assets.
 
 ## Prepare these first
 
