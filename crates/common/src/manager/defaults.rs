@@ -5,6 +5,7 @@
  */
 
 use crate::auth::permissions::DefaultPermissions;
+use crate::manager::{BEAROS_WEBUI_URL, is_retired_bearos_webui_url, is_stalwartlabs_webui_url};
 use aws_lc_rs::{
     rand::SystemRandom,
     signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair},
@@ -12,7 +13,7 @@ use aws_lc_rs::{
 use registry::{
     schema::{
         enums::*,
-        prelude::{ObjectType, SocketAddr},
+        prelude::{Object, ObjectType, SocketAddr},
         structs::*,
     },
     types::{duration::Duration, error::Error, list::List, map::Map},
@@ -56,12 +57,10 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
             .write(RegistryWrite::insert(
                 &Application {
                     auto_update_frequency: Duration::from_millis(30 * 24 * 60 * 60 * 1000),
-                    description: "Stalwart Web Interface".to_string(),
+                    description: "BearOS".to_string(),
                     enabled: true,
                     #[cfg(not(feature = "dev_mode"))]
-                    resource_url:
-                        "https://github.com/stalwartlabs/webui/releases/latest/download/webui.zip"
-                            .into(),
+                    resource_url: BEAROS_WEBUI_URL.into(),
                     #[cfg(feature = "dev_mode")]
                     resource_url: "file:///Users/me/code/webui/.ignore/webui.zip".into(),
                     unpack_directory: None,
@@ -71,6 +70,11 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
             ))
             .await?;
     }
+
+    // An existing server may still have the Stalwart Labs URL stored. Point
+    // that record at BearOS before the bundle is unpacked.
+    #[cfg(not(feature = "test_mode"))]
+    redirect_stalwartlabs_webui(bp).await?;
 
     if is_bootstrap_mode {
         #[cfg(not(any(feature = "dev_mode", feature = "test_mode")))]
@@ -554,6 +558,53 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                 status: TaskStatus::now(),
             }));
             bp.data_store.write(batch.build_all()).await?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(feature = "test_mode"))]
+async fn redirect_stalwartlabs_webui(bp: &mut Bootstrap) -> trc::Result<()> {
+    let stale: Vec<_> = bp
+        .registry
+        .list::<Application>()
+        .await?
+        .into_iter()
+        .filter(|app| {
+            is_stalwartlabs_webui_url(&app.object.resource_url)
+                || is_retired_bearos_webui_url(&app.object.resource_url)
+        })
+        .collect();
+
+    for app in stale {
+        let mut updated = app.object.clone();
+        updated.resource_url = BEAROS_WEBUI_URL.to_string();
+        if updated.description == "Stalwart Web Interface" {
+            updated.description = "BearOS".to_string();
+        }
+        let new_object = Object::from(updated);
+        let old_object = Object::from(app.object);
+        match bp
+            .registry
+            .write(RegistryWrite::update(app.id.id(), &new_object, &old_object))
+            .await?
+        {
+            RegistryWriteResult::Success(_) => {
+                trc::event!(
+                    Resource(trc::ResourceEvent::ApplicationUpdated),
+                    Url = BEAROS_WEBUI_URL.to_string(),
+                    Details = "Replaced the Stalwart Labs admin UI with BearOS"
+                );
+            }
+            result => {
+                trc::event!(
+                    Resource(trc::ResourceEvent::Error),
+                    Url = BEAROS_WEBUI_URL.to_string(),
+                    Details =
+                        format!("Failed to replace the Stalwart Labs admin UI URL: {result:?}")
+                );
+            }
         }
     }
 

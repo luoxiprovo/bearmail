@@ -1,0 +1,100 @@
+/*
+ * SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
+ */
+
+import { type FormEvent, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { ArrowRight, Loader2 } from 'lucide-react';
+
+import Logo from '@/components/common/Logo';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { startAuthFlow } from '@/services/auth/oauth';
+import { errorMessage } from '@/lib/jmapErrors';
+import { useAuthStore } from '@/stores/authStore';
+
+export default function LoginPage() {
+  const { t } = useTranslation();
+  const location = useLocation();
+  const originalPath = (location.state as { from?: string } | null)?.from ?? null;
+  const [username, setUsername] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const sessionExpired = useAuthStore((s) => s.sessionExpired);
+
+  useDocumentTitle(t('login.title', 'Sign in'));
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = username.trim();
+    if (!trimmed) return;
+
+    setError(null);
+    setLoading(true);
+
+    try {
+      await startAuthFlow(trimmed, originalPath);
+    } catch (err) {
+      setError(errorMessage(err, t('login.error', 'An unexpected error occurred')));
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-content-background px-4">
+      <Card className="w-full max-w-sm shadow-sm">
+        <CardHeader className="items-center text-center">
+          <Logo />
+        </CardHeader>
+
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-center text-sm text-muted-foreground">
+                {t('login.prompt', 'Enter your account name to continue')}
+              </p>
+              <Input
+                id="username"
+                type="text"
+                autoComplete="username"
+                autoFocus
+                placeholder={t('login.usernamePlaceholder', 'user@example.com')}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                disabled={loading}
+                aria-label={t('login.prompt', 'Enter your account name to continue')}
+              />
+            </div>
+
+            {error && (
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            )}
+            {!error && sessionExpired && (
+              <p className="text-center text-sm text-muted-foreground" role="status">
+                {t('errors.sessionExpired', 'Your session has expired. Please sign in again.')}
+              </p>
+            )}
+
+            <Button type="submit" className="w-full" disabled={loading || !username.trim()}>
+              {loading ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <>
+                  {t('login.continue', 'Continue')}
+                  <ArrowRight />
+                </>
+              )}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
