@@ -9,7 +9,8 @@ import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useSchemaStore } from '@/stores/schemaStore';
-import { usePermissionCheckers } from '@/hooks/usePermissions';
+import { useIsCommunity, usePermissionCheckers } from '@/hooks/usePermissions';
+import { isLinkEnterprise } from '@/lib/layout';
 import { resolveObject } from '@/lib/schemaResolver';
 import type { PermissionCheckers } from '@/lib/permissions';
 import { ErrorBoundary } from '@/components/layout/ErrorBoundary';
@@ -57,11 +58,14 @@ interface MainContentProps {
 export function MainContent({ viewName, id, section }: MainContentProps) {
   const schema = useSchemaStore((s) => s.schema);
   const permissions = usePermissionCheckers();
+  const isCommunity = useIsCommunity();
   const location = useLocation();
   const { t } = useTranslation();
   return (
     <ErrorBoundary resetKey={location.pathname}>
-      <Suspense fallback={<LoadingFallback />}>{renderView(t, schema, permissions, viewName, id, section)}</Suspense>
+      <Suspense fallback={<LoadingFallback />}>
+        {renderView(t, schema, permissions, isCommunity, viewName, id, section)}
+      </Suspense>
     </ErrorBoundary>
   );
 }
@@ -70,11 +74,16 @@ function renderView(
   t: TFunction,
   schema: Schema | null,
   permissions: PermissionCheckers,
+  isCommunity: boolean,
   viewName?: string,
   id?: string,
   section?: string,
 ): ReactNode {
   if (!viewName) {
+    return <LoadingFallback />;
+  }
+
+  if (schema && isCommunity && isLinkEnterprise(schema, viewName)) {
     return <LoadingFallback />;
   }
 

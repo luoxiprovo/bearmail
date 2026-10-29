@@ -8,7 +8,8 @@ import { useCallback, useDeferredValue, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { List, Plus, Settings } from 'lucide-react';
 import { useSchemaStore, type SearchIndexEntry } from '@/stores/schemaStore';
-import { usePermissionCheckers } from '@/hooks/usePermissions';
+import { useIsCommunity, usePermissionCheckers } from '@/hooks/usePermissions';
+import { isLinkEnterprise } from '@/lib/layout';
 import { isCreateOnly } from '@/lib/permissions';
 import { resolveObject } from '@/lib/schemaResolver';
 import type { Schema } from '@/types/schema';
@@ -65,6 +66,7 @@ export function useGlobalSearch(onAfterSelect?: () => void) {
 
   const schema = useSchemaStore((s) => s.schema);
   const searchIndex = useSchemaStore((s) => s.searchIndex);
+  const isCommunity = useIsCommunity();
   const { hasObjectPermission } = usePermissionCheckers();
 
   const results = useMemo(() => {
@@ -83,6 +85,7 @@ export function useGlobalSearch(onAfterSelect?: () => void) {
       }
       const resolved = resolveObject(schema, entry.viewName);
       if (!resolved) return false;
+      if (isCommunity && (resolved.enterprise || isLinkEnterprise(schema, entry.viewName))) return false;
       return hasObjectPermission(
         resolved.permissionPrefix,
         isCreateOnly(schema, resolved.permissionPrefix) ? 'Create' : 'Get',
@@ -91,7 +94,7 @@ export function useGlobalSearch(onAfterSelect?: () => void) {
 
     filtered.sort((a, b) => TYPE_ORDER[a.type] - TYPE_ORDER[b.type]);
     return filtered.slice(0, MAX_RESULTS);
-  }, [deferredQuery, searchIndex, schema, hasObjectPermission]);
+  }, [deferredQuery, searchIndex, schema, hasObjectPermission, isCommunity]);
 
   const groups = useMemo(() => {
     const map = new Map<SearchIndexEntry['type'], SearchIndexEntry[]>();

@@ -60,5 +60,7 @@ export function canAccessView(
 }
 
 export function isCommunityEdition(edition: string): boolean {
-  return edition === 'community';
+  // BearOS is the community admin. Enterprise screens stay out of this UI
+  // even when the server reports another edition.
+  return edition === edition;
 }

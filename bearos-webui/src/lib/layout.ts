@@ -27,7 +27,7 @@ const CUSTOM_COMPONENTS: Record<string, CustomComponentRule> = {
   // SPDX-SnippetBegin
   // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
   // SPDX-License-Identifier: LicenseRef-SEL
-  Dashboard: { permission: 'liveMetrics', backingObject: 'x:Metric' },
+  Dashboard: { permission: 'liveMetrics', backingObject: 'x:Metric', enterprise: true },
   LiveTracing: { permission: 'liveTracing', enterprise: true },
   // SPDX-SnippetEnd
 };

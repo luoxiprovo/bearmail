@@ -67,15 +67,17 @@ export function requiredMarker(field: Field, readOnly: boolean): 'required' | 'o
   return isNullable(field.type) ? 'optional' : 'required';
 }
 
-function hasMissingNested(schema: Schema, objectName: string, value: unknown): boolean {
+function hasMissingNested(schema: Schema, objectName: string, value: unknown, skipEnterprise: boolean): boolean {
   if (!isRecord(value)) return false;
   const resolved = resolveEmbedded(schema, objectName, value);
   if (!resolved) return false;
   for (const { formField, field } of embeddedEntries(resolved)) {
     if (field.update === 'serverSet') continue;
+    if (skipEnterprise && field.enterprise) continue;
     const nested = value[formField.name];
     if (isRequiredField(field) && isMissingValue(nested)) return true;
-    if (field.type.type === 'object' && hasMissingNested(schema, field.type.objectName, nested)) return true;
+    if (field.type.type === 'object' && hasMissingNested(schema, field.type.objectName, nested, skipEnterprise))
+      return true;
   }
   return false;
 }
@@ -87,17 +89,19 @@ export function validateRequired(
   message: string,
   visible?: ReadonlySet<string>,
   schema?: Schema,
+  skipEnterprise = false,
 ): FieldErrors {
   const errors: FieldErrors = {};
   for (const [name, field] of Object.entries(fields.properties)) {
     if (visible && !visible.has(name)) continue;
+    if (skipEnterprise && field.enterprise) continue;
     if (isRequiredField(field, mode) && isMissingValue(data[name])) errors[name] = message;
     else if (
       schema &&
       field.type.type === 'object' &&
       field.update !== 'serverSet' &&
       !(mode === 'edit' && field.update === 'immutable') &&
-      hasMissingNested(schema, field.type.objectName, data[name])
+      hasMissingNested(schema, field.type.objectName, data[name], skipEnterprise)
     ) {
       errors[name] = message;
     }

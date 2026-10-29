@@ -9,6 +9,7 @@ BearOS 2.0.2 is a modified community build of Stalwart WebUI 2.0.2. It is licens
 ### Added
 
 ### Changed
+- BearOS shows community pages only. The dashboard, live tracing, and other enterprise screens are not offered in this admin UI.
 - Object pickers in forms are now scoped to the tenant of the record being edited: for objects that belong to a tenant (`memberTenantId`), only options from the same tenant are offered.
 
 ### Fixed

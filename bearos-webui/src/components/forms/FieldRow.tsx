@@ -79,7 +79,7 @@ export function FieldError({ id, error }: { id: string; error?: string }) {
 export function FieldRow({ field, formField, value, onChange, error, readOnly: forceReadOnly = false }: FieldRowProps) {
   const ctx = useFormContext();
   const scope = useFieldScope();
-  if (field.enterprise && ctx.hideEnterprise) return null;
+  if (field.enterprise && (ctx.hideEnterprise || ctx.isCommunity)) return null;
 
   const ft = field.type;
   const ids = fieldIds(ctx.idPrefix, [...scope.path, formField.name]);

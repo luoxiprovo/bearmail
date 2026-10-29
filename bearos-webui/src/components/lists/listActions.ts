@@ -76,7 +76,7 @@ export function resolveItemActions(
         const target = resolveObject(schema, action.objectName);
         if (!target) break;
         const locked = !!target.enterprise && perms.isCommunity;
-        if (!locked && !perms.hasObjectPermission(target.permissionPrefix, 'Get')) break;
+        if (locked || !perms.hasObjectPermission(target.permissionPrefix, 'Get')) break;
         out.push({
           key,
           kind: 'navigate',

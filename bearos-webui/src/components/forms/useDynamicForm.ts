@@ -8,7 +8,7 @@ import { useEffect, useReducer } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useSchemaStore } from '@/stores/schemaStore';
-import { usePermissionCheckers } from '@/hooks/usePermissions';
+import { useIsCommunity, usePermissionCheckers } from '@/hooks/usePermissions';
 import { useResolvedView } from '@/hooks/useResolvedView';
 import { toast } from '@/hooks/use-toast';
 import {
@@ -81,6 +81,7 @@ export function useDynamicForm(viewName: string, objectId: string | null) {
   const schema = useSchemaStore((s) => s.schema);
   const viewToSection = useSchemaStore((s) => s.viewToSection);
   const { canGet } = usePermissionCheckers();
+  const isCommunity = useIsCommunity();
   const resolved = useResolvedView(viewName);
   const mode: FormMode = objectId === null ? 'create' : 'edit';
   const isSingleton = resolved?.object.objectType.type === 'singleton';
@@ -206,6 +207,7 @@ export function useDynamicForm(viewName: string, objectId: string | null) {
         t('form.required', 'This field is required.'),
         visible.size > 0 ? visible : undefined,
         schema ?? undefined,
+        isCommunity,
       );
       if (Object.keys(errors).length > 0) {
         dispatch({
