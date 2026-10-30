@@ -6,7 +6,8 @@
 set -eu
 
 STALWART_UNIT_FILE="/etc/systemd/system/stalwart.service"
-WEBUI_UNIT_FILE="/etc/systemd/system/stalwart-webui.service"
+WEBUI_UNIT_FILE="/etc/systemd/system/bearmail-webui.service"
+WEBUI_UNIT_FILE_OLD="/etc/systemd/system/stalwart-webui.service"
 CADDY_CONFIG_FILE="/etc/caddy/Caddyfile"
 CADDY_MANAGED_MARKER="# STALWART_INSTALLER_MANAGED_CADDYFILE=1"
 CADDY_CERT_SYNC_SCRIPT="/usr/local/libexec/stalwart-caddy-cert-sync"
@@ -164,15 +165,21 @@ if [ -n "$stalwart_prefix_override" ]; then
     stalwart_log_dir="${stalwart_prefix}/logs"
 fi
 
-webui_prefix="/opt/stalwart-webui"
+webui_prefix="/opt/bearmail-webui"
 webui_node=""
 webui_user="stalwart-webui"
-
+webui_unit_source=""
 if [ -f "$WEBUI_UNIT_FILE" ]; then
-    detected_webui_prefix="$(unit_value "$WEBUI_UNIT_FILE" "WorkingDirectory")"
-    webui_exec_line="$(unit_value "$WEBUI_UNIT_FILE" "ExecStart")"
+    webui_unit_source="$WEBUI_UNIT_FILE"
+elif [ -f "$WEBUI_UNIT_FILE_OLD" ]; then
+    webui_unit_source="$WEBUI_UNIT_FILE_OLD"
+fi
+
+if [ -n "$webui_unit_source" ]; then
+    detected_webui_prefix="$(unit_value "$webui_unit_source" "WorkingDirectory")"
+    webui_exec_line="$(unit_value "$webui_unit_source" "ExecStart")"
     detected_node="$(printf '%s\n' "$webui_exec_line" | sed -n 's/^\([^[:space:]]*\).*/\1/p')"
-    detected_webui_user="$(unit_value "$WEBUI_UNIT_FILE" "User")"
+    detected_webui_user="$(unit_value "$webui_unit_source" "User")"
     [ -n "$detected_webui_prefix" ] && webui_prefix="$detected_webui_prefix"
     [ -n "$detected_node" ] && webui_node="$detected_node"
     [ -n "$detected_webui_user" ] && webui_user="$detected_webui_user"
@@ -228,6 +235,7 @@ validate_tree_target() {
 validate_path "$stalwart_binary" "Stalwart binary"
 validate_tree_target "$webui_prefix" "WebUI prefix"
 validate_tree_target "${WEBUI_UNIT_FILE}.d" "WebUI systemd drop-ins"
+validate_tree_target "${WEBUI_UNIT_FILE_OLD}.d" "previous WebUI systemd drop-ins"
 validate_tree_target "${STALWART_UNIT_FILE}.d" "Stalwart systemd drop-ins"
 if [ "$purge" = "true" ]; then
     validate_tree_target "$stalwart_conf_dir" "Stalwart configuration"
@@ -242,6 +250,9 @@ say ""
 say "Stalwart + WebUI uninstall plan"
 say "  Stalwart unit:    ${STALWART_UNIT_FILE}"
 say "  WebUI unit:       ${WEBUI_UNIT_FILE}"
+if [ -f "$WEBUI_UNIT_FILE_OLD" ] || [ -d "${WEBUI_UNIT_FILE_OLD}.d" ]; then
+    say "  Previous unit:    ${WEBUI_UNIT_FILE_OLD}"
+fi
 say "  Stalwart binary:  ${stalwart_binary}"
 say "  WebUI files:      ${webui_prefix}"
 if [ "$purge" = "true" ]; then
@@ -327,7 +338,7 @@ node_used_elsewhere() {
     _node="$1"
     grep -R -l -F "$_node" \
         /etc/systemd/system /run/systemd/system /usr/lib/systemd/system /lib/systemd/system \
-        2>/dev/null | grep -v '/stalwart-webui.service$' | grep -q .
+        2>/dev/null | grep -v '/stalwart-webui.service$' | grep -v '/bearmail-webui.service$' | grep -q .
 }
 
 delete_account() {
@@ -357,6 +368,7 @@ stop_and_disable "stalwart-mta-guard.timer"
 stop_and_disable "stalwart-mta-guard.service"
 stop_and_disable "stalwart-caddy-cert-sync.timer"
 stop_and_disable "stalwart-caddy-cert-sync.service"
+stop_and_disable "bearmail-webui.service"
 stop_and_disable "stalwart-webui.service"
 stop_and_disable "stalwart.service"
 if [ "$managed_caddy" = "true" ]; then
@@ -364,6 +376,7 @@ if [ "$managed_caddy" = "true" ]; then
 fi
 
 remove_file "$WEBUI_UNIT_FILE" "WebUI systemd unit"
+remove_file "$WEBUI_UNIT_FILE_OLD" "previous WebUI systemd unit"
 remove_file "$STALWART_UNIT_FILE" "Stalwart systemd unit"
 remove_file "$CADDY_CERT_SYNC_TIMER" "Caddy certificate synchronization timer"
 remove_file "$CADDY_CERT_SYNC_SERVICE" "Caddy certificate synchronization service"
@@ -374,15 +387,30 @@ if [ "$managed_caddy" = "true" ]; then
     remove_file "$CADDY_CONFIG_FILE" "installer-managed Caddy configuration"
 fi
 remove_tree "${WEBUI_UNIT_FILE}.d" "WebUI systemd drop-ins"
+remove_tree "${WEBUI_UNIT_FILE_OLD}.d" "previous WebUI systemd drop-ins"
 remove_tree "${STALWART_UNIT_FILE}.d" "Stalwart systemd drop-ins"
 for _unit in exim4.service postfix.service sendmail.service; do
     systemctl unmask "$_unit" >/dev/null 2>&1 || true
 done
 systemctl daemon-reload
-systemctl reset-failed stalwart.service stalwart-webui.service \
+systemctl reset-failed stalwart.service bearmail-webui.service stalwart-webui.service \
     stalwart-caddy-cert-sync.service caddy.service >/dev/null 2>&1 || true
 
 remove_tree "$webui_prefix" "WebUI files"
+for _extra_prefix in /opt/bearmail-webui /opt/stalwart-webui; do
+    if [ "$_extra_prefix" = "$webui_prefix" ]; then
+        continue
+    fi
+    if [ ! -f "${_extra_prefix}/server.mjs" ]; then
+        continue
+    fi
+    if [ -L "$_extra_prefix" ]; then
+        warn "Skipping previous WebUI path because it is a symbolic link: ${_extra_prefix}"
+        continue
+    fi
+    validate_tree_target "$_extra_prefix" "previous WebUI files"
+    remove_tree "$_extra_prefix" "previous WebUI files"
+done
 remove_file "$stalwart_binary" "Stalwart binary"
 
 if [ -n "$stalwart_prefix" ]; then

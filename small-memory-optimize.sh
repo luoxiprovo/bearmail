@@ -107,14 +107,19 @@ prefixed() {
 }
 
 unit_file="$(prefixed /etc/systemd/system/stalwart.service)"
-webui_unit_file="$(prefixed /etc/systemd/system/stalwart-webui.service)"
+webui_unit_name="bearmail-webui.service"
+if [ ! -f "$(prefixed /etc/systemd/system/bearmail-webui.service)" ] && \
+    [ -f "$(prefixed /etc/systemd/system/stalwart-webui.service)" ]; then
+    webui_unit_name="stalwart-webui.service"
+fi
+webui_unit_file="$(prefixed /etc/systemd/system/${webui_unit_name})"
 config_file="${BEARMAIL_STALWART_CONFIG:-}"
 swapfile="$(prefixed "$SWAP_LABEL")"
 fstab="$(prefixed /etc/fstab)"
 sysctl_file="$(prefixed /etc/sysctl.d/99-bearmail-swappiness.conf)"
 journald_file="$(prefixed /etc/systemd/journald.conf.d/bearmail-size.conf)"
 stalwart_dropin="$(prefixed /etc/systemd/system/stalwart.service.d/bearmail-memory.conf)"
-webui_dropin="$(prefixed /etc/systemd/system/stalwart-webui.service.d/bearmail-memory.conf)"
+webui_dropin="$(prefixed /etc/systemd/system/${webui_unit_name}.d/bearmail-memory.conf)"
 ops_unit="$(prefixed /etc/systemd/system/google-cloud-ops-agent.service)"
 ops_lib_unit="$(prefixed /lib/systemd/system/google-cloud-ops-agent.service)"
 snapd_unit="$(prefixed /etc/systemd/system/snapd.service)"
@@ -431,7 +436,7 @@ if ! file_same "$webui_dropin" "$webui_mem_body"; then
     write_file "$webui_dropin" "$webui_mem_body" 0644
     say "Wrote ${webui_dropin}."
     service_ctl daemon-reload
-    service_ctl try-restart stalwart-webui.service || service_ctl restart stalwart-webui.service
+    service_ctl try-restart "$webui_unit_name" || service_ctl restart "$webui_unit_name"
 else
     say "WebUI memory drop-in already in place."
 fi

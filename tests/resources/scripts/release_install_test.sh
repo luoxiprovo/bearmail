@@ -28,7 +28,7 @@ dry_out="$(sh "$RELEASE_SH" --dry-run)"
 printf '%s\n' "$dry_out" | grep -q 'raw.githubusercontent.com/luoxiprovo/bearmail/main/install.sh' || \
     fail "dry-run does not print the install.sh URL"
 printf '%s\n' "$dry_out" | grep -q '/stalwart$' || fail "dry-run does not print the stalwart URL"
-printf '%s\n' "$dry_out" | grep -q 'stalwart-webui.tar.gz' || fail "dry-run does not print the WebUI archive URL"
+printf '%s\n' "$dry_out" | grep -q 'bearmail-webui.tar.gz' || fail "dry-run does not print the WebUI archive URL"
 printf '%s\n' "$dry_out" | grep -q 'raw.githubusercontent.com/luoxiprovo/bearmail/main/mcp_install.sh' || \
     fail "dry-run does not print the mcp_install.sh URL"
 printf '%s\n' "$dry_out" | grep -q '/var/tmp/bearmail-install/install.sh' || \

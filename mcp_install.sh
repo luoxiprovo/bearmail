@@ -14,8 +14,8 @@ BEARMAIL_REF="${BEARMAIL_REF:-main}"
 BEARMAIL_ARCHIVE_URL="${BEARMAIL_ARCHIVE_URL:-https://github.com/${BEARMAIL_REPO}/archive/refs/heads/${BEARMAIL_REF}.tar.gz}"
 WORK_DIR="${BEARMAIL_WORK_DIR:-/var/tmp/bearmail-mcp-install}"
 INSTALLER_STATE="${BEARMAIL_INSTALLER_STATE:-/etc/stalwart/installer-state.json}"
-WEBUI_UNIT="${BEARMAIL_WEBUI_UNIT:-stalwart-webui.service}"
-WEBUI_UNIT_FILE="${BEARMAIL_WEBUI_UNIT_FILE:-/etc/systemd/system/stalwart-webui.service}"
+WEBUI_UNIT="${BEARMAIL_WEBUI_UNIT:-}"
+WEBUI_UNIT_FILE="${BEARMAIL_WEBUI_UNIT_FILE:-}"
 PREFIX="${BEARMAIL_MCP_PREFIX:-/opt/bearmail-mcp}"
 PORT="${BEARMAIL_MCP_PORT:-8082}"
 
@@ -197,6 +197,42 @@ pick_node() {
     [ -x "$_candidate" ] || return 1
     node_at_least_22_12 "$_candidate" || return 1
     node_bin="$_candidate"
+}
+
+resolve_webui_unit() {
+    if [ -n "${BEARMAIL_WEBUI_UNIT:-}" ] || [ -n "${BEARMAIL_WEBUI_UNIT_FILE:-}" ]; then
+        if [ -z "$WEBUI_UNIT" ]; then
+            WEBUI_UNIT="${WEBUI_UNIT_FILE##*/}"
+        fi
+        if [ -z "$WEBUI_UNIT_FILE" ]; then
+            WEBUI_UNIT_FILE="/etc/systemd/system/${WEBUI_UNIT}"
+        fi
+        return 0
+    fi
+    if [ -f /etc/systemd/system/bearmail-webui.service ]; then
+        WEBUI_UNIT="bearmail-webui.service"
+        WEBUI_UNIT_FILE="/etc/systemd/system/bearmail-webui.service"
+        return 0
+    fi
+    if [ -f /etc/systemd/system/stalwart-webui.service ]; then
+        WEBUI_UNIT="stalwart-webui.service"
+        WEBUI_UNIT_FILE="/etc/systemd/system/stalwart-webui.service"
+        return 0
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl cat bearmail-webui.service >/dev/null 2>&1; then
+            WEBUI_UNIT="bearmail-webui.service"
+            WEBUI_UNIT_FILE="/etc/systemd/system/bearmail-webui.service"
+            return 0
+        fi
+        if systemctl cat stalwart-webui.service >/dev/null 2>&1; then
+            WEBUI_UNIT="stalwart-webui.service"
+            WEBUI_UNIT_FILE="/etc/systemd/system/stalwart-webui.service"
+            return 0
+        fi
+    fi
+    WEBUI_UNIT="bearmail-webui.service"
+    WEBUI_UNIT_FILE="/etc/systemd/system/bearmail-webui.service"
 }
 
 detect_node() {
@@ -422,6 +458,7 @@ if [ "$install_service" = "true" ]; then
     fi
 fi
 
+resolve_webui_unit
 detect_node || true
 detect_server_url || true
 if [ -n "$server_url" ]; then

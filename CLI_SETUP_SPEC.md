@@ -3,7 +3,7 @@
 ## Goal
 
 A user places `install.sh`, a compatible compiled `stalwart` binary, and a
-prebuilt `stalwart-webui.tar.gz` in one directory on a new Linux server. Running
+prebuilt `bearmail-webui.tar.gz` in one directory on a new Linux server. Running
 `sudo sh ./install.sh` installs Stalwart and the mail/calendar WebUI with one
 interactive flow while keeping two systemd services and two public hostnames.
 
@@ -28,7 +28,7 @@ The target requires Linux and systemd. The installer asks for:
 
 1. standard FHS paths or a custom Stalwart prefix;
 2. the local Stalwart binary path (default `./stalwart` beside the script);
-3. the prebuilt WebUI archive path (default `./stalwart-webui.tar.gz`);
+3. the prebuilt WebUI archive path (default `./bearmail-webui.tar.gz`);
 4. the WebUI installation prefix and localhost port;
 5. the exact public WebUI HTTPS origin, with an optional nonstandard port and no path;
 6. automatic Caddy publishing (default) or an operator-managed proxy; and
@@ -48,7 +48,7 @@ archive. `install.sh` validates that:
 - the WebUI artifact is a safe gzip tar without absolute paths, parent traversal,
   or symbolic links;
 - the archive root contains `install.sh`, `server.mjs`,
-  `stalwart-webui.service`, `dist/index.html`, and `dist/config.json`;
+  `bearmail-webui.service`, `dist/index.html`, and `dist/config.json`;
 - the public WebUI value is an exact HTTPS DNS origin;
 - the local WebUI port is valid and does not collide with Stalwart port 8080;
 - the WebUI prefix does not contain or sit inside a Stalwart binary,
@@ -112,7 +112,7 @@ The installer creates and starts:
 
 - `stalwart.service`, using the configured server hostname such as
   `mail.example.com`;
-- `stalwart-webui.service`, bound to `127.0.0.1:8081` by default and configured
+- `bearmail-webui.service`, bound to `127.0.0.1:8081` by default and configured
   to connect to `https://mail.example.com`.
 
 The WebUI has a different public origin such as `https://bearmail.example.com`.

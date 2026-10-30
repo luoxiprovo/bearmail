@@ -23,7 +23,7 @@ trap cleanup_test 0 HUP INT TERM
 sh -n "$UPDATE_SH" || fail "update.sh is not valid POSIX sh"
 
 help_out="$(sh "$UPDATE_SH" --help)"
-printf '%s\n' "$help_out" | grep -q 'stalwart-webui.tar.gz' || \
+printf '%s\n' "$help_out" | grep -q 'bearmail-webui.tar.gz' || \
     fail "help does not mention the WebUI archive"
 printf '%s\n' "$help_out" | grep -q 'Stalwart, Caddy, DNS' || \
     fail "help does not say Stalwart and Caddy are left unchanged"
@@ -58,11 +58,11 @@ stage="${TEST_TMP_DIR}/archive-src"
 mkdir -p "${stage}/dist"
 printf '%s\n' 'STALWART_WEBUI_ARCHIVE_VERSION=2' > "${stage}/install.sh"
 printf '%s\n' 'new-server' > "${stage}/server.mjs"
-printf '%s\n' '[Service]' > "${stage}/stalwart-webui.service"
+printf '%s\n' '[Service]' > "${stage}/bearmail-webui.service"
 printf '%s\n' '<html></html>' > "${stage}/dist/index.html"
 printf '%s\n' '{"appName":"BearMail","defaultServerUrl":""}' > "${stage}/dist/config.json"
-archive="${TEST_TMP_DIR}/stalwart-webui.tar.gz"
-tar -czf "$archive" -C "$stage" install.sh server.mjs stalwart-webui.service dist
+archive="${TEST_TMP_DIR}/bearmail-webui.tar.gz"
+tar -czf "$archive" -C "$stage" install.sh server.mjs bearmail-webui.service dist
 
 dry_out="$(
     BEARMAIL_WEBUI_UNIT_FILE="$unit_file" \

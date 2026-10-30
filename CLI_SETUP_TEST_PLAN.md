@@ -46,12 +46,12 @@ have a focused plan in [docs/INSTALLER_RELAY_DNS_TEST_PLAN.md](docs/INSTALLER_RE
 - `shellcheck -s dash` passes when ShellCheck is installed;
 - only `-h` and `--help` are accepted by `install.sh`;
 - `release_install.sh` is the curl entrypoint: it downloads the published
-  `install.sh`, `stalwart`, `stalwart-webui.tar.gz`, and `mcp_install.sh`,
+  `install.sh`, `stalwart`, `bearmail-webui.tar.gz`, and `mcp_install.sh`,
   runs `install.sh`, then runs `mcp_install.sh`;
 - every public answer is read from `/dev/tty`;
 - `install.sh` itself has no source build, release download, artifact URL, or
   answer-bearing public CLI flag;
-- defaults point to `stalwart` and `stalwart-webui.tar.gz` beside `install.sh`;
+- defaults point to `stalwart` and `bearmail-webui.tar.gz` beside `install.sh`;
 - Linux/systemd are checked before system changes;
 - an absolute system Node.js >=22.12 outside user homes is reused unchanged;
 - a missing, old, or user-home Node.js selects the correct official x64,
@@ -133,10 +133,10 @@ Package the WebUI and inspect its root:
 
 ```sh
 cd webui
-tar -czf ../stalwart-webui.tar.gz \
-  install.sh server.mjs stalwart-webui.service dist
+tar -czf ../bearmail-webui.tar.gz \
+  install.sh server.mjs bearmail-webui.service dist
 cd ..
-tar -tzf stalwart-webui.tar.gz
+tar -tzf bearmail-webui.tar.gz
 ```
 
 Expected root entries include the five required files/trees and no link or
@@ -151,7 +151,7 @@ these files in one directory:
 ```text
 install.sh
 stalwart
-stalwart-webui.tar.gz
+bearmail-webui.tar.gz
 ```
 
 The Stalwart binary must be rebuilt after changes to `setup.rs`.
@@ -166,7 +166,7 @@ The Stalwart binary must be rebuilt after changes to `setup.rs`.
    installer example, accept the suggested `https://webmail.example.test`.
 4. Verify setup asks no storage/directory/logging/DNS questions.
 5. Verify `config.json` and root-only non-secret `installer-state.json` exist.
-6. Verify `stalwart.service`, `stalwart-webui.service`, and `caddy.service` are
+6. Verify `stalwart.service`, `bearmail-webui.service`, and `caddy.service` are
    active and enabled, and the certificate synchronization timer is enabled.
 7. Verify local readiness on ports 8080 and 8081, both bound only to loopback;
    verify Caddy owns public ports 80/443 and Stalwart HTTPS moved to 8443 on
@@ -181,7 +181,7 @@ The Stalwart binary must be rebuilt after changes to `setup.rs`.
     files, process arguments, or shell history.
 11. Verify the installer downloaded Node.js from `nodejs.org`, matched the
     official SHA-256 value, installed it below `/opt/stalwart-node/<version>`,
-    and wrote that exact path to `stalwart-webui.service` without creating or
+    and wrote that exact path to `bearmail-webui.service` without creating or
     replacing `/usr/bin/node` or `/usr/local/bin/node`.
 12. After publishing DNS, verify Caddy has a trusted certificate for both
     public hosts, run the synchronization service, and confirm Stalwart serves

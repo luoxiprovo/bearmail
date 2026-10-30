@@ -15,8 +15,8 @@ set -eu
 
 COMMUNITY_FEATURES="sqlite postgres mysql rocks s3 redis azure nats"
 LAB_UNIT="stalwart-source-test.service"
-WEBUI_UNIT="stalwart-webui.service"
-DEFAULT_WEBUI_PREFIX="/opt/stalwart-webui"
+WEBUI_UNIT="bearmail-webui.service"
+DEFAULT_WEBUI_PREFIX="/opt/bearmail-webui"
 DEFAULT_WEBUI_PORT="8081"
 DEFAULT_NODE_BIN="/usr/bin/node"
 DEFAULT_SERVER_URL="http://127.0.0.1:8080"
@@ -41,7 +41,7 @@ Usage: sudo sh ./test_install.sh [OPTIONS]
 Modes
 
   First-time / customer-like setup (default):
-    Builds a community Stalwart binary (no enterprise features), packs webui/ into stalwart-webui.tar.gz
+    Builds a community Stalwart binary (no enterprise features), packs webui/ into bearmail-webui.tar.gz
     because install.sh requires that archive, then runs install.sh. That is the
     only path that asks for Caddy, DNS, Brevo/Mailjet SMTP relay, and name.com, Hostinger, or GoDaddy.
     Quick setup asks for a public mail hostname (example: mail.example.com) and
@@ -132,7 +132,11 @@ detect_live_webui() {
     if ! command -v systemctl >/dev/null 2>&1; then
         return 0
     fi
-    if ! systemctl cat "$WEBUI_UNIT" >/dev/null 2>&1; then
+    if systemctl cat bearmail-webui.service >/dev/null 2>&1; then
+        WEBUI_UNIT="bearmail-webui.service"
+    elif systemctl cat stalwart-webui.service >/dev/null 2>&1; then
+        WEBUI_UNIT="stalwart-webui.service"
+    else
         return 0
     fi
     _wd="$(systemctl show -p WorkingDirectory --value "$WEBUI_UNIT" 2>/dev/null || true)"
@@ -226,7 +230,7 @@ pack_webui_archive() {
         err "❌ ${_webui}/dist/index.html is missing after the WebUI build."
     [ -f "${_webui}/install.sh" ] || err "❌ ${_webui}/install.sh is missing."
     tar -czf "$_archive" -C "$_webui" \
-        install.sh server.mjs stalwart-webui.service dist
+        install.sh server.mjs bearmail-webui.service dist
     tar -tzf "$_archive" | grep -qx 'dist/index.html' || \
         err "❌ ${_archive} does not contain dist/index.html."
     tar -tzf "$_archive" | grep -qx 'dist/config.json' || \
@@ -309,7 +313,7 @@ done
 SCRIPT_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 INSTALL_SH="${SCRIPT_DIR}/install.sh"
 ARTIFACT_BIN="${SCRIPT_DIR}/stalwart"
-ARTIFACT_WEBUI="${SCRIPT_DIR}/stalwart-webui.tar.gz"
+ARTIFACT_WEBUI="${SCRIPT_DIR}/bearmail-webui.tar.gz"
 WEBUI_DIR="${SCRIPT_DIR}/webui"
 
 [ -f "$INSTALL_SH" ] || err "❌ ${INSTALL_SH} is missing."
@@ -391,7 +395,7 @@ if [ "$dry_run" = "true" ]; then
         say "Dry run: cargo build -j ${cargo_jobs} -p stalwart --no-default-features --features \"${COMMUNITY_FEATURES}\" ${CARGO_PROFILE_ARGS}"
         say "Dry run: copy ${SOURCE_BIN} -> ${ARTIFACT_BIN}"
         say "Dry run: (cd webui && npm ci && npm run build)"
-        say "Dry run: tar -czf ${ARTIFACT_WEBUI} install.sh server.mjs stalwart-webui.service dist"
+        say "Dry run: tar -czf ${ARTIFACT_WEBUI} install.sh server.mjs bearmail-webui.service dist"
     else
         say "Dry run: reuse ${ARTIFACT_BIN} and ${ARTIFACT_WEBUI}"
     fi

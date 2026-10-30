@@ -65,7 +65,7 @@ Prove all of the following on a clean host:
 | Component | Address seen by the browser | Host service | Purpose |
 |---|---|---|---|
 | Stalwart | `http://127.0.0.1:8080` | `stalwart-source-test.service` | JMAP, OAuth, SMTP, calendar scheduling, and admin setup |
-| Mail & Calendar Web UI | `http://127.0.0.1:8081` | `stalwart-webui.service` | Application under test |
+| Mail & Calendar Web UI | `http://127.0.0.1:8081` | `bearmail-webui.service` | Application under test |
 | SSH tunnel | Local ports 8080 and 8081 | Test host loopback | Keeps this HTTP-only lab off the network |
 
 Create these two normal user accounts. Do not use the administrator account for mail or calendar testing.
@@ -415,18 +415,18 @@ Expected:
 cd "$STALWART_SRC/webui"
 sudo ./install.sh \
   --server-url http://127.0.0.1:8080 \
-  --prefix /opt/stalwart-webui \
+  --prefix /opt/bearmail-webui \
   --port 8081 \
   --systemd \
   --no-build
 ```
 
-This command installs only static Web UI assets, its small Node server, and `stalwart-webui.service`. It does not read Stalwart's config file, alter the Stalwart service, or store mailbox credentials.
+This command installs only static Web UI assets, its small Node server, and `bearmail-webui.service`. It does not read Stalwart's config file, alter the Stalwart service, or store mailbox credentials.
 
 Verify the independent service and runtime configuration:
 
 ```bash
-sudo systemctl status --no-pager stalwart-webui.service
+sudo systemctl status --no-pager bearmail-webui.service
 curl -fsS http://127.0.0.1:8081/healthz/ready
 curl -fsS http://127.0.0.1:8081/config.json | jq .
 curl -fsSI http://127.0.0.1:8081/ | grep -Ei \
@@ -439,7 +439,7 @@ Expected:
 - `defaultServerUrl` is `http://127.0.0.1:8080`.
 - Basic and OAuth login are enabled.
 - Security headers are present.
-- `systemctl cat stalwart-webui.service` shows a different unit, user, working directory, and executable from Stalwart.
+- `systemctl cat bearmail-webui.service` shows a different unit, user, working directory, and executable from Stalwart.
 
 ### C4. Verify the authenticated JMAP surface
 
@@ -863,11 +863,11 @@ unset ATTENDEE_SECRET ORGANIZER_SECRET
 On a disposable host, stop the test services:
 
 ```bash
-sudo systemctl disable --now stalwart-webui.service
+sudo systemctl disable --now bearmail-webui.service
 sudo systemctl disable --now stalwart-source-test.service
 ```
 
-Do not delete `/var/lib/stalwart-source-test`, `/etc/stalwart-source-test`, `/opt/stalwart-source-test`, `/opt/stalwart-webui`, or the evidence directory until the run is signed off. Those paths contain the database, configuration, exact installed binaries, and failure evidence needed to reproduce a defect. Destroy the disposable VM only after the report and required artifacts are retained.
+Do not delete `/var/lib/stalwart-source-test`, `/etc/stalwart-source-test`, `/opt/stalwart-source-test`, `/opt/bearmail-webui`, or the evidence directory until the run is signed off. Those paths contain the database, configuration, exact installed binaries, and failure evidence needed to reproduce a defect. Destroy the disposable VM only after the report and required artifacts are retained.
 
 ## 14. Test report template
 
@@ -911,7 +911,7 @@ Do not delete `/var/lib/stalwart-source-test`, `/etc/stalwart-source-test`, `/op
 - Local default listeners: `crates/common/src/manager/defaults.rs`
 - Local CORS implementation: `crates/common/src/config/network.rs`
 - Local scheduling acceptance behavior: `tests/src/jmap/calendar/notification.rs`
-- Local standalone installer and server: `webui/install.sh`, `webui/stalwart-webui.service`, and `webui/server.mjs`
+- Local standalone installer and server: `webui/install.sh`, `webui/bearmail-webui.service`, and `webui/server.mjs`
 - [Official source compilation guide](https://stalw.art/docs/development/compile/)
 - [Official configuration and bootstrap overview](https://stalw.art/docs/configuration/)
 - [Official JMAP overview](https://stalw.art/docs/http/jmap/)

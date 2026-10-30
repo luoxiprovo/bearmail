@@ -121,14 +121,14 @@ done
 say "BearMail release installer"
 say "  Artifacts: ${BEARMAIL_DOWNLOAD_BASE}"
 say "  Staging:   ${WORK_DIR}"
-say "  Files:     install.sh, stalwart, stalwart-webui.tar.gz, mcp_install.sh"
+say "  Files:     install.sh, stalwart, bearmail-webui.tar.gz, mcp_install.sh"
 say ""
 
 if [ "$dry_run" = "true" ]; then
     say "Dry run: would download:"
     say "  ${BEARMAIL_DOWNLOAD_BASE}/install.sh"
     say "  ${BEARMAIL_DOWNLOAD_BASE}/stalwart"
-    say "  ${BEARMAIL_DOWNLOAD_BASE}/stalwart-webui.tar.gz"
+    say "  ${BEARMAIL_DOWNLOAD_BASE}/bearmail-webui.tar.gz"
     say "  ${BEARMAIL_DOWNLOAD_BASE}/mcp_install.sh"
     say "then run: sh ${WORK_DIR}/install.sh"
     say "then run: sh ${WORK_DIR}/mcp_install.sh"
@@ -167,12 +167,12 @@ chmod 0700 "$WORK_DIR"
 
 download_file "${BEARMAIL_DOWNLOAD_BASE}/install.sh" "${WORK_DIR}/install.sh" "install.sh"
 download_file "${BEARMAIL_DOWNLOAD_BASE}/stalwart" "${WORK_DIR}/stalwart" "stalwart (this is large; wait for it)"
-download_file "${BEARMAIL_DOWNLOAD_BASE}/stalwart-webui.tar.gz" "${WORK_DIR}/stalwart-webui.tar.gz" "stalwart-webui.tar.gz"
+download_file "${BEARMAIL_DOWNLOAD_BASE}/bearmail-webui.tar.gz" "${WORK_DIR}/bearmail-webui.tar.gz" "bearmail-webui.tar.gz"
 download_file "${BEARMAIL_DOWNLOAD_BASE}/mcp_install.sh" "${WORK_DIR}/mcp_install.sh" "mcp_install.sh"
 
 require_min_size "${WORK_DIR}/install.sh" 10000 "install.sh"
 require_min_size "${WORK_DIR}/stalwart" 1000000 "stalwart"
-require_min_size "${WORK_DIR}/stalwart-webui.tar.gz" 10000 "stalwart-webui.tar.gz"
+require_min_size "${WORK_DIR}/bearmail-webui.tar.gz" 10000 "bearmail-webui.tar.gz"
 require_min_size "${WORK_DIR}/mcp_install.sh" 1000 "mcp_install.sh"
 grep -q 'BearMail' "${WORK_DIR}/install.sh" || err "The downloaded install.sh does not look like the BearMail installer."
 grep -q 'bearmail-mcp' "${WORK_DIR}/mcp_install.sh" || err "The downloaded mcp_install.sh does not look like the BearMail MCP installer."
@@ -182,7 +182,7 @@ fi
 grep -q 'mcp_src="$RETVAL"' "${WORK_DIR}/mcp_install.sh" || \
     err "Downloaded mcp_install.sh is too old. Update GitHub main, or run: sudo sh ./mcp_install.sh"
 assert_elf_x86_64 "${WORK_DIR}/stalwart"
-tar -tzf "${WORK_DIR}/stalwart-webui.tar.gz" >/dev/null \
+tar -tzf "${WORK_DIR}/bearmail-webui.tar.gz" >/dev/null \
     || err "The downloaded WebUI archive is not a readable gzip tar."
 chmod 0755 "${WORK_DIR}/install.sh" "${WORK_DIR}/stalwart" "${WORK_DIR}/mcp_install.sh"
 

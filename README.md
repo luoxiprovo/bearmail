@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_in
 ```
 
 That downloads `install.sh`, the `stalwart` binary,
-`stalwart-webui.tar.gz`, and `mcp_install.sh` from this GitHub repo, then
+`bearmail-webui.tar.gz`, and `mcp_install.sh` from this GitHub repo, then
 starts the interactive setup. After setup finishes, it installs the MCP
 sidecar. Prepare the [DNS provider](#1-domain-at-namecom-hostinger-or-godaddy) and
 [SMTP relay](#2-smtp-relay-account-brevo-recommended) accounts first. The
@@ -66,8 +66,8 @@ curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_in
 
 Use `easy_install.sh` on a new Linux **x86-64** server when you want the
 recommended layout and only the questions that identify your domain. It
-downloads the same published files as `release_install.sh`, saves the web
-archive as `bearmail-webui.tar.gz`, runs the short setup, then installs the
+downloads the same published files as `release_install.sh`, including
+`bearmail-webui.tar.gz`, runs the short setup, then installs the
 MCP sidecar. Prepare the [DNS provider](#1-domain-at-namecom-hostinger-or-godaddy)
 and [Brevo SMTP relay](#2-smtp-relay-account-brevo-recommended) first.
 
@@ -285,7 +285,7 @@ If you already have the three files on the server, put them in one directory:
 ```text
 install.sh
 stalwart
-stalwart-webui.tar.gz
+bearmail-webui.tar.gz
 ```
 
 Then run:
@@ -310,8 +310,8 @@ cd webui
 npm ci
 npm test
 npm run build
-tar -czf ../stalwart-webui.tar.gz \
-  install.sh server.mjs stalwart-webui.service dist
+tar -czf ../bearmail-webui.tar.gz \
+  install.sh server.mjs bearmail-webui.service dist
 cd ..
 ```
 
@@ -329,7 +329,7 @@ mailbox, issue a Stalwart API key (`API_…`), and paste the host config from
 [AI agents (MCP)](#ai-agents-mcp).
 
 To update **only** the WebUI on an already-installed server, copy `update.sh`
-and a new `stalwart-webui.tar.gz` to that host and run `sudo sh ./update.sh`.
+and a new `bearmail-webui.tar.gz` to that host and run `sudo sh ./update.sh`.
 It reuses the live WebUI service and `config.json`. Details:
 [How to install BearMail](docs/INSTALL.md#update-the-webui-only).
 
@@ -356,10 +356,10 @@ Default: `./stalwart` beside the script. Must be executable and built from
 this source (it has to support quick setup).
 
 **Path to the prebuilt WebUI tar archive**  
-Default: `./stalwart-webui.tar.gz`.
+Default: `./bearmail-webui.tar.gz`.
 
 **WebUI installation prefix**  
-Default: `/opt/stalwart-webui`. Must not overlap the mail data, config, or
+Default: `/opt/bearmail-webui`. Must not overlap the mail data, config, or
 Node.js paths.
 
 **WebUI local service port**  

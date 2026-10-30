@@ -1,14 +1,14 @@
 #!/usr/bin/env sh
 # shellcheck shell=dash
 
-# Replace the installed BearMail WebUI with a new stalwart-webui.tar.gz.
+# Replace the installed BearMail WebUI with a new bearmail-webui.tar.gz.
 # Reuses the live systemd unit and config.json. Does not change Stalwart,
 # Caddy, DNS, mail data, or CORS.
 
 set -eu
 
-WEBUI_UNIT="${BEARMAIL_WEBUI_UNIT:-stalwart-webui.service}"
-WEBUI_UNIT_FILE="${BEARMAIL_WEBUI_UNIT_FILE:-/etc/systemd/system/stalwart-webui.service}"
+WEBUI_UNIT="${BEARMAIL_WEBUI_UNIT:-}"
+WEBUI_UNIT_FILE="${BEARMAIL_WEBUI_UNIT_FILE:-}"
 INSTALLER_STATE="${BEARMAIL_INSTALLER_STATE:-/etc/stalwart/installer-state.json}"
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -35,17 +35,19 @@ Usage: sudo sh ./update.sh [--archive PATH] [--dry-run]
 
 Updates only the BearMail WebUI on an already-installed server.
 
-Copy this script and a new stalwart-webui.tar.gz into the same directory, then:
+Copy this script and a new bearmail-webui.tar.gz into the same directory, then:
 
   sudo sh ./update.sh
 
-The script reads the live stalwart-webui.service unit and the installed
-config.json, then installs the archive over that prefix, port, Node.js
-binary, and default mail-server URL. Stalwart, Caddy, DNS, and stored mail
-are left unchanged.
+The script reads the live bearmail-webui.service unit, or an older
+stalwart-webui.service when that is the unit still installed, and the
+installed config.json. It installs the archive over that prefix, port,
+Node.js binary, and default mail-server URL, then switches the running
+unit to bearmail-webui.service. An existing WebUI directory is kept.
+Stalwart, Caddy, DNS, and stored mail are left unchanged.
 
 Options:
-  --archive PATH   WebUI tar archive (default: ./stalwart-webui.tar.gz
+  --archive PATH   WebUI tar archive (default: ./bearmail-webui.tar.gz
                    beside this script)
   --dry-run        Detect and print the plan without changing the system
   -h, --help       Show this help
@@ -92,7 +94,44 @@ unit_value() {
     sed -n "s/^${2}=//p" "$1" 2>/dev/null | sed -n '$p'
 }
 
+resolve_webui_unit() {
+    if [ -n "${BEARMAIL_WEBUI_UNIT:-}" ] || [ -n "${BEARMAIL_WEBUI_UNIT_FILE:-}" ]; then
+        if [ -z "$WEBUI_UNIT" ]; then
+            WEBUI_UNIT="${WEBUI_UNIT_FILE##*/}"
+        fi
+        if [ -z "$WEBUI_UNIT_FILE" ]; then
+            WEBUI_UNIT_FILE="/etc/systemd/system/${WEBUI_UNIT}"
+        fi
+        return 0
+    fi
+    if [ -f /etc/systemd/system/bearmail-webui.service ]; then
+        WEBUI_UNIT="bearmail-webui.service"
+        WEBUI_UNIT_FILE="/etc/systemd/system/bearmail-webui.service"
+        return 0
+    fi
+    if [ -f /etc/systemd/system/stalwart-webui.service ]; then
+        WEBUI_UNIT="stalwart-webui.service"
+        WEBUI_UNIT_FILE="/etc/systemd/system/stalwart-webui.service"
+        return 0
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl cat bearmail-webui.service >/dev/null 2>&1; then
+            WEBUI_UNIT="bearmail-webui.service"
+            WEBUI_UNIT_FILE="/etc/systemd/system/bearmail-webui.service"
+            return 0
+        fi
+        if systemctl cat stalwart-webui.service >/dev/null 2>&1; then
+            WEBUI_UNIT="stalwart-webui.service"
+            WEBUI_UNIT_FILE="/etc/systemd/system/stalwart-webui.service"
+            return 0
+        fi
+    fi
+    WEBUI_UNIT="bearmail-webui.service"
+    WEBUI_UNIT_FILE="/etc/systemd/system/bearmail-webui.service"
+}
+
 detect_live_webui() {
+    resolve_webui_unit
     if [ -f "$WEBUI_UNIT_FILE" ]; then
         _wd="$(unit_value "$WEBUI_UNIT_FILE" "WorkingDirectory")"
         case "$_wd" in /*) prefix="$_wd" ;; esac
@@ -103,7 +142,8 @@ detect_live_webui() {
         case "$_port" in ''|*[!0-9]*) ;; *) port="$_port" ;; esac
     fi
     if command -v systemctl >/dev/null 2>&1 && \
-        [ "$WEBUI_UNIT_FILE" = "/etc/systemd/system/stalwart-webui.service" ] && \
+        { [ "$WEBUI_UNIT_FILE" = "/etc/systemd/system/bearmail-webui.service" ] || \
+          [ "$WEBUI_UNIT_FILE" = "/etc/systemd/system/stalwart-webui.service" ]; } && \
         systemctl cat "$WEBUI_UNIT" >/dev/null 2>&1; then
         _wd="$(systemctl show -p WorkingDirectory --value "$WEBUI_UNIT" 2>/dev/null || true)"
         case "$_wd" in /*) prefix="$_wd" ;; esac
@@ -151,7 +191,7 @@ validate_archive() {
     if find "$_stage" -type l -print -quit | grep -q .; then
         err "Symbolic links are not allowed in the WebUI archive."
     fi
-    for _required in install.sh server.mjs stalwart-webui.service dist/index.html dist/config.json; do
+    for _required in install.sh server.mjs bearmail-webui.service dist/index.html dist/config.json; do
         [ -f "${_stage}/${_required}" ] || err "The WebUI archive is missing ${_required}."
     done
     grep -q 'STALWART_WEBUI_ARCHIVE_VERSION=2' "${_stage}/install.sh" || \
@@ -205,14 +245,14 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$archive" ]; then
-    archive="${script_dir}/stalwart-webui.tar.gz"
+    archive="${script_dir}/bearmail-webui.tar.gz"
 fi
 case "$archive" in
     /*) ;;
     *) archive="${script_dir}/${archive}" ;;
 esac
 [ -f "$archive" ] || err "WebUI archive not found: ${archive}
-Copy stalwart-webui.tar.gz next to update.sh, or pass --archive PATH."
+Copy bearmail-webui.tar.gz next to update.sh, or pass --archive PATH."
 
 detect_live_webui
 

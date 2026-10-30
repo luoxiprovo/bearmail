@@ -37,14 +37,14 @@ curl -fsSL https://YOUR-DOMAIN/release_install.sh | sudo bash
 ```
 
 The bootstrapper always fetches `install.sh`, `stalwart`,
-`stalwart-webui.tar.gz`, and `mcp_install.sh` from GitHub unless
+`bearmail-webui.tar.gz`, and `mcp_install.sh` from GitHub unless
 `BEARMAIL_DOWNLOAD_BASE` is set. It then starts the usual interactive setup
 and, after that succeeds, runs `mcp_install.sh`. Prepare the name.com, Hostinger,
 or GoDaddy account and the SMTP relay account first; the wizard will ask for them.
 A host that already has BearMail can still run `mcp_install.sh` by itself.
 
-The shorter path is `easy_install.sh`. It downloads the same artifacts, saves
-the web archive as `bearmail-webui.tar.gz`, and runs `install.sh` with the
+The shorter path is `easy_install.sh`. It downloads the same artifacts,
+including `bearmail-webui.tar.gz`, and runs `install.sh` with the
 recommended defaults already selected:
 
 ```sh
@@ -159,8 +159,8 @@ cd webui
 npm ci
 npm test
 npm run build
-tar -czf ../stalwart-webui.tar.gz \
-  install.sh server.mjs stalwart-webui.service dist
+tar -czf ../bearmail-webui.tar.gz \
+  install.sh server.mjs bearmail-webui.service dist
 cd ..
 ```
 
@@ -170,11 +170,11 @@ the combined installer provides a suitable Node.js runtime when necessary.
 Check the archive before copying it:
 
 ```sh
-tar -tzf stalwart-webui.tar.gz
+tar -tzf bearmail-webui.tar.gz
 ```
 
 Its root must contain `install.sh`, `server.mjs`,
-`stalwart-webui.service`, `dist/index.html`, and `dist/config.json`.
+`bearmail-webui.service`, `dist/index.html`, and `dist/config.json`.
 
 ## 3. Copy the installer bundle to the server
 
@@ -185,7 +185,7 @@ directory on the target server:
 ```text
 install.sh
 stalwart
-stalwart-webui.tar.gz
+bearmail-webui.tar.gz
 ```
 
 `install.sh` installs Stalwart and the WebUI only. The MCP sidecar is a
@@ -195,7 +195,7 @@ For example, copy them to a remote staging directory with `scp`:
 
 ```sh
 ssh operator@SERVER_IP 'mkdir -p ~/stalwart-install'
-scp install.sh stalwart stalwart-webui.tar.gz \
+scp install.sh stalwart bearmail-webui.tar.gz \
   operator@SERVER_IP:~/stalwart-install/
 ```
 
@@ -232,9 +232,9 @@ The installer asks for the following information before changing the system:
 
 1. Select **Standard system paths** or a custom, absolute installation prefix.
 2. Accept or change the path to the compiled `stalwart` binary.
-3. Accept or change the path to `stalwart-webui.tar.gz`.
+3. Accept or change the path to `bearmail-webui.tar.gz`.
 4. Accept or change the WebUI installation prefix. The default is
-   `/opt/stalwart-webui`.
+   `/opt/bearmail-webui`.
 5. Accept or change the WebUI localhost port. The default is `8081`; port
    `8080` is reserved for Stalwart.
 6. Enter the exact public WebUI HTTPS origin, such as
@@ -275,7 +275,7 @@ The installer then:
 
 1. writes and validates Stalwart's configuration;
 2. starts `stalwart.service` and waits for its local readiness endpoint;
-3. installs and starts `stalwart-webui.service` on `127.0.0.1:8081` by default;
+3. installs and starts `bearmail-webui.service` on `127.0.0.1:8081` by default;
 4. adds the exact WebUI origin to Stalwart's CORS settings and verifies it;
 5. in automatic mode, installs Caddy, moves Stalwart's HTTP/HTTPS listeners to
    `127.0.0.1:8080` and `127.0.0.1:8443`, publishes both hostnames on 80/443,
@@ -452,9 +452,9 @@ Check both systemd units:
 
 ```sh
 sudo systemctl is-active stalwart.service
-sudo systemctl is-active stalwart-webui.service
+sudo systemctl is-active bearmail-webui.service
 sudo systemctl is-enabled stalwart.service
-sudo systemctl is-enabled stalwart-webui.service
+sudo systemctl is-enabled bearmail-webui.service
 ```
 
 For automatic Caddy mode, also check:
@@ -494,10 +494,10 @@ The standard layout uses:
 | Data | `/var/lib/stalwart/` |
 | Logs | `/var/log/stalwart/` |
 | Private Node.js, when needed | `/opt/stalwart-node/<version>/bin/node` |
-| WebUI | `/opt/stalwart-webui/` |
+| WebUI | `/opt/bearmail-webui/` |
 | MCP sidecar | `/opt/bearmail-mcp/` |
 | Stalwart unit | `/etc/systemd/system/stalwart.service` |
-| WebUI unit | `/etc/systemd/system/stalwart-webui.service` |
+| WebUI unit | `/etc/systemd/system/bearmail-webui.service` |
 | MCP unit (optional HTTP) | `/etc/systemd/system/bearmail-mcp.service` |
 
 A custom Stalwart prefix uses `$PREFIX/bin`, `$PREFIX/etc`, `$PREFIX/data`, and
@@ -516,22 +516,25 @@ cd webui
 npm ci
 npm test
 npm run build
-tar -czf ../stalwart-webui.tar.gz \
-  install.sh server.mjs stalwart-webui.service dist
+tar -czf ../bearmail-webui.tar.gz \
+  install.sh server.mjs bearmail-webui.service dist
 cd ..
 ```
 
-On the installed Ubuntu server, put `update.sh` and `stalwart-webui.tar.gz` in
+On the installed Ubuntu server, put `update.sh` and `bearmail-webui.tar.gz` in
 the same directory, then run:
 
 ```sh
 sudo sh ./update.sh
 ```
 
-The updater reads the live `stalwart-webui.service` unit and the installed
-`config.json`, then installs over that prefix, port, Node.js binary, and
-default mail-server URL. Preview with `sudo sh ./update.sh --dry-run`. After
-it finishes, hard-refresh the webmail URL so the browser loads the new assets.
+The updater reads the live `bearmail-webui.service` unit, or an older
+`stalwart-webui.service` when that is the unit still installed, and the
+installed `config.json`. It installs over that prefix, port, Node.js binary,
+and default mail-server URL, then switches the running unit to
+`bearmail-webui.service`. An existing WebUI directory is kept. Preview with
+`sudo sh ./update.sh --dry-run`. After it finishes, hard-refresh the webmail
+URL so the browser loads the new assets.
 
 ## Add the MCP sidecar from a checkout
 
@@ -580,16 +583,19 @@ curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/upgrade.sh
 
 Preview with `sudo bash -s -- --dry-run`. The script is non-interactive. It
 does not run `install.sh` and does not ask for hostnames or passwords. It
-downloads `stalwart`, `stalwart-webui.tar.gz`, and `bearos-webui/webui.zip`,
+downloads `stalwart`, `bearmail-webui.tar.gz`, and `bearos-webui/webui.zip`,
 reinstalls the MCP sidecar, and asks the running Stalwart to refetch the
 BearOS bundle. That refetch uses a one-shot local admin which the script
-removes before it exits. After it finishes, hard-refresh `/admin` and the
+removes before it exits. A host whose web UI still runs as
+`stalwart-webui.service` is switched to `bearmail-webui.service`. Files
+already under `/opt/stalwart-webui` stay there. New installs use
+`/opt/bearmail-webui`. After it finishes, hard-refresh `/admin` and the
 webmail URL.
 
 From a checkout that already has `update.sh` and `mcp_install.sh`,
 `sudo sh ./upgrade.sh` is the same and still downloads the published binary,
 BearOS zip, and BearMail web UI unless you pass `--local`. `--local` uses
-the binary and `stalwart-webui.tar.gz` beside the script. BearOS is still
+the binary and `bearmail-webui.tar.gz` beside the script. BearOS is still
 read from the URL embedded in that binary.
 
 ## Reinstall or update everything
@@ -675,9 +681,9 @@ Check its status and recent logs:
 
 ```sh
 sudo systemctl status --no-pager stalwart.service
-sudo systemctl status --no-pager stalwart-webui.service
+sudo systemctl status --no-pager bearmail-webui.service
 sudo journalctl -u stalwart.service -n 100 --no-pager
-sudo journalctl -u stalwart-webui.service -n 100 --no-pager
+sudo journalctl -u bearmail-webui.service -n 100 --no-pager
 ```
 
 Check that ports `8080` and the selected WebUI port are not already used. Fix

@@ -36,11 +36,11 @@ archive with:
 npm ci
 npm test
 npm run build
-tar -czf ../stalwart-webui.tar.gz \
-  install.sh server.mjs stalwart-webui.service dist
+tar -czf ../bearmail-webui.tar.gz \
+  install.sh server.mjs bearmail-webui.service dist
 ```
 
-Put `stalwart-webui.tar.gz`, the compatible `stalwart` binary, and the root
+Put `bearmail-webui.tar.gz`, the compatible `stalwart` binary, and the root
 `install.sh` in one directory on the new server, then run `sudo sh ./install.sh`.
 The root installer reuses a compatible system Node.js or downloads, verifies,
 and installs a private Node.js 22 runtime when needed. The WebUI archive is

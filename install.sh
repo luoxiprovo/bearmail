@@ -98,13 +98,11 @@ main() {
     say ""
 
     # Select the filesystem layout interactively.
-    local _prefix="" _easy_mode="false" _webui_archive_name="stalwart-webui.tar.gz"
-    local _webui_prefix_default="/opt/stalwart-webui" _portal_label
+    local _prefix="" _easy_mode="false" _webui_archive_name="bearmail-webui.tar.gz"
+    local _webui_prefix_default="/opt/bearmail-webui" _portal_label
     _portal_label="Public WebUI origin (exact HTTPS URL, no path)"
     if [ "${BEARMAIL_EASY:-}" = "1" ]; then
         _easy_mode="true"
-        _webui_archive_name="bearmail-webui.tar.gz"
-        _webui_prefix_default="/opt/bearmail-webui"
         _portal_label="Bearmail portal url (The url human access Bearmail, you should input your domain here)"
     fi
     if [ "$_easy_mode" = "true" ]; then
@@ -164,10 +162,10 @@ main() {
         prompt_executable_file "Path to the compiled Stalwart binary" "${_script_dir}/stalwart" \
             "The Stalwart artifact must be an executable regular file."
         _source_binary="$RETVAL"
-        prompt_regular_file "Path to the prebuilt WebUI tar archive" "${_script_dir}/stalwart-webui.tar.gz" \
+        prompt_regular_file "Path to the prebuilt WebUI tar archive" "${_script_dir}/${_webui_archive_name}" \
             "The WebUI artifact must be a regular file."
         _webui_archive="$RETVAL"
-        prompt_webui_prefix "WebUI installation prefix" "/opt/stalwart-webui" \
+        prompt_webui_prefix "WebUI installation prefix" "$_webui_prefix_default" \
             "$_bin_dir" "$_conf_dir" "$_log_dir" "$_data_dir" "$NODE_INSTALL_ROOT"
         _webui_prefix="$RETVAL"
         prompt_webui_port "WebUI local service port" "8081"
@@ -260,7 +258,7 @@ main() {
     if find "$_webui_stage" -type l -print -quit | grep -q .; then
         err "❌ Install failed: Symbolic links are not allowed in the WebUI archive."
     fi
-    for _required in install.sh server.mjs stalwart-webui.service dist/index.html dist/config.json; do
+    for _required in install.sh server.mjs bearmail-webui.service dist/index.html dist/config.json; do
         if [ ! -f "${_webui_stage}/${_required}" ]; then
             err "❌ Install failed: The WebUI archive is missing ${_required}."
         fi
@@ -659,10 +657,10 @@ including nested storage, directory, logging, and DNS-provider settings.
 
 Place these artifacts beside this script (or choose another path when asked):
   ./stalwart                   executable compiled from this source revision
-  ./stalwart-webui.tar.gz      prebuilt WebUI archive
+  ./bearmail-webui.tar.gz      prebuilt WebUI archive
 
 The WebUI archive must contain install.sh, server.mjs,
-stalwart-webui.service, dist/index.html, and dist/config.json at its root.
+bearmail-webui.service, dist/index.html, and dist/config.json at its root.
 Linux with systemd is required. If Node.js 22.12 or later is unavailable, the
 installer downloads the latest official Node.js 22 Linux binary, verifies its
 SHA-256 checksum, and installs a private runtime under /opt/stalwart-node/.

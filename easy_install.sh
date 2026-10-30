@@ -133,7 +133,7 @@ if [ "$dry_run" = "true" ]; then
     say "Dry run: would download:"
     say "  ${BEARMAIL_DOWNLOAD_BASE}/install.sh"
     say "  ${BEARMAIL_DOWNLOAD_BASE}/stalwart"
-    say "  ${BEARMAIL_DOWNLOAD_BASE}/stalwart-webui.tar.gz"
+    say "  ${BEARMAIL_DOWNLOAD_BASE}/bearmail-webui.tar.gz"
     say "    and save it as ${WORK_DIR}/bearmail-webui.tar.gz"
     say "  ${BEARMAIL_DOWNLOAD_BASE}/mcp_install.sh"
     say "then run: BEARMAIL_EASY=1 sh ${WORK_DIR}/install.sh"
@@ -173,7 +173,7 @@ chmod 0700 "$WORK_DIR"
 
 download_file "${BEARMAIL_DOWNLOAD_BASE}/install.sh" "${WORK_DIR}/install.sh" "install.sh"
 download_file "${BEARMAIL_DOWNLOAD_BASE}/stalwart" "${WORK_DIR}/stalwart" "stalwart (this is large; wait for it)"
-download_file "${BEARMAIL_DOWNLOAD_BASE}/stalwart-webui.tar.gz" "${WORK_DIR}/bearmail-webui.tar.gz" "bearmail-webui.tar.gz"
+download_file "${BEARMAIL_DOWNLOAD_BASE}/bearmail-webui.tar.gz" "${WORK_DIR}/bearmail-webui.tar.gz" "bearmail-webui.tar.gz"
 download_file "${BEARMAIL_DOWNLOAD_BASE}/mcp_install.sh" "${WORK_DIR}/mcp_install.sh" "mcp_install.sh"
 
 require_min_size "${WORK_DIR}/install.sh" 10000 "install.sh"

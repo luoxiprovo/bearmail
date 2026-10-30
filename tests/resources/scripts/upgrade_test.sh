@@ -37,7 +37,7 @@ fi
 dry_out="$(sh "$UPGRADE_SH" --dry-run)"
 printf '%s\n' "$dry_out" | grep -q 'raw.githubusercontent.com/luoxiprovo/bearmail/main/stalwart$' || \
     fail "dry-run does not print the stalwart URL"
-printf '%s\n' "$dry_out" | grep -q 'stalwart-webui.tar.gz' || \
+printf '%s\n' "$dry_out" | grep -q 'bearmail-webui.tar.gz' || \
     fail "dry-run does not print the WebUI archive URL"
 printf '%s\n' "$dry_out" | grep -q "${REPO_ROOT}/update.sh" || \
     fail "dry-run from a checkout should use local update.sh"
@@ -60,7 +60,7 @@ printf '%s\n' "$override_out" | grep -q '/tmp/bm-up' || fail "BEARMAIL_WORK_DIR 
 local_out="$(sh "$UPGRADE_SH" --dry-run --local)"
 printf '%s\n' "$local_out" | grep -q "${REPO_ROOT}/stalwart$" || \
     fail "--local dry-run should use the checkout stalwart binary"
-printf '%s\n' "$local_out" | grep -q "${REPO_ROOT}/stalwart-webui.tar.gz" || \
+printf '%s\n' "$local_out" | grep -q "${REPO_ROOT}/bearmail-webui.tar.gz" || \
     fail "--local dry-run should use the checkout WebUI archive"
 
 grep -q 'od -An -t x1 -j 18 -N 2' "$UPGRADE_SH" || \

@@ -25,7 +25,7 @@ dry_out="$(sh "$EASY_SH" --dry-run)"
 printf '%s\n' "$dry_out" | grep -q 'raw.githubusercontent.com/luoxiprovo/bearmail/main/install.sh' || \
     fail "dry-run does not print the install.sh URL"
 printf '%s\n' "$dry_out" | grep -q '/stalwart$' || fail "dry-run does not print the stalwart URL"
-printf '%s\n' "$dry_out" | grep -q 'stalwart-webui.tar.gz' || \
+printf '%s\n' "$dry_out" | grep -q 'bearmail-webui.tar.gz' || \
     fail "dry-run does not download the published WebUI archive"
 printf '%s\n' "$dry_out" | grep -q '/var/tmp/bearmail-install/bearmail-webui.tar.gz' || \
     fail "dry-run does not save the archive as bearmail-webui.tar.gz"
@@ -35,7 +35,7 @@ printf '%s\n' "$dry_out" | grep -q '/var/tmp/bearmail-install/mcp_install.sh' ||
     fail "dry-run does not run mcp_install.sh"
 
 override_out="$(BEARMAIL_DOWNLOAD_BASE=https://example.test/bearmail BEARMAIL_WORK_DIR=/tmp/bm sh "$EASY_SH" --dry-run)"
-printf '%s\n' "$override_out" | grep -q 'https://example.test/bearmail/stalwart-webui.tar.gz' || \
+printf '%s\n' "$override_out" | grep -q 'https://example.test/bearmail/bearmail-webui.tar.gz' || \
     fail "BEARMAIL_DOWNLOAD_BASE is not honored"
 printf '%s\n' "$override_out" | grep -q '/tmp/bm/bearmail-webui.tar.gz' || \
     fail "BEARMAIL_WORK_DIR is not applied to the renamed archive"

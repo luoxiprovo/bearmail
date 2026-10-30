@@ -6,7 +6,7 @@
 # Caddy, DNS, CORS, SMTP relay, or mail. Masks exim4, postfix, and sendmail
 # so a package upgrade cannot stop Stalwart.
 #
-# BearOS is not in stalwart-webui.tar.gz. Stalwart caches bearos-webui/webui.zip
+# BearOS is not in bearmail-webui.tar.gz. Stalwart caches bearos-webui/webui.zip
 # and only downloads it again when asked. This script makes that request with
 # a one-shot local admin, then removes the admin and restarts Stalwart.
 #
@@ -21,8 +21,8 @@ BEARMAIL_DOWNLOAD_BASE="${BEARMAIL_DOWNLOAD_BASE:-https://raw.githubusercontent.
 WORK_DIR="${BEARMAIL_WORK_DIR:-/var/tmp/bearmail-upgrade}"
 STALWART_UNIT="${BEARMAIL_STALWART_UNIT:-stalwart.service}"
 STALWART_UNIT_FILE="${BEARMAIL_STALWART_UNIT_FILE:-/etc/systemd/system/stalwart.service}"
-WEBUI_UNIT="${BEARMAIL_WEBUI_UNIT:-stalwart-webui.service}"
-WEBUI_UNIT_FILE="${BEARMAIL_WEBUI_UNIT_FILE:-/etc/systemd/system/stalwart-webui.service}"
+WEBUI_UNIT="${BEARMAIL_WEBUI_UNIT:-}"
+WEBUI_UNIT_FILE="${BEARMAIL_WEBUI_UNIT_FILE:-}"
 
 dry_run="false"
 use_local="false"
@@ -47,6 +47,42 @@ err() {
     exit 1
 }
 
+resolve_webui_unit() {
+    if [ -n "${BEARMAIL_WEBUI_UNIT:-}" ] || [ -n "${BEARMAIL_WEBUI_UNIT_FILE:-}" ]; then
+        if [ -z "$WEBUI_UNIT" ]; then
+            WEBUI_UNIT="${WEBUI_UNIT_FILE##*/}"
+        fi
+        if [ -z "$WEBUI_UNIT_FILE" ]; then
+            WEBUI_UNIT_FILE="/etc/systemd/system/${WEBUI_UNIT}"
+        fi
+        return 0
+    fi
+    if [ -f /etc/systemd/system/bearmail-webui.service ]; then
+        WEBUI_UNIT="bearmail-webui.service"
+        WEBUI_UNIT_FILE="/etc/systemd/system/bearmail-webui.service"
+        return 0
+    fi
+    if [ -f /etc/systemd/system/stalwart-webui.service ]; then
+        WEBUI_UNIT="stalwart-webui.service"
+        WEBUI_UNIT_FILE="/etc/systemd/system/stalwart-webui.service"
+        return 0
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl cat bearmail-webui.service >/dev/null 2>&1; then
+            WEBUI_UNIT="bearmail-webui.service"
+            WEBUI_UNIT_FILE="/etc/systemd/system/bearmail-webui.service"
+            return 0
+        fi
+        if systemctl cat stalwart-webui.service >/dev/null 2>&1; then
+            WEBUI_UNIT="stalwart-webui.service"
+            WEBUI_UNIT_FILE="/etc/systemd/system/stalwart-webui.service"
+            return 0
+        fi
+    fi
+    WEBUI_UNIT="bearmail-webui.service"
+    WEBUI_UNIT_FILE="/etc/systemd/system/bearmail-webui.service"
+}
+
 usage() {
     cat <<'EOF'
 Usage: curl -fsSL <upgrade.sh URL> | sudo bash
@@ -55,7 +91,7 @@ Upgrades an already-installed BearMail host from GitHub:
 
   - Stalwart binary
   - BearOS admin UI (bearos-webui/webui.zip)
-  - BearMail web UI (stalwart-webui.tar.gz)
+  - BearMail web UI (bearmail-webui.tar.gz)
   - MCP sidecar
 
 Non-interactive. Does not change configuration, Caddy, DNS, CORS, SMTP
@@ -78,7 +114,7 @@ Do not use install.sh for this: that wizard re-asks CORS, relay, and DNS.
 
 Options:
   --dry-run    Print the plan without changing the system
-  --local      Use stalwart and stalwart-webui.tar.gz beside this script
+  --local      Use stalwart and bearmail-webui.tar.gz beside this script
   -h, --help   Show this help
 
 Environment (optional):
@@ -504,10 +540,10 @@ if [ "$dry_run" = "true" ]; then
     say "Dry run: would update the Stalwart binary, BearOS admin UI, BearMail web UI, and MCP sidecar."
     if [ "$use_local" = "true" ] && [ -n "$script_dir" ]; then
         say "  Local ${script_dir}/stalwart"
-        say "  Local ${script_dir}/stalwart-webui.tar.gz"
+        say "  Local ${script_dir}/bearmail-webui.tar.gz"
     else
         say "  Download ${BEARMAIL_DOWNLOAD_BASE}/stalwart"
-        say "  Download ${BEARMAIL_DOWNLOAD_BASE}/stalwart-webui.tar.gz"
+        say "  Download ${BEARMAIL_DOWNLOAD_BASE}/bearmail-webui.tar.gz"
     fi
     say "  Refetch BearOS admin UI from bearos-webui/webui.zip, then remove the temporary admin"
     if [ -n "$script_dir" ] && [ -f "${script_dir}/update.sh" ]; then
@@ -552,8 +588,9 @@ fi
 if ! systemctl cat "$STALWART_UNIT" >/dev/null 2>&1; then
     err "stalwart.service was not found. Install BearMail first, then rerun this upgrade."
 fi
+resolve_webui_unit
 if ! systemctl cat "$WEBUI_UNIT" >/dev/null 2>&1; then
-    err "stalwart-webui.service was not found. Install BearMail first, then rerun this upgrade."
+    err "bearmail-webui.service was not found. Install BearMail first, then rerun this upgrade."
 fi
 
 detect_stalwart
@@ -576,7 +613,7 @@ chmod 0700 "$WORK_DIR"
 tmp="$(mktemp -d "${WORK_DIR}/stage.XXXXXX")"
 
 new_binary="${tmp}/stalwart"
-webui_archive="${tmp}/stalwart-webui.tar.gz"
+webui_archive="${tmp}/bearmail-webui.tar.gz"
 bearos_zip="${tmp}/bearos-webui.zip"
 update_sh=""
 mcp_sh=""
@@ -584,12 +621,12 @@ mcp_sh=""
 if [ "$use_local" = "true" ]; then
     [ -n "$script_dir" ] || err "--local requires running a file, not a curl pipe."
     [ -f "${script_dir}/stalwart" ] || err "Local binary not found: ${script_dir}/stalwart"
-    [ -f "${script_dir}/stalwart-webui.tar.gz" ] || err "Local archive not found: ${script_dir}/stalwart-webui.tar.gz"
+    [ -f "${script_dir}/bearmail-webui.tar.gz" ] || err "Local archive not found: ${script_dir}/bearmail-webui.tar.gz"
     cp -a "${script_dir}/stalwart" "$new_binary"
-    cp -a "${script_dir}/stalwart-webui.tar.gz" "$webui_archive"
+    cp -a "${script_dir}/bearmail-webui.tar.gz" "$webui_archive"
 else
     download_file "${BEARMAIL_DOWNLOAD_BASE}/stalwart" "$new_binary" "stalwart (this is large; wait for it)"
-    download_file "${BEARMAIL_DOWNLOAD_BASE}/stalwart-webui.tar.gz" "$webui_archive" "stalwart-webui.tar.gz"
+    download_file "${BEARMAIL_DOWNLOAD_BASE}/bearmail-webui.tar.gz" "$webui_archive" "bearmail-webui.tar.gz"
 fi
 
 if [ -n "$script_dir" ] && [ -f "${script_dir}/update.sh" ]; then
@@ -607,7 +644,7 @@ fi
 
 chmod 0755 "$new_binary"
 require_min_size "$new_binary" 1000000 "stalwart"
-require_min_size "$webui_archive" 10000 "stalwart-webui.tar.gz"
+require_min_size "$webui_archive" 10000 "bearmail-webui.tar.gz"
 require_min_size "$update_sh" 1000 "update.sh"
 require_min_size "$mcp_sh" 1000 "mcp_install.sh"
 assert_elf_x86_64 "$new_binary"

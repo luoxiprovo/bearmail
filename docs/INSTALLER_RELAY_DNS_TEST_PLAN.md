@@ -92,7 +92,7 @@ Inspect `install.sh` (no execution as root):
 ## C. Live Brevo + name.com (disposable VM)
 
 Requires: systemd Linux VM, public IPv4, interactive TTY, `install.sh`,
-`stalwart`, `stalwart-webui.tar.gz`, a name.com domain on name.com nameservers,
+`stalwart`, `bearmail-webui.tar.gz`, a name.com domain on name.com nameservers,
 and a Brevo account.
 
 ### C1. Happy path

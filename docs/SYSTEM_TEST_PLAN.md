@@ -95,13 +95,13 @@ cd /home/luoxi23vr/stalwart
 git rev-parse --short HEAD
 git status -sb
 date -u +%Y-%m-%dT%H:%M:%SZ
-systemctl is-active stalwart.service stalwart-webui.service caddy.service 2>/dev/null || true
+systemctl is-active stalwart.service bearmail-webui.service caddy.service 2>/dev/null || true
 ss -ltn | awk 'NR==1 || /:(80|443|8080|8081|8443) /'
 test -x /usr/local/bin/stalwart && /usr/local/bin/stalwart --version 2>/dev/null | head -1
 stat -c '%y %s %n' /usr/local/bin/stalwart target/debug/stalwart target/release/stalwart 2>/dev/null
 curl -fsS http://127.0.0.1:8080/healthz/ready; echo
 curl -fsS http://127.0.0.1:8081/healthz/ready; echo
-test -f /opt/stalwart-webui/dist/config.json && cat /opt/stalwart-webui/dist/config.json
+test -f /opt/bearmail-webui/dist/config.json && cat /opt/bearmail-webui/dist/config.json
 test -f /etc/caddy/Caddyfile && cat /etc/caddy/Caddyfile
 ```
 
@@ -155,13 +155,13 @@ Do not restart services.
 | ID | Check | Expected |
 | --- | --- | --- |
 | C1 | `systemctl is-active stalwart.service` | `active` |
-| C2 | `systemctl is-active stalwart-webui.service` | `active` |
+| C2 | `systemctl is-active bearmail-webui.service` | `active` |
 | C3 | `systemctl is-active caddy.service` | `active` |
 | C4 | `ss -ltn` | `:80` and `:443` on `*`; `:8080` and `:8081` on `127.0.0.1` only |
 | C5 | `curl -fsS http://127.0.0.1:8080/healthz/ready` | HTTP 200 body `ok` or equivalent success |
 | C6 | `curl -fsS http://127.0.0.1:8081/healthz/ready` | HTTP 200 |
 | C7 | `curl -sI http://127.0.0.1:8081/` | `text/html` |
-| C8 | `cat /opt/stalwart-webui/dist/config.json` | `defaultServerUrl` is `https://email.microdetect.xyz` (or the Caddy mail host) |
+| C8 | `cat /opt/bearmail-webui/dist/config.json` | `defaultServerUrl` is `https://email.microdetect.xyz` (or the Caddy mail host) |
 | C9 | `journalctl -u stalwart.service --since '10 min ago' --no-pager \| tail -30` | no panic; note any `ItipMessageError` |
 | C10 | Installed binary vs tree | Report mtimes of `/usr/local/bin/stalwart` vs `target/debug/stalwart` and `target/release/stalwart`. If `/usr/local/bin/stalwart` is older than `crates/groupware/src/scheduling/event_create.rs`, mark **C10 FAIL S2** (running binary lacks current iTIP/branding code). |
 

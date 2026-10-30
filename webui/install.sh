@@ -5,7 +5,7 @@ set -eu
 STALWART_WEBUI_ARCHIVE_VERSION=2
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-prefix="/opt/stalwart-webui"
+prefix="/opt/bearmail-webui"
 server_url=""
 port="8080"
 node_bin=""
@@ -92,15 +92,35 @@ SERVER_URL="$server_url" CONFIG_PATH="$prefix/dist/config.json" "$node_bin" -e '
   fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\n", { mode: 0o644 });
 '
 
+# Stop the previous unit name so both services do not bind the same port.
+retire_previous_webui_unit() {
+  _old_unit="/etc/systemd/system/stalwart-webui.service"
+  _old_dropin="/etc/systemd/system/stalwart-webui.service.d"
+  _new_dropin="/etc/systemd/system/bearmail-webui.service.d"
+  if [ -d "$_old_dropin" ] && [ ! -e "$_new_dropin" ]; then
+    mv "$_old_dropin" "$_new_dropin"
+  fi
+  if [ -e "$_old_unit" ] || [ -L "$_old_unit" ] || systemctl cat stalwart-webui.service >/dev/null 2>&1; then
+    systemctl disable --now stalwart-webui.service >/dev/null 2>&1 || true
+  fi
+  if [ -e "$_old_unit" ] || [ -L "$_old_unit" ]; then
+    rm -f "$_old_unit"
+  fi
+  if [ -d "$_old_dropin" ]; then
+    rm -rf "$_old_dropin"
+  fi
+}
+
 if [ "$install_service" = "true" ]; then
   [ "$(id -u)" -eq 0 ] || { printf '%s\n' "--systemd requires root." >&2; exit 1; }
   command -v systemctl >/dev/null 2>&1 || { printf '%s\n' "systemd was not found." >&2; exit 1; }
   if ! id stalwart-webui >/dev/null 2>&1; then useradd --system --home-dir "$prefix" --shell /usr/sbin/nologin stalwart-webui; fi
   chown -R stalwart-webui:stalwart-webui "$prefix"
-  sed -e "s|@@PREFIX@@|$prefix|g" -e "s|@@PORT@@|$port|g" -e "s|@@NODE_BIN@@|$node_bin|g" "$script_dir/stalwart-webui.service" > /etc/systemd/system/stalwart-webui.service
+  retire_previous_webui_unit
+  sed -e "s|@@PREFIX@@|$prefix|g" -e "s|@@PORT@@|$port|g" -e "s|@@NODE_BIN@@|$node_bin|g" "$script_dir/bearmail-webui.service" > /etc/systemd/system/bearmail-webui.service
   systemctl daemon-reload
-  systemctl enable stalwart-webui.service
-  systemctl restart stalwart-webui.service
+  systemctl enable bearmail-webui.service
+  systemctl restart bearmail-webui.service
   WEBUI_HEALTH_URL="http://127.0.0.1:$port/healthz/ready" "$node_bin" -e '
     const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     (async () => {
@@ -116,7 +136,7 @@ if [ "$install_service" = "true" ]; then
       throw new Error(`Health check failed: ${last}`);
     })().catch((error) => { console.error(error.message); process.exit(1); });
   '
-  printf 'Installed and started stalwart-webui.service on 127.0.0.1:%s\n' "$port"
+  printf 'Installed and started bearmail-webui.service on 127.0.0.1:%s\n' "$port"
 else
   printf 'Installed to %s. Start with:\n' "$prefix"
   printf '  WEBUI_ROOT=%s/dist WEBUI_PORT=%s %s %s/server.mjs\n' "$prefix" "$port" "$node_bin" "$prefix"
