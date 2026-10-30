@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
-import { CheckCircle2, Copy, KeyRound, LogOut, Moon, RefreshCw, Server, Sun } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CheckCircle2, Copy, KeyRound, LogOut, Moon, RefreshCw, Server, Sun, Trash2 } from "lucide-react";
 import { useApp } from "../app-context";
 import { changeAccountPassword, validateNewPassword } from "../jmap/account";
+import { createAccountApiKey, listAccountApiKeys, revokeAccountApiKey, type AccountApiKey } from "../jmap/apiKeys";
 import { RichTextEditor } from "../components/RichTextEditor";
 import { identitySignatureHtml, SIGNATURE_MAX_LENGTH, updateIdentitySignatures } from "../jmap/mail";
 import { fileToCompressedDataUrl, htmlToPlainText } from "../richtext";
@@ -53,6 +54,7 @@ export function SettingsPage({ diagnostics = false }: { diagnostics?: boolean })
           </div>
         </section>
         {!diagnostics && <PasswordSettings />}
+        {!diagnostics && <ApiKeySettings />}
         {!diagnostics && <SignatureSettings />}
         <section>
           <h2>JMAP capabilities</h2>
@@ -117,6 +119,144 @@ function PasswordSettings() {
         <small>At least 8 characters. The server may require a stronger password.</small>
         <button className="primary-button" disabled={saving} onClick={() => void save()}><KeyRound size={16} />{saving ? "Saving…" : "Change password"}</button>
       </div>
+    </section>
+  );
+}
+
+function formatWhen(value?: string | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function ApiKeySettings() {
+  const { client, notify } = useApp();
+  const [keys, setKeys] = useState<AccountApiKey[]>([]);
+  const [description, setDescription] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<{ id: string; description: string; secret: string } | null>(null);
+  const listRequest = useRef(0);
+
+  const reload = async () => {
+    if (!client) return;
+    const request = ++listRequest.current;
+    const next = await listAccountApiKeys(client);
+    if (request === listRequest.current) setKeys(next);
+  };
+
+  useEffect(() => {
+    if (!client?.has(CAPABILITIES.stalwart)) return;
+    let cancelled = false;
+    setLoading(true);
+    const request = ++listRequest.current;
+    listAccountApiKeys(client)
+      .then((next) => {
+        if (!cancelled && request === listRequest.current) setKeys(next);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled && request === listRequest.current) {
+          notify(error instanceof Error ? error.message : "API keys could not be loaded.", "error");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, notify]);
+
+  if (!client?.has(CAPABILITIES.stalwart)) return null;
+
+  const generate = async () => {
+    setCreating(true);
+    try {
+      const created = await createAccountApiKey(client, description);
+      setRevealed({ id: created.id, description: description.trim(), secret: created.secret });
+      setDescription("");
+      notify("API key created. Copy it now.", "success");
+      try {
+        await reload();
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "API keys could not be loaded.", "error");
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The API key could not be created.", "error");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const copySecret = async () => {
+    if (!revealed) return;
+    try {
+      await navigator.clipboard.writeText(revealed.secret);
+      notify("API key copied", "success");
+    } catch {
+      notify("Select the key and copy it.", "error");
+    }
+  };
+
+  const revoke = async (key: AccountApiKey) => {
+    if (!window.confirm(`Revoke “${key.description}”? Tools using this key will stop working.`)) return;
+    setRevokingId(key.id);
+    try {
+      await revokeAccountApiKey(client, key.id);
+      if (revealed?.id === key.id) setRevealed(null);
+      notify("API key revoked", "success");
+      try {
+        await reload();
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "API keys could not be loaded.", "error");
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "The API key could not be revoked.", "error");
+    } finally {
+      setRevokingId(null);
+    }
+  };
+
+  return (
+    <section className="api-key-settings">
+      <h2>API keys</h2>
+      <p>Create a key for this account so mail tools and agents can sign in without the BearOS admin site. The key is shown only once and can do what this account can do.</p>
+      <label>
+        <span>API key name</span>
+        <input aria-label="API key name" value={description} maxLength={200} placeholder="Laptop mail client" onChange={(event) => setDescription(event.target.value)} />
+      </label>
+      <div className="signature-actions">
+        <small>Give each key a name you will recognize later.</small>
+        <button className="primary-button" disabled={creating} onClick={() => void generate()}><KeyRound size={16} />{creating ? "Creating…" : "Generate API key"}</button>
+      </div>
+      {revealed && (
+        <div className="api-key-secret">
+          <p>Copy the key for {revealed.description}. BearMail will not show it again.</p>
+          <input aria-label="New API key" readOnly value={revealed.secret} autoComplete="off" spellCheck={false} />
+          <div className="signature-actions">
+            <button className="secondary-button" onClick={() => void copySecret()}><Copy size={16} /> Copy API key</button>
+            <button className="secondary-button" onClick={() => setRevealed(null)}>I have saved this key</button>
+          </div>
+        </div>
+      )}
+      {loading ? <p>Loading API keys…</p> : keys.length === 0 ? <p>No API keys yet.</p> : (
+        <ul className="api-key-list">
+          {keys.map((key) => {
+            const created = formatWhen(key.createdAt);
+            const expires = formatWhen(key.expiresAt);
+            return (
+              <li key={key.id}>
+                <div>
+                  <b>{key.description}</b>
+                  <small>{created ? `Created ${created}` : "Created"}{expires ? ` · Expires ${expires}` : ""}</small>
+                </div>
+                <button className="danger-button" disabled={revokingId === key.id} onClick={() => void revoke(key)}><Trash2 size={16} />{revokingId === key.id ? "Revoking…" : `Revoke ${key.description}`}</button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }

@@ -397,10 +397,17 @@
   .settings-grid dd { display: flex; align-items: center; gap: 7px; max-width: 60%; margin: 0; overflow-wrap: anywhere; color: var(--ink); text-align: right; }
   .settings-actions { display: flex; gap: 7px; }
   .signature-settings { grid-column: 1 / -1; }
-  .password-settings { grid-column: 1 / -1; display: grid; gap: 12px; }
-  .password-settings label, .signature-identity { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 750; }
-  .password-settings input { min-height: 41px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--paper-strong); color: var(--ink); }
-  .password-settings input:focus { border-color: var(--teal); outline: 0; }
+  .password-settings, .api-key-settings { grid-column: 1 / -1; display: grid; gap: 12px; }
+  .password-settings label, .api-key-settings label, .signature-identity { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 750; }
+  .password-settings input, .api-key-settings input { width: 100%; min-width: 0; min-height: 41px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--paper-strong); color: var(--ink); }
+  .password-settings input:focus, .api-key-settings input:focus { border-color: var(--teal); outline: 0; }
+  .api-key-list { display: grid; gap: 8px; margin: 4px 0 0; padding: 0; list-style: none; }
+  .api-key-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--canvas); }
+  .api-key-list li div { display: grid; min-width: 0; }
+  .api-key-list small { color: var(--muted); }
+  .api-key-secret { display: grid; gap: 8px; border: 1px solid var(--teal); border-radius: 8px; padding: 12px; background: var(--teal-pale); }
+  .api-key-secret input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .api-key-secret .signature-actions { margin-top: 0; }
   .signature-editor { margin-top: 14px; }
   .signature-identity { display: grid; gap: 6px; margin-top: 14px; color: var(--muted); font-size: 12px; font-weight: 750; }
   .signature-identity select { min-height: 41px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--paper-strong); color: var(--ink); }
