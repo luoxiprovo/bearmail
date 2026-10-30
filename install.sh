@@ -103,7 +103,7 @@ main() {
     _portal_label="Public WebUI origin (exact HTTPS URL, no path)"
     if [ "${BEARMAIL_EASY:-}" = "1" ]; then
         _easy_mode="true"
-        _portal_label="Bearmail portal url (The url human access Bearmail, you should input your domain here)"
+        _portal_label="Bearmail portal url (The url human access Bearmail, you should input your domain here. eg:bearmail.example.com)"
     fi
     if [ "$_easy_mode" = "true" ]; then
         say "Installation layout: Standard system paths"
@@ -947,7 +947,7 @@ confirm_dedicated_webui_origin() {
     _suggested="$RETVAL"
     local _origin_label="Public WebUI origin (exact HTTPS URL, no path)"
     if [ "${_easy_mode:-}" = "true" ]; then
-        _origin_label="Bearmail portal url (The url human access Bearmail, you should input your domain here)"
+        _origin_label="Bearmail portal url (The url human access Bearmail, you should input your domain here. eg:bearmail.example.com)"
     fi
     if is_example_webui_placeholder "$_webui_hostname"; then
         printf '  The WebUI origin is still the installer example (%s).\n' "$_webui_origin" >&3
