@@ -23,14 +23,6 @@ interface OtpAuthValue {
   otpCode?: string | null;
 }
 
-const STALWART_IMAGE_URL = 'https://stalw.art/img/favicon-32x32.png';
-
-function buildOtpAuthUrl(totp: OTPAuth.TOTP): string {
-  const base = totp.toString();
-  const sep = base.includes('?') ? '&' : '?';
-  return `${base}${sep}image=${encodeURIComponent(STALWART_IMAGE_URL)}`;
-}
-
 function generateTotp(): { totp: OTPAuth.TOTP; url: string } {
   const totp = new OTPAuth.TOTP({
     issuer: 'BearOS',
@@ -40,7 +32,7 @@ function generateTotp(): { totp: OTPAuth.TOTP; url: string } {
     period: 30,
     secret: new OTPAuth.Secret({ size: 20 }),
   });
-  return { totp, url: buildOtpAuthUrl(totp) };
+  return { totp, url: totp.toString() };
 }
 
 export function OtpAuthField({ value, onChange, readOnly }: WidgetProps<FieldTypeObject>) {
