@@ -1,13 +1,11 @@
 # BearMail
 
 Give your team and AI agents a **real mailbox and calendar on the company
-domain**. Self-hosted control. Ordinary email and calendar to the rest of
-the world.
+domain**. Self-hosted. Ordinary email to the rest of the world.
 
-BearMail is one self-hosted mail and calendar system for people and AI
-agents. The mail engine is a customized [Stalwart](https://stalw.art).
-BearMail is the website people open. BearOS is the admin UI. Cursor,
-Claude, and Hermes use the same mailboxes through MCP.
+BearMail is the website people open. BearOS is the admin UI. Agents use
+the same mailboxes through MCP. The mail engine is a customized
+[Stalwart](https://stalw.art).
 
 **Release:** [v0.1.0](https://github.com/luoxiprovo/bearmail/releases/tag/v0.1.0)
 — Linux x86-64 binary, web archive, checksums.
