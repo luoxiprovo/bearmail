@@ -4,24 +4,25 @@ Give your team and AI agents a **real mailbox and calendar on the company
 domain**. Self-hosted control. Ordinary email and calendar to the rest of
 the world.
 
-BearMail brings people and AI agents together in one self-hosted email and
-calendar system. Built on a customized [Stalwart](https://stalw.art)
-backend, its WebUI and MCP integration let Cursor, Claude, and Hermes work
-with the same mailboxes people use every day—without handing control to a
-managed suite.
+BearMail is one self-hosted mail and calendar system for people and AI
+agents. The mail engine is a customized [Stalwart](https://stalw.art).
+BearMail is the website people open. BearOS is the admin UI. Cursor,
+Claude, and Hermes use the same mailboxes through MCP.
 
-**5-minute path:** [docs/QUICKSTART.md](docs/QUICKSTART.md).
-**Prerequisites and limits:** [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
-**Release:** [v0.1.0](https://github.com/luoxiprovo/bearmail/releases/tag/v0.1.0) — Linux x86-64 binary, WebUI archive, checksums.
+**Release:** [v0.1.0](https://github.com/luoxiprovo/bearmail/releases/tag/v0.1.0)
+— Linux x86-64 binary, web archive, checksums.
+**Agent handoff:** [docs/QUICKSTART.md](docs/QUICKSTART.md).
+**Limits:** [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
-One Linux **x86-64** / systemd server, one interactive installer. When it
-finishes you have:
+One Linux **x86-64** server with systemd. When the installer finishes you
+have:
 
-- mail on `mail.example.com` (SMTP, IMAP, JMAP, admin);
-- webmail and calendar on `https://webmail.example.com`;
+- mail on `mail.example.com` (SMTP, IMAP, JMAP, and BearOS);
+- BearMail on `https://bearmail.example.com`;
 - HTTPS via Caddy;
-- outbound through Brevo (Mailjet optional) when the VPS blocks TCP 25;
-- DNS through **name.com**, **Hostinger**, or **GoDaddy** (other registrars are manual).
+- outbound mail through Brevo when the VPS blocks TCP 25;
+- DNS through **name.com**, **Hostinger**, or **GoDaddy** (other registrars
+  are a manual zone).
 
 ![BearMail architecture: MCP hosts spawn bearmail-mcp; the sidecar talks JMAP to Stalwart; humans use the WebUI; the rest of the world stays on SMTP and iMIP.](docs/img/architecture.png)
 
@@ -33,45 +34,29 @@ Larger diagram: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | --- | --- | --- |
 | [![Connect](docs/img/screenshot-connect.png)](docs/img/screenshot-connect.png) | [![Mail](docs/img/screenshot-mail.png)](docs/img/screenshot-mail.png) | [![Calendar](docs/img/screenshot-calendar.png)](docs/img/screenshot-calendar.png) |
 
-Connect is a live WebUI capture. Mail and calendar show the same client.
+Connect, mail, and calendar are the same BearMail client.
 
-### This release does not include
+This release is one host and one domain. It does not include managed
+hosting, suite parity, Docker, Kubernetes, or ARM. Agents start
+draft-only. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
-Managed hosting, Google/Microsoft suite parity, Docker/Kubernetes, ARM,
-generic one-click catalogues, an SLA, compliance certifications, or
-autonomous send from day one. MCP is Draft v0.1.
+## Install
 
-## Quick Install
+Prepare these before you start. The installer does not create the vendor
+accounts.
 
-On a Linux **x86-64** server with systemd, from an SSH session:
+- Linux **x86-64** with systemd, `sudo`, a public IPv4 address, and inbound
+  TCP **80** and **443**.
+- A domain on **name.com**, **Hostinger**, or **GoDaddy** nameservers, plus
+  that provider's API token. Any other registrar means you publish the
+  printed DNS rows yourself.
+  [How the DNS step works](docs/INSTALL.md#6-publish-the-forward-dns-records).
+- A [Brevo](https://app.brevo.com/) account for the mail domain: the SMTP
+  login and the SMTP key from **Settings → SMTP & API → SMTP**. That key is
+  separate from the Brevo website password.
+  [Brevo SMTP relay](docs/BREVO_SMTP_RELAY.md).
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sudo bash
-```
-
-That downloads `install.sh`, the `stalwart` binary,
-`bearmail-webui.tar.gz`, and `mcp_install.sh` from this GitHub repo, then
-starts the interactive setup. After setup finishes, it installs the MCP
-sidecar. Prepare the [DNS provider](#1-domain-at-namecom-hostinger-or-godaddy) and
-[SMTP relay](#2-smtp-relay-account-brevo-recommended) accounts first. The
-wizard will ask for them.
-
-Preview the download plan without changing the system:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/release_install.sh | sh -s -- --dry-run
-```
-
-### Easy install
-
-Use `easy_install.sh` on a new Linux **x86-64** server when you want the
-recommended layout and only the questions that identify your domain. It
-downloads the same published files as `release_install.sh`, including
-`bearmail-webui.tar.gz`, runs the short setup, then installs the
-MCP sidecar. Prepare the [DNS provider](#1-domain-at-namecom-hostinger-or-godaddy)
-and [Brevo SMTP relay](#2-smtp-relay-account-brevo-recommended) first.
-
-From an SSH session:
+From an SSH session on the server:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/easy_install.sh | sudo bash
@@ -88,60 +73,53 @@ These choices are already made. The installer prints them and does not ask:
 | Choice | Value |
 | --- | --- |
 | Layout | Standard system paths |
-| Stalwart binary | `/var/tmp/bearmail-install/stalwart` |
-| Web archive | `/var/tmp/bearmail-install/bearmail-webui.tar.gz` |
 | Web files | `/opt/bearmail-webui` on port `8081` |
 | HTTPS | Caddy, automatic |
-| Server setup | Quick setup |
 | Outbound mail | Brevo at `smtp-relay.brevo.com:587` |
 | DNS rows | Treated as not published yet, then sent to the provider you pick |
 
-It still asks you for:
+It asks for:
 
-1. **BearMail portal URL.** The address people open in a browser. Type the domain; `https://` is added if you leave it off. Example: `bearmail.example.com`.
-2. **Public mail hostname.** The admin and mail hostname. Example: `mail.example.com`.
-3. **Primary mail domain.** The part after `@`. Example: `example.com` for `admin@example.com`.
-4. **Apply this configuration.** Review the setup summary. Press Enter to accept.
-5. **Brevo SMTP login** and **Brevo SMTP API key.** From Brevo → SMTP & API → SMTP. This is not the Brevo website password.
-6. **Domain name provider.** name.com, Hostinger, GoDaddy, or publish the printed rows by hand.
-7. **DNS zone and API token** for that provider. The zone starts as your mail domain. If the portal domain is the parent of that mail domain, it starts as the portal domain instead. Example: portal `bearos.si` and mail domain `users.bearos.si` defaults the zone to `bearos.si`.
+1. **BearMail portal URL.** The address people open in a browser. Type the
+   domain; `https://` is added if you leave it off. Example:
+   `bearmail.example.com`.
+2. **Public mail hostname.** The admin and mail hostname. Example:
+   `mail.example.com`.
+3. **Primary mail domain.** The part after `@`. Example: `example.com` for
+   `admin@example.com`.
+4. **Apply this configuration.** Review the summary. Press Enter to accept.
+5. **Brevo SMTP login** and **Brevo SMTP API key.**
+6. **Domain name provider.** name.com, Hostinger, GoDaddy, or publish the
+   printed rows by hand.
+7. **DNS zone and API token** for that provider. The zone starts as the mail
+   domain. If the portal domain is the parent of the mail domain, it starts
+   as the portal domain. Example: portal `bearos.si` and mail domain
+   `users.bearos.si` defaults the zone to `bearos.si`.
 8. Whether to **replace conflicting DNS records** with the BearMail table.
 
-When it finishes, the mail engine, the BearMail web UI, and the MCP sidecar are installed. Create a mailbox and a Stalwart API key (`API_…`) before an agent connects. See [AI agents (MCP)](#ai-agents-mcp).
+When it finishes, the installer prints two things again. Save them:
 
-A host that already has BearMail does not need `easy_install.sh`. Add MCP alone with `mcp_install.sh`, or use `release_install.sh` when you want every install question.
+- **BearMail portal for normal users**, for example
+  `https://bearmail.example.com/`
+- **Permanent administrator credential** (username and password). Use it at
+  `https://mail.example.com/admin/` to add accounts. The password is not
+  stored in `installer-state.json`.
 
-### 1 GB VMs (e2-micro)
+Wait until DNS resolves, then open those URLs. The portal is BearMail. The
+`/admin/` URL is the BearOS admin UI.
 
-After a successful install on a small host (~1 GB RAM), cap RocksDB, add 2 GB
-swap, and apply OS memory limits:
+Mailjet, a custom layout, and every other prompt are in the
+[full installer](docs/INSTALL.md).
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/small-memory-optimize.sh | sudo bash
-```
+## Give an agent a mailbox
 
-Preview with `sudo bash -s -- --dry-run`. Details:
-[Small-memory VMs](docs/INSTALL.md#small-memory-vms).
-
-### AI agents (MCP)
-
-A fresh `release_install.sh` run installs the MCP sidecar after mail setup.
-On a server that already has BearMail, add it with the same script. This does not
-replace Stalwart, Caddy, DNS, or stored mail:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/mcp_install.sh | sudo bash
-```
-
-Preview with `sudo bash -s -- --dry-run`. If the mail origin cannot be detected:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/mcp_install.sh | sudo bash -s -- --server-url https://mail.example.com
-```
-
-Then create a **dedicated** mailbox (not the founder inbox), issue a
-**Stalwart API key** (`API_…`), and paste this into the MCP host. Leave
-`draft-only` on until you opt in. Do not use a human password or `app_…`.
+1. Sign in to the BearOS admin UI and create a dedicated mailbox, such as
+   `scheduler@example.com`. Leave `admin` and founder inboxes for people.
+2. Sign in to BearMail as that mailbox. Open **Settings**, enter a name, and
+   select **Generate API key**. Copy the `API_…` secret. It is shown once.
+3. Paste this into the MCP host. Leave `draft-only` on until you opt in.
+   Use the API key. A human password or an `app_…` app password will not
+   authenticate the agent.
 
 ```json
 {
@@ -164,316 +142,58 @@ Guide: [How an AI agent uses BearMail](docs/AGENT_GUIDE.md).
 Copy-paste configs: [`mcp/mcp.json.example`](mcp/mcp.json.example) (Cursor),
 [`mcp/claude_desktop.json.example`](mcp/claude_desktop.json.example),
 [`mcp/hermes.json.example`](mcp/hermes.json.example).
+The prompt to send the agent is in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
-### Upgrade (keep config)
+## Already installed
 
-On a host that already has BearMail, replace the Stalwart binary, BearOS admin UI,
-BearMail web UI, and MCP sidecar from GitHub. This does not change `config.json`,
-Caddy, DNS, CORS, the SMTP relay, or stored mail, and it does not ask setup questions:
+Replace the mail binary, the BearOS admin UI, BearMail, and the MCP sidecar
+from GitHub. This leaves `config.json`, Caddy, DNS, the SMTP relay, and
+stored mail unchanged, and it does not ask setup questions:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/upgrade.sh | sudo bash
 ```
 
-Preview with `sudo bash -s -- --dry-run`. Do not rerun `install.sh` for this
-update: that wizard re-asks CORS, relay, and DNS. The script refetches
-`bearos-webui/webui.zip` through Stalwart, then removes the one-shot admin it
-used for that call. After it finishes, hard-refresh `/admin` and webmail so
-the browser loads the new assets.
+Preview with `sudo bash -s -- --dry-run`. Use `upgrade.sh` for this update.
+`install.sh` asks the setup questions again. The script refetches the BearOS
+admin UI, then removes the one-shot admin it used for that call. After it
+finishes, hard-refresh `/admin` and the BearMail portal.
+Details: [Upgrade in place](docs/INSTALL.md#upgrade-in-place).
 
-## Prepare these first
-
-Do this **before** you run the installer. The script will ask for the values;
-it does not create the vendor accounts for you.
-
-### 1. Domain at name.com, Hostinger, or GoDaddy
-
-The installer asks which provider owns the DNS zone. Automated publishing
-works for **name.com**, **Hostinger**, and **GoDaddy**. Any other registrar
-is a manual zone: the installer prints the table and you add the rows yourself.
-
-#### name.com
-
-1. Buy or transfer a domain at [name.com](https://www.name.com/).
-2. Keep the domain on **name.com nameservers**.
-3. Sign in and open **Account Settings → API Tokens**.
-4. Create a **production** API token. Two-step verification must allow API
-   access.
-5. Keep the **account username** and the **token** ready. The installer types
-   the token with echo off and does not save it in `installer-state.json`.
-
-#### Hostinger
-
-1. Buy or transfer a domain at [Hostinger](https://www.hostinger.com/).
-2. Keep the domain on **Hostinger nameservers**.
-3. In hPanel, open **API** and create an API token.
-4. Keep the **token** ready. Hostinger does not ask for a username. The
-   installer types the token with echo off and does not save it in
-   `installer-state.json`.
-
-#### GoDaddy
-
-1. Buy or transfer a domain at [GoDaddy](https://www.godaddy.com/).
-2. Keep the domain on **GoDaddy nameservers**. The installer does not change
-   nameservers.
-3. Sign in at [developer.godaddy.com](https://developer.godaddy.com/) and open
-   **Personal Access Tokens**. Generate a **production** token.
-4. Under **Domains & DNS**, allow domain read and DNS update
-   (`domains.domain:read` and `domains.dns:update`). Leave nameserver
-   replacement off.
-5. Keep the **token** ready. GoDaddy does not ask for a username. The
-   installer types the token with echo off and does not save it in
-   `installer-state.json`.
-
-You will also choose two hostnames in that zone, typically:
-
-| Hostname | Role |
-| --- | --- |
-| `mail.example.com` | Mail server, admin, MX, IMAP/SMTP |
-| `webmail.example.com` | BearMail web app |
-
-They may share one public IP. They cannot be the same name.
-
-### 2. SMTP relay account (Brevo recommended)
-
-Cloud VMs (including Google Cloud) usually **block outbound TCP 25**. The
-installer asks which relay to use. **Brevo is the default.** Mailjet remains
-available.
-
-#### Brevo (default)
-
-1. Create an account at [app.brevo.com](https://app.brevo.com/).
-2. **Settings → Senders, domains & dedicated IPs** → add your mail domain
-   (the part after `@`, such as `example.com`).
-3. Publish Brevo’s domain-ownership TXT (Brevo code) and DKIM as shown there.
-   The installer can merge `include:spf.brevo.com` into SPF when it publishes
-   DNS through name.com, Hostinger, or GoDaddy. Add Brevo’s DKIM selector from the
-   dashboard yourself.
-4. **Settings → SMTP & API → SMTP**
-   ([SMTP page](https://app.brevo.com/settings/keys/smtp)).
-5. Copy the **SMTP login** (username, often `xxx@smtp-brevo.com`) and the
-   **SMTP key** (password). These are not your Brevo website password, and
-   not a REST API key.
-
-Host is `smtp-relay.brevo.com`. Port `587` (STARTTLS) is the default; `465`
-is implicit TLS. See [Brevo SMTP relay](docs/BREVO_SMTP_RELAY.md).
-
-#### Mailjet (alternative)
-
-1. Create an account at [app.mailjet.com](https://app.mailjet.com/).
-2. **Account settings → Senders & Domains** → add your mail domain.
-3. Publish Mailjet’s domain-ownership TXT and DKIM. The installer can merge
-   `include:spf.mailjet.com` into SPF when it publishes DNS through name.com,
-   Hostinger, or GoDaddy.
-4. **Account settings → SMTP and SEND API settings**
-   ([relay page](https://app.mailjet.com/account/relay)).
-5. Copy the **API key** (SMTP username) and **secret key** (SMTP password).
-
-Host is `in-v3.mailjet.com`. See [Mailjet SMTP relay](docs/MAILJET_SMTP_RELAY.md).
-
-### 3. A Linux server
-
-- Linux **x86-64** with systemd, root (`sudo`), and an interactive terminal (SSH is
-  fine).
-- A public IPv4 address (IPv6 optional).
-- Inbound TCP **80** and **443** open if you use automatic Caddy (recommended).
-
-## Install from local artifacts
-
-If you already have the three files on the server, put them in one directory:
-
-```text
-install.sh
-stalwart
-bearmail-webui.tar.gz
-```
-
-Then run:
+A host that already has mail and still needs the sidecar:
 
 ```sh
-sudo sh ./install.sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/mcp_install.sh | sudo bash
 ```
 
-That installs Stalwart and the WebUI. The MCP sidecar is a later step; it is
-not one of these three files.
+If the mail origin cannot be detected, add
+`--server-url https://mail.example.com`. Preview with
+`sudo bash -s -- --dry-run`.
 
-Build them from this repository (community edition, no enterprise feature
-gates):
+On a host with about 1 GB of RAM, after a successful install:
 
 ```sh
-cargo build --release --package stalwart --locked --no-default-features \
-  --features "sqlite postgres mysql rocks s3 redis azure nats"
-cp target/release/stalwart ./stalwart
-chmod +x ./stalwart
-
-cd webui
-npm ci
-npm test
-npm run build
-tar -czf ../bearmail-webui.tar.gz \
-  install.sh server.mjs bearmail-webui.service dist
-cd ..
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/small-memory-optimize.sh | sudo bash
 ```
 
-After BearMail is up, add MCP from the same checkout (`mcp_install.sh` plus
-the `mcp/` tree):
+Details: [Small-memory VMs](docs/INSTALL.md#small-memory-vms).
 
-```sh
-sudo sh ./mcp_install.sh
-```
+## Full wizard and source builds
 
-That uses local `mcp/` and does not download GitHub. Preview with
-`sudo sh ./mcp_install.sh --dry-run`. If the mail origin cannot be detected,
-pass `--server-url https://mail.example.com`. Then create a dedicated
-mailbox, issue a Stalwart API key (`API_…`), and paste the host config from
-[AI agents (MCP)](#ai-agents-mcp).
-
-To update **only** the WebUI on an already-installed server, copy `update.sh`
-and a new `bearmail-webui.tar.gz` to that host and run `sudo sh ./update.sh`.
-It reuses the live WebUI service and `config.json`. Details:
-[How to install BearMail](docs/INSTALL.md#update-the-webui-only).
-
-Full paths, reinstall, uninstall, and troubleshooting:
-[How to install BearMail](docs/INSTALL.md).
-
-## What `install.sh` asks, in order
-
-Press Enter to accept a value in `[brackets]`. Invalid answers are explained
-and asked again; they do not abort the install.
-
-### Before any files change
-
-**Installation layout**
-
-- `1) Standard system paths (recommended)` — binary in `/usr/local/bin`,
-  config in `/etc/stalwart`, data in `/var/lib/stalwart`.
-- `2) Custom self-contained prefix` — then it asks for an absolute prefix
-  such as `/opt/stalwart`. Use this only if you must keep everything under
-  one directory.
-
-**Path to the compiled Stalwart binary**  
-Default: `./stalwart` beside the script. Must be executable and built from
-this source (it has to support quick setup).
-
-**Path to the prebuilt WebUI tar archive**  
-Default: `./bearmail-webui.tar.gz`.
-
-**WebUI installation prefix**  
-Default: `/opt/bearmail-webui`. Must not overlap the mail data, config, or
-Node.js paths.
-
-**WebUI local service port**  
-Default: `8081`. Bound to `127.0.0.1` only. `8080` is reserved for the mail
-engine.
-
-**Public WebUI origin**  
-Exact HTTPS URL with no path, for example `https://webmail.example.com`.
-This is the URL people and agents open. After you later set the mail domain,
-a leftover `webmail.example.com` example is replaced with
-`https://webmail.<your-domain>`.
-
-**HTTPS publishing**
-
-- `1) Configure Caddy automatically (recommended)` — installs Caddy, puts
-  mail and webmail on ports 80/443, obtains Let’s Encrypt certificates, and
-  copies the mail-host cert into the engine for IMAPS/SMTPS. Requires
-  origin on standard port 443. Will not overwrite an operator-owned
-  Caddyfile.
-- `2) Use an existing operator-managed reverse proxy` — you route
-  `https://webmail…` to `127.0.0.1:8081` yourself.
-
-**Installation summary** then **Install both services and run interactive
-server setup**  
-Default is `no`. Type `yes` to change the system.
-
-### Server identity (quick setup)
-
-On a fresh machine the engine then asks:
-
-**Public mail hostname** — example `mail.example.com`. Not the cloud
-hostname (nothing ending in `.internal` or `.local`). Used for MX, TLS, and
-the URL the web app calls.
-
-**Primary mail domain** — example `example.com`. The part after `@`.
-
-Press Enter at **Quick setup** unless you need external Postgres, LDAP,
-OIDC, or another store. Advanced setup exposes every bootstrap field;
-empty input keeps the displayed default.
-
-On a first internal-directory install, the **administrator username and
-password are printed once**. Save them before continuing.
-
-### After services are up
-
-**Stalwart administrator username / password**  
-Only if this is a reinstall or an external directory. Needed to set CORS
-for the web origin. Password input is hidden.
-
-**Outbound SMTP relay**  
-Default **Brevo**. Choose Mailjet or skip if you can send on TCP 25.
-
-| Prompt (Brevo) | What to enter |
-| --- | --- |
-| Brevo SMTP host | `smtp-relay.brevo.com` |
-| Brevo SMTP port | `587` or `465` |
-| Brevo SMTP login | SMTP username |
-| Brevo SMTP key | SMTP password (hidden) |
-
-Local addresses still deliver on the server. Remote recipients go through
-the selected relay.
-
-**Have you already published the printed forward-DNS records**  
-Default **no**. If you answer no, choose the domain name provider:
-
-| Provider | What the installer asks |
-| --- | --- |
-| name.com (default) | Zone (usually `example.com`), API username, production API token |
-| Hostinger | Zone (usually `example.com`), API token from hPanel → API |
-| GoDaddy | Zone (usually `example.com`), production API token from developer.godaddy.com |
-| Publish by hand | Nothing else. Add the printed rows yourself |
-
-If existing records conflict (old A/MX/SPF), the installer lists them and
-asks **Replace the conflicting name.com records**, **Replace the conflicting
-Hostinger records**, or **Replace the conflicting GoDaddy records** (default
-yes). Site verification TXT and NS records are left alone. Reverse DNS (PTR)
-is **not** in this table; set it at the VPS provider if you send without a
-relay.
-
-Wait for DNS to resolve, then open:
-
-- Admin: `https://mail.example.com/admin/`
-- BearMail: `https://webmail.example.com/`
-
-Create a user in admin, then sign in to BearMail with that address and
-password. User guide: [How to sign in and send email](docs/WEBUI_USER_GUIDE.md).
-
-Finish the selected relay’s domain authentication (Brevo code/DKIM, or
-Mailjet’s ownership TXT and DKIM) in that vendor’s dashboard if it is still
-pending.
-
-## What agents get
-
-MCP tools over the **same JMAP mailbox** humans use in the WebUI. One agent,
-one address (`scheduler@startup.com`), scoped token, draft-only until you
-allow send. External people stay reachable with ordinary mail and calendar
-invites.
-
-Install the mail host, then paste the prompt in [QUICKSTART.md](docs/QUICKSTART.md)
-so the agent follows [AGENT_GUIDE.md](docs/AGENT_GUIDE.md).
-Spec (draft): [AGENT_MCP_SPEC.md](docs/AGENT_MCP_SPEC.md).
+`release_install.sh` downloads the same files and then asks every layout,
+relay, and DNS question. Local files (`install.sh`, `stalwart`,
+`bearmail-webui.tar.gz`) and the community source build are in
+[How to install BearMail](docs/INSTALL.md#1-build-the-stalwart-artifact).
 
 ## Docs
 
 | Doc | Use |
 | --- | --- |
-| [QUICKSTART.md](docs/QUICKSTART.md) | Install, then paste the agent prompt |
-| [LIMITATIONS.md](docs/LIMITATIONS.md) | Prerequisites, draft-only, caps, what we do not claim |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Stalwart, WebUI, MCP, SMTP/iMIP |
-| [INSTALL.md](docs/INSTALL.md) | Full installer, upgrade, uninstall |
+| [QUICKSTART.md](docs/QUICKSTART.md) | Install, create the agent key, paste the agent prompt |
+| [LIMITATIONS.md](docs/LIMITATIONS.md) | Prerequisites, draft-only, caps, what this release leaves out |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Mail engine, BearMail, MCP, SMTP and calendar invites |
+| [INSTALL.md](docs/INSTALL.md) | Full installer, source build, upgrade, uninstall |
 | [WEBUI_USER_GUIDE.md](docs/WEBUI_USER_GUIDE.md) | Human sign-in and send |
-
-**GitHub topics** (for discovery): `self-hosted`, `email-server`, `calendar`,
-`jmap`, `mcp`, `ai-agents`, `stalwart`.
 
 ## License
 

@@ -13,11 +13,11 @@ live: the mail engine (Stalwart) on `mail.example.com`, and BearMail on
 Create the **name.com**, **Hostinger**, or **GoDaddy** domain/account and an **SMTP relay**
 account (**Brevo** recommended, Mailjet also supported) **before** you run
 `install.sh`. The installer will ask which DNS provider to use and for those
-credentials; it does not register the vendors for you. Details and every
-prompt are in the [BearMail README](../README.md).
+credentials; it does not register the vendors for you. The short path is the
+[BearMail README](../README.md). Every installer prompt is on this page.
 
 The combined installer is interactive. `install.sh` itself does not download
-or build either application. The easiest path is `release_install.sh`, which
+or build either application. The full wizard is `release_install.sh`, which
 downloads the published artifacts from GitHub and then runs `install.sh`.
 The installer handles its Node.js runtime automatically.
 
