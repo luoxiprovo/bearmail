@@ -26,6 +26,55 @@ err() {
     exit 1
 }
 
+show_finish_reminder() {
+    if [ "${_reminder_shown:-false}" = "true" ]; then
+        return 0
+    fi
+    _reminder_shown="true"
+    if [ -z "${BEARMAIL_REMINDER_FILE:-}" ] || [ ! -f "$BEARMAIL_REMINDER_FILE" ] || [ -L "$BEARMAIL_REMINDER_FILE" ]; then
+        if [ -n "${BEARMAIL_REMINDER_FILE:-}" ]; then
+            rm -f "$BEARMAIL_REMINDER_FILE"
+        fi
+        return 0
+    fi
+    _reminder_user=""
+    _reminder_pass=""
+    _reminder_portal=""
+    _reminder_admin_url=""
+    _reminder_line=0
+    while IFS= read -r _reminder_text || [ -n "${_reminder_text:-}" ]; do
+        _reminder_line=$((_reminder_line + 1))
+        case "$_reminder_line" in
+            1) _reminder_user="$_reminder_text" ;;
+            2) _reminder_pass="$_reminder_text" ;;
+            3) _reminder_portal="$_reminder_text" ;;
+            4) _reminder_admin_url="$_reminder_text" ;;
+        esac
+    done < "$BEARMAIL_REMINDER_FILE"
+    rm -f "$BEARMAIL_REMINDER_FILE"
+    if [ -z "$_reminder_portal" ] && { [ -z "$_reminder_user" ] || [ -z "$_reminder_pass" ]; }; then
+        return 0
+    fi
+    say ""
+    if [ -n "$_reminder_portal" ]; then
+        case "$_reminder_portal" in
+            */) ;;
+            *) _reminder_portal="${_reminder_portal}/" ;;
+        esac
+        say "BearMail portal for normal users: ${_reminder_portal}"
+    fi
+    if [ -n "$_reminder_user" ] && [ -n "$_reminder_pass" ]; then
+        say ""
+        say "Permanent administrator credential"
+        say "  Username: ${_reminder_user}"
+        say "  Password: ${_reminder_pass}"
+        if [ -n "$_reminder_admin_url" ]; then
+            say "Use this to sign in at ${_reminder_admin_url} and add other accounts."
+        fi
+        say "This password is not saved in installer-state.json. Store it somewhere safe."
+    fi
+}
+
 usage() {
     cat <<'EOF'
 Usage: curl -fsSL <easy_install.sh URL> | sudo bash
@@ -138,6 +187,7 @@ if [ "$dry_run" = "true" ]; then
     say "  ${BEARMAIL_DOWNLOAD_BASE}/mcp_install.sh"
     say "then run: BEARMAIL_EASY=1 sh ${WORK_DIR}/install.sh"
     say "then run: sh ${WORK_DIR}/mcp_install.sh"
+    say "then print the BearMail portal URL and the permanent administrator credential again"
     exit 0
 fi
 
@@ -199,11 +249,18 @@ say "Brevo are already selected. The MCP sidecar is installed after setup."
 say ""
 
 cd "$WORK_DIR"
-BEARMAIL_EASY=1 sh ./install.sh
+BEARMAIL_REMINDER_FILE="${WORK_DIR}/.bearmail-reminder"
+_reminder_shown="false"
+trap 'status=$?; show_finish_reminder; exit "$status"' EXIT
+BEARMAIL_EASY=1 BEARMAIL_REMINDER_FILE="$BEARMAIL_REMINDER_FILE" sh ./install.sh
 
 say ""
 say "BearMail is installed. Adding the MCP sidecar for AI agents..."
 say ""
 if ! BEARMAIL_WORK_DIR="${WORK_DIR}/mcp" sh ./mcp_install.sh; then
-    err "BearMail is installed, but the MCP sidecar failed. Re-run: sudo sh ${WORK_DIR}/mcp_install.sh"
+    printf 'ERROR: BearMail is installed, but the MCP sidecar failed. Re-run: sudo sh %s/mcp_install.sh\n' \
+        "$WORK_DIR" >&2
+    show_finish_reminder
+    exit 1
 fi
+show_finish_reminder

@@ -48,6 +48,14 @@ grep -q 'Brevo SMTP API key' "$INSTALL_SH" || fail "easy install does not rename
 grep -q '/opt/bearmail-webui' "$INSTALL_SH" || fail "easy install does not use the BearMail WebUI prefix"
 grep -q 'Public mail hostname (This will be your admin portal)' "$INSTALL_SH" || \
     fail "easy install does not rename the mail hostname prompt"
+grep -q 'Permanent administrator credential' "$EASY_SH" || \
+    fail "easy install does not repeat the administrator credential"
+grep -q 'BearMail portal for normal users' "$EASY_SH" || \
+    fail "easy install does not repeat the portal URL"
+grep -q 'BEARMAIL_REMINDER_FILE' "$EASY_SH" || \
+    fail "easy install does not pass a reminder file to install.sh"
+printf '%s\n' "$dry_out" | grep -q 'permanent administrator credential again' || \
+    fail "dry-run does not say the administrator credential is printed again"
 
 TEST_TMP_DIR="$(mktemp -d)"
 cleanup_test() {
@@ -77,5 +85,44 @@ easy_dns_zone_default "mail.example.com" "example.com"
 _easy_mode="false"
 easy_dns_zone_default "bearos.si" "users.bearos.si"
 [ "$RETVAL" = "users.bearos.si" ] || fail "full installer zone default changed to ${RETVAL}"
+
+reminder="${TEST_TMP_DIR}/.bearmail-reminder"
+BEARMAIL_REMINDER_FILE="$reminder" \
+    write_finish_reminder "admin" "secret with spaces" "https://bearmail.example.com" "https://mail.example.com/admin/"
+[ "$(sed -n '1p' "$reminder")" = "admin" ] || fail "reminder username was not saved"
+[ "$(sed -n '2p' "$reminder")" = "secret with spaces" ] || fail "reminder password was not saved"
+[ "$(sed -n '3p' "$reminder")" = "https://bearmail.example.com" ] || fail "reminder portal was not saved"
+[ "$(sed -n '4p' "$reminder")" = "https://mail.example.com/admin/" ] || fail "reminder admin URL was not saved"
+[ "$(stat -c '%a' "$reminder")" = "600" ] || fail "reminder file is not mode 600"
+rm -f "$reminder"
+write_finish_reminder "admin" "secret" "https://bearmail.example.com" "https://mail.example.com/admin/"
+[ ! -e "$reminder" ] || fail "reminder file was written without BEARMAIL_REMINDER_FILE"
+ln -s "${TEST_TMP_DIR}/elsewhere" "$reminder"
+printf '%s\n' 'keep' > "${TEST_TMP_DIR}/elsewhere"
+BEARMAIL_REMINDER_FILE="$reminder" \
+    write_finish_reminder "admin" "secret" "https://bearmail.example.com" "https://mail.example.com/admin/"
+[ "$(cat "${TEST_TMP_DIR}/elsewhere")" = "keep" ] || fail "reminder write followed a symbolic link"
+rm -f "$reminder"
+
+BEARMAIL_REMINDER_FILE="$reminder" \
+    write_finish_reminder "admin" "secret" "https://bearmail.example.com" "https://mail.example.com/admin/"
+printer="${TEST_TMP_DIR}/printer.sh"
+{
+    printf '%s\n' 'say() { printf "%s\n" "$1"; }'
+    awk '/^show_finish_reminder\(\)/ { capture=1 } capture { print } capture && /^}$/ { exit }' "$EASY_SH"
+    printf '%s\n' 'BEARMAIL_REMINDER_FILE=$1; _reminder_shown=false; show_finish_reminder'
+} > "$printer"
+reminder_out="$(sh "$printer" "$reminder")"
+printf '%s\n' "$reminder_out" | grep -q 'BearMail portal for normal users: https://bearmail.example.com/' || \
+    fail "finish reminder did not print the portal URL"
+printf '%s\n' "$reminder_out" | grep -q 'Permanent administrator credential' || \
+    fail "finish reminder did not print the administrator heading"
+printf '%s\n' "$reminder_out" | grep -q 'Username: admin' || fail "finish reminder did not print the username"
+printf '%s\n' "$reminder_out" | grep -q 'Password: secret' || fail "finish reminder did not print the password"
+printf '%s\n' "$reminder_out" | grep -q 'https://mail.example.com/admin/' || \
+    fail "finish reminder did not print the admin sign-in URL"
+[ ! -e "$reminder" ] || fail "finish reminder left the credential file in place"
+sh "$printer" "$reminder" >/dev/null
+[ -z "$(sh "$printer" "$reminder")" ] || fail "a second reminder printed credentials without a file"
 
 printf 'ok\n'

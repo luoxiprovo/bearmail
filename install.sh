@@ -573,10 +573,15 @@ main() {
         say "  Username: ${_admin_username}"
         say "  Password: ${_admin_secret}"
         say "Use this to sign in at https://${_mail_hostname}/admin/ and add other"
-        say "accounts. This password is shown once here and is not saved in"
+        say "accounts. This password is not saved in"
         say "installer-state.json. Store it somewhere safe."
         say ""
     fi
+    _admin_sign_in=""
+    if [ -n "$_mail_hostname" ]; then
+        _admin_sign_in="https://${_mail_hostname}/admin/"
+    fi
+    write_finish_reminder "$_admin_username" "$_admin_secret" "$_webui_origin" "$_admin_sign_in"
     _admin_secret=""
     unset _admin_secret
     if [ "$_proxy_mode" = "caddy" ]; then
@@ -3872,6 +3877,53 @@ EOF
 
 say() {
     printf '%s\n' "$1"
+}
+
+# Root-only handoff so easy_install.sh and release_install.sh can repeat the
+# administrator credential after MCP output. Not written to installer-state.json.
+write_finish_reminder() {
+    local _user="$1" _pass="$2" _portal="$3" _admin_url="$4"
+    local _path="${BEARMAIL_REMINDER_FILE:-}" _dir _tmp _old_umask
+    [ -n "$_path" ] || return 0
+    case "$_path" in
+        /*) ;;
+        *) return 0 ;;
+    esac
+    case "$_path" in
+        *[!A-Za-z0-9_./-]*) return 0 ;;
+    esac
+    if [ -L "$_path" ]; then
+        return 0
+    fi
+    _dir=$(dirname -- "$_path")
+    [ -d "$_dir" ] || return 0
+    if [ -L "$_dir" ]; then
+        return 0
+    fi
+    _tmp="${_path}.tmp.$$"
+    if [ -e "$_tmp" ] || [ -L "$_tmp" ]; then
+        return 0
+    fi
+    _old_umask=$(umask)
+    umask 077
+    if ! {
+        printf '%s\n' "$_user"
+        printf '%s\n' "$_pass"
+        printf '%s\n' "$_portal"
+        printf '%s\n' "$_admin_url"
+    } > "$_tmp"; then
+        umask "$_old_umask"
+        rm -f "$_tmp"
+        return 0
+    fi
+    umask "$_old_umask"
+    chmod 0600 "$_tmp" || {
+        rm -f "$_tmp"
+        return 0
+    }
+    if ! mv -f "$_tmp" "$_path"; then
+        rm -f "$_tmp"
+    fi
 }
 
 err() {

@@ -35,6 +35,14 @@ printf '%s\n' "$dry_out" | grep -q '/var/tmp/bearmail-install/install.sh' || \
     fail "dry-run does not say it will run the downloaded installer"
 printf '%s\n' "$dry_out" | grep -q '/var/tmp/bearmail-install/mcp_install.sh' || \
     fail "dry-run does not say it will run the MCP installer"
+printf '%s\n' "$dry_out" | grep -q 'permanent administrator credential again' || \
+    fail "dry-run does not say the administrator credential is printed again"
+grep -q 'Permanent administrator credential' "$RELEASE_SH" || \
+    fail "release install does not repeat the administrator credential"
+grep -q 'BearMail portal for normal users' "$RELEASE_SH" || \
+    fail "release install does not repeat the portal URL"
+grep -q 'BEARMAIL_REMINDER_FILE' "$RELEASE_SH" || \
+    fail "release install does not pass a reminder file to install.sh"
 
 override_out="$(BEARMAIL_DOWNLOAD_BASE=https://example.test/bearmail BEARMAIL_WORK_DIR=/tmp/bm sh "$RELEASE_SH" --dry-run)"
 printf '%s\n' "$override_out" | grep -q 'https://example.test/bearmail/install.sh' || \
