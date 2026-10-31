@@ -178,6 +178,25 @@ curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/small-memo
 
 Details: [Small-memory VMs](docs/INSTALL.md#small-memory-vms).
 
+## Uninstall
+
+Stop the mail engine and BearMail, and remove their program files. Mail,
+configuration, and logs stay in place. The script asks you to type
+`UNINSTALL` before it changes the host:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/uninstall.sh | sudo bash
+```
+
+Preview the detected paths without changing the host:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/luoxiprovo/bearmail/main/uninstall.sh | sh -s -- --dry-run
+```
+
+DNS records and the MCP sidecar stay. To delete stored mail as well, see
+[Uninstall](docs/INSTALL.md#uninstall).
+
 ## Full wizard and source builds
 
 `release_install.sh` downloads the same files and then asks every layout,
