@@ -2,7 +2,7 @@
 
 BearPortal runs this program on the customer's mail server. It installs one pinned BearMail release and publishes that server's mail DNS. BearPortal does not write DNS itself, and this program does not call the Brevo REST API.
 
-The program does not ask questions. It does not read stdin or `/dev/tty`. Put every value in the input file or in the credential files named by that input.
+The program does not ask questions. It does not read stdin or `/dev/tty`. Put every value in the input file or in the credential files named by that input. BearPortal calls only `bearmail-install`. It does not run `install.sh` and it does not answer installer prompts.
 
 ## Command
 
@@ -208,19 +208,20 @@ The same `operationId` with a different domain, mail hostname, webmail hostname,
 
 ## Ports
 
-The release listens on the public ports below. BearPortal opens those ports in the cloud firewall. This program does not.
+BearPortal does not open ports. This program does not open them either. The operator opens inbound TCP 25, 80, 443, 465, and 993.
 
 | Port | Use |
 |---|---|
 | 25 | Incoming mail |
 | 80 | Certificate issuance |
 | 443 | Webmail, admin, and JMAP |
-| 465 | Mail submission |
+| 465 | Inbound mail submission |
 | 993 | IMAPS |
-| 587 outbound | Brevo SMTP relay |
+
+Inbound submission in this release is 465. Port 587 is the outbound Brevo relay at `smtp-relay.brevo.com`. It is not an inbound port.
 
 Ports 8080, 8081, and 8082 stay on localhost. The MCP sidecar listens on loopback only.
 
 ## Out of scope
 
-This program does not create the server, open a cloud firewall, or format a disk. It does not create the Brevo domain, call Brevo authenticate, or see the Brevo REST key. It does not choose the customer or the server. It does not publish DNS for any provider other than Name.com, Hostinger, and GoDaddy.
+This program does not create the server, open ports, or format a disk. BearPortal does not open ports either. The operator opens inbound TCP 25, 80, 443, 465, and 993. This program does not create the Brevo domain, call Brevo authenticate, or see the Brevo REST key. It does not choose the customer or the server. It does not publish DNS for any provider other than Name.com, Hostinger, and GoDaddy.

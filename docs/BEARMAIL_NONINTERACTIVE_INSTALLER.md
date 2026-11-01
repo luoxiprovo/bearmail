@@ -380,7 +380,7 @@ These tests use a disposable Linux VM and recorded DNS-provider fixtures. A live
 
 ## 12. Out of scope for this installer
 
-- Creating a Google Cloud server, opening a cloud firewall, or formatting a disk.
+- Creating a Google Cloud server, opening ports, or formatting a disk. BearPortal does not open ports. The operator opens inbound TCP 25, 80, 443, 465, and 993. Inbound submission in this release is 465. Port 587 is the outbound Brevo relay.
 - Calling the Brevo REST API, creating a Brevo domain, or generating a Brevo SMTP key.
 - Deciding which customer or which server to install. BearPortal makes that decision and passes the parameters.
 - A second user approval for MX. The boolean in the input is that authorization.
