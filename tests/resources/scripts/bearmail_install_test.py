@@ -123,31 +123,56 @@ def zone_records() -> list[dict]:
 
 
 def apply_script() -> str:
-    return """#!/bin/sh
+    return r"""#!/bin/sh
 set -eu
-printf 'Bearmail portal url: '
-IFS= read -r portal
-printf 'Public mail hostname: '
-IFS= read -r mail
-printf 'Primary mail domain: '
-IFS= read -r domain
-printf 'Apply this configuration [Y/n]: '
-IFS= read -r apply
-printf 'Brevo SMTP login (username): '
-IFS= read -r login
-printf 'Brevo SMTP API key: '
-IFS= read -r key
-printf 'Select Domain name provider [1]: '
-IFS= read -r provider
-[ "$portal" = "$EXPECT_PORTAL" ] || exit 11
-[ "$mail" = "$EXPECT_MAIL" ] || exit 12
-[ "$domain" = "$EXPECT_DOMAIN" ] || exit 13
-[ "$apply" = "y" ] || exit 14
-[ "$login" = "$EXPECT_LOGIN" ] || exit 15
-[ "$key" = "$EXPECT_SMTP" ] || exit 16
-[ "$provider" = "4" ] || exit 17
+if [ -t 0 ]; then
+    echo "stdin is a terminal" >&2
+    exit 21
+fi
+if IFS= read -r _extra; then
+    echo "stdin was not closed" >&2
+    exit 22
+fi
+if [ -z "${BEARMAIL_NONINTERACTIVE_FILE:-}" ]; then
+    echo "answer file was not provided" >&2
+    exit 19
+fi
+printf '%s\n' "$BEARMAIL_NONINTERACTIVE_FILE" > "$BEARMAIL_NONINTERACTIVE_SEEN"
+python3 - <<'PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+
+path = os.environ["BEARMAIL_NONINTERACTIVE_FILE"]
+info = os.lstat(path)
+if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+    sys.exit(23)
+if stat.S_IMODE(info.st_mode) != 0o600:
+    sys.exit(24)
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+if set(data) != {"portal", "mailHostname", "domain", "smtpLogin", "smtpKey"}:
+    sys.exit(25)
+expected = {
+    "portal": os.environ["EXPECT_PORTAL"],
+    "mailHostname": os.environ["EXPECT_MAIL"],
+    "domain": os.environ["EXPECT_DOMAIN"],
+    "smtpLogin": os.environ["EXPECT_LOGIN"],
+}
+for key, value in expected.items():
+    if data.get(key) != value:
+        sys.exit(11)
+digest = hashlib.sha256(data["smtpKey"].encode("utf-8")).hexdigest()
+if digest != os.environ["EXPECT_SMTP_SHA256"]:
+    sys.exit(16)
+for value in os.environ.values():
+    if data["smtpKey"] in value:
+        sys.exit(18)
+PY
 if [ ! -s "$BEARMAIL_INSTALL_ENGINE_DKIM_FILE" ]; then
-    printf '%s\\n' '{"host":"default._domainkey.example.com","value":"v=DKIM1; k=rsa; p=TESTKEY"}' > "$BEARMAIL_INSTALL_ENGINE_DKIM_FILE"
+    printf '%s\n' '{"host":"default._domainkey.example.com","value":"v=DKIM1; k=rsa; p=TESTKEY"}' > "$BEARMAIL_INSTALL_ENGINE_DKIM_FILE"
 fi
 exit 0
 """
@@ -179,7 +204,8 @@ def env_for(tmp: Path, fixture: Path, extra: dict | None = None) -> dict:
         "EXPECT_MAIL": "mail.example.com",
         "EXPECT_DOMAIN": "example.com",
         "EXPECT_LOGIN": "7xxx001@smtp-brevo.com",
-        "EXPECT_SMTP": SMTP_KEY,
+        "EXPECT_SMTP_SHA256": hashlib.sha256(SMTP_KEY.encode()).hexdigest(),
+        "BEARMAIL_NONINTERACTIVE_SEEN": str(tmp / "seen-path"),
         "BEARMAIL_INSTALL_RAN": str(tmp / "ran"),
     }
     if extra:
@@ -292,6 +318,9 @@ def test_apply_publish_and_secrets() -> None:
         check(capture.read_text(encoding="utf-8").strip() == hashlib.sha256(SMTP_KEY.encode()).hexdigest(), "relay used the SMTP key")
         install_log = tmp / "state" / "bearmail-install.log"
         assert_clean(proc, outfile, install_log)
+        seen = Path((tmp / "seen-path").read_text(encoding="utf-8").strip())
+        check(seen.name == "bearmail-noninteractive.json", "answer file name")
+        check(not seen.exists(), "answer file remained after install.sh exited")
         second_log = tmp / "second.log"
         environment["BEARMAIL_INSTALL_DNS_WRITE_LOG"] = str(second_log)
         again = run_installer(["--input", str(infile), "--result", str(outfile)], environment)
@@ -446,9 +475,20 @@ def test_invalid_input() -> None:
         check(missing.returncode == 2, "missing result flag")
 
 
+def test_no_prompt_driver() -> None:
+    source = INSTALLER.read_text(encoding="utf-8")
+    check("import pty" not in source, "bearmail-install still imports pty")
+    check("Select Domain name provider" not in source, "bearmail-install still matches the DNS menu")
+    check("45 * 60" not in source, "the prompt timeout remains")
+    install_sh = (ROOT / "install.sh").read_text(encoding="utf-8")
+    check("BEARMAIL_NONINTERACTIVE_FILE" in install_sh, "install.sh has no noninteractive answer file")
+    check("Noninteractive install reached an interactive prompt" in install_sh, "prompts do not fail closed")
+
+
 def main() -> int:
     if not os.access(INSTALLER, os.X_OK):
         fail("bearmail-install is not executable")
+    test_no_prompt_driver()
     test_dry_run_and_stdin()
     test_apply_publish_and_secrets()
     test_conflict_and_mx_flag()

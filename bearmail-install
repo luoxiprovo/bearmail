@@ -2,12 +2,15 @@
 """Noninteractive BearMail installer for BearPortal.
 
 BearPortal calls this program with an input JSON file and a result path.
-The program checks that contract, then runs the existing easy install
-(install.sh and mcp_install.sh) from the artifact directory. It does not
-download a release and it does not replace those installers.
+The program checks that contract, then runs install.sh and mcp_install.sh
+from the artifact directory. It does not download a release and it does not
+replace those installers.
 
-DNS publication for the contract is done here, after the mail services are
-installed, so the existing installer is told to leave the zone unchanged.
+BearPortal does not run install.sh and does not answer its prompts. This
+program writes the easy-install answers to a mode 0600 file and starts
+install.sh with stdin closed and no terminal. DNS publication for the
+contract is done here, after the mail services are installed. install.sh
+leaves the zone unchanged.
 """
 
 from __future__ import annotations
@@ -18,9 +21,7 @@ import hashlib
 import ipaddress
 import json
 import os
-import pty
 import re
-import select
 import smtplib
 import socket
 import ssl
@@ -35,6 +36,7 @@ from pathlib import Path
 INSTALLER_VERSION = "1"
 DATA_PATH = "/var/lib/stalwart"
 STATE_NAME = "bearmail-install-state.json"
+ANSWER_NAME = "bearmail-noninteractive.json"
 REQUIRED_ARTIFACTS = ("install.sh", "stalwart", "bearmail-webui.tar.gz", "mcp_install.sh")
 EXAMPLE_WEBMAIL = {
     "bearmail.example.com",
@@ -432,7 +434,7 @@ def check_data_path(config: dict, state: dict | None) -> None:
             "Mount the mail disk at /var/lib/stalwart before installation.",
             1,
         )
-    ignored = {STATE_NAME, "lost+found"}
+    ignored = {STATE_NAME, "lost+found", ANSWER_NAME}
     children = [child.name for child in path.iterdir() if child.name not in ignored]
     if not children:
         return
@@ -1153,77 +1155,67 @@ def redact(text: str, secrets: list[str]) -> str:
     return redacted
 
 
-def easy_answers(config: dict, secrets: dict) -> list[tuple[str, str]]:
-    return [
-        ("Bearmail portal url", config["webmailHostname"]),
-        ("Public mail hostname", config["mailHostname"]),
-        ("Primary mail domain", config["domain"]),
-        ("Apply this configuration", "y"),
-        ("Brevo SMTP login (username)", config["relay"]["login"]),
-        ("Brevo SMTP API key", secrets["smtpKey"]),
-        ("Select Domain name provider", "4"),
+def write_noninteractive_answers(path: Path, config: dict, secrets: dict) -> None:
+    fields = {
+        "portal": config["webmailHostname"],
+        "mailHostname": config["mailHostname"],
+        "domain": config["domain"],
+        "smtpLogin": config["relay"]["login"],
+        "smtpKey": secrets["smtpKey"],
+    }
+    for value in fields.values():
+        if not isinstance(value, str) or not value or "\n" in value or "\r" in value or "\0" in value:
+            raise InstallError("INVALID_INPUT", "An installation answer contains a newline or is empty.", 2)
+    if path.is_symlink() or path.parent.is_symlink() or not path.parent.is_dir():
+        raise InstallError("SERVICE_FAILED", "The noninteractive answer directory is not usable.", 1)
+    text = json.dumps(fields) + "\n"
+    path.unlink(missing_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
+    os.chmod(path, 0o600)
+
+
+def child_environment(config: dict, secrets: dict, answer: Path) -> dict:
+    blocked = [
+        value for value in (secrets.get("smtpKey", ""), secrets.get("adminPassword", ""))
+        if isinstance(value, str) and len(value) >= 4
     ]
+    env = {}
+    for key, value in os.environ.items():
+        if any(secret in value for secret in blocked):
+            continue
+        env[key] = value
+    env["BEARMAIL_EASY"] = "1"
+    env["BEARMAIL_NONINTERACTIVE_FILE"] = str(answer)
+    env["BEARMAIL_INSTALL_ENGINE_DKIM_FILE"] = str(state_dir(config) / "engine-dkim.json")
+    env["BEARMAIL_REMINDER_FILE"] = str(state_dir(config) / ".bearmail-reminder")
+    for value in env.values():
+        if any(secret in value for secret in blocked):
+            raise InstallError("SERVICE_FAILED", "The installer environment would contain a credential.", 1)
+    return env
 
 
-def drive_process(command: list[str], env: dict, cwd: Path, answers: list[tuple[str, str]], secrets: list[str], log_path: Path) -> int:
-    import fcntl
-    import termios
-
-    master, slave = pty.openpty()
-
-    def become_session():
-        os.setsid()
-        try:
-            fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-        except OSError:
-            return
-
-    process = subprocess.Popen(
+def run_logged(command: list[str], env: dict, cwd: Path, secrets: list[str], log_path: Path) -> int:
+    if not log_path.parent.is_dir():
+        raise InstallError("SERVICE_FAILED", "The install state directory is missing.", 1)
+    completed = subprocess.run(
         command,
-        stdin=slave,
-        stdout=slave,
-        stderr=slave,
         cwd=str(cwd),
         env=env,
-        preexec_fn=become_session,
-        close_fds=True,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=False,
     )
-    os.close(slave)
-    buffer = ""
-    sent = set()
-    captured = []
-    deadline = time.time() + (30 if test_hooks() else 45 * 60)
-    while time.time() < deadline:
-        ready, _, _ = select.select([master], [], [], 0.2)
-        if ready:
-            try:
-                chunk = os.read(master, 4096)
-            except OSError:
-                chunk = b""
-            if chunk:
-                text = chunk.decode("utf-8", "replace")
-                buffer += text
-                captured.append(text)
-                for marker, answer in answers:
-                    key = marker + "\0" + answer
-                    if key not in sent and marker in buffer:
-                        os.write(master, (answer + "\n").encode())
-                        sent.add(key)
-                        buffer = buffer[-4000:]
-        if process.poll() is not None:
-            break
-    else:
-        process.kill()
-        process.wait()
-    try:
-        os.close(master)
-    except OSError:
-        pass
-    status = process.wait()
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(redact("".join(captured), secrets), encoding="utf-8")
+    text = completed.stdout.decode("utf-8", "replace") + completed.stderr.decode("utf-8", "replace")
+    log_path.write_text(redact(text, secrets), encoding="utf-8")
     os.chmod(log_path, 0o600)
-    return status
+    return completed.returncode
 
 
 def run_existing_install(config: dict, secrets: dict, artifact_dir: Path) -> None:
@@ -1233,20 +1225,20 @@ def run_existing_install(config: dict, secrets: dict, artifact_dir: Path) -> Non
             "webmailHostname is an installer example. Send the customer's webmail hostname.",
             2,
         )
-    dkim_file = state_dir(config) / "engine-dkim.json"
-    env = os.environ.copy()
-    env["BEARMAIL_EASY"] = "1"
-    env["BEARMAIL_INSTALL_ENGINE_DKIM_FILE"] = str(dkim_file)
-    reminder = state_dir(config) / ".bearmail-reminder"
-    env["BEARMAIL_REMINDER_FILE"] = str(reminder)
-    if test_hooks() and os.environ.get("BEARMAIL_INSTALL_APPLY_SCRIPT"):
-        command = ["sh", os.environ["BEARMAIL_INSTALL_APPLY_SCRIPT"]]
-    else:
-        if os.geteuid() != 0:
-            raise InstallError("SERVICE_FAILED", "Run bearmail-install as root.", 1)
-        command = ["bash", str(artifact_dir / "install.sh")]
-    log_path = state_dir(config) / "bearmail-install.log"
-    status = drive_process(command, env, artifact_dir, easy_answers(config, secrets), secret_values(secrets), log_path)
+    answer = state_dir(config) / ANSWER_NAME
+    try:
+        write_noninteractive_answers(answer, config, secrets)
+        env = child_environment(config, secrets, answer)
+        if test_hooks() and os.environ.get("BEARMAIL_INSTALL_APPLY_SCRIPT"):
+            command = ["sh", os.environ["BEARMAIL_INSTALL_APPLY_SCRIPT"]]
+        else:
+            if os.geteuid() != 0:
+                raise InstallError("SERVICE_FAILED", "Run bearmail-install as root.", 1)
+            command = ["bash", str(artifact_dir / "install.sh")]
+        log_path = state_dir(config) / "bearmail-install.log"
+        status = run_logged(command, env, artifact_dir, secret_values(secrets), log_path)
+    finally:
+        answer.unlink(missing_ok=True)
     if status != 0:
         raise InstallError("SERVICE_FAILED", "The existing BearMail installer did not finish.", 1)
     if not test_hooks():

@@ -28,6 +28,9 @@ main() {
     # Installation and setup answers are deliberately not accepted as command
     # line arguments. This keeps invocation simple and prevents
     # secrets from appearing in shell history or process listings.
+    # bearmail-install may point BEARMAIL_NONINTERACTIVE_FILE at a mode 0600
+    # JSON file. The path is not a secret. The values are not read from the
+    # command line or the environment. Interactive runs leave that variable unset.
     while [ $# -gt 0 ]; do
         case "$1" in
             -h|--help)
@@ -40,10 +43,17 @@ main() {
         esac
     done
 
-    if ! (exec 3<> /dev/tty) 2>/dev/null; then
-        err "❌ Install failed: An interactive terminal is required. Open a terminal and run the installer again."
+    if noninteractive_active; then
+        load_noninteractive_answers
+        # Keep fd 3 open so status lines that target the terminal do not abort.
+        # Prompt functions still refuse to read an answer in this mode.
+        exec 3>/dev/null
+    else
+        if ! (exec 3<> /dev/tty) 2>/dev/null; then
+            err "❌ Install failed: An interactive terminal is required. Open a terminal and run the installer again."
+        fi
+        exec 3<> /dev/tty
     fi
-    exec 3<> /dev/tty
 
     need_cmd uname
     need_cmd mktemp
@@ -101,7 +111,7 @@ main() {
     local _prefix="" _easy_mode="false" _webui_archive_name="bearmail-webui.tar.gz"
     local _webui_prefix_default="/opt/bearmail-webui" _portal_label
     _portal_label="Public WebUI origin (exact HTTPS URL, no path)"
-    if [ "${BEARMAIL_EASY:-}" = "1" ]; then
+    if [ "${BEARMAIL_EASY:-}" = "1" ] || noninteractive_active; then
         _easy_mode="true"
         _portal_label="Bearmail portal url (The url human access Bearmail, you should input your domain here. eg:bearmail.example.com)"
     fi
@@ -151,13 +161,19 @@ main() {
         say "WebUI installation prefix: ${_webui_prefix}"
         _webui_port="8081"
         say "WebUI local service port: ${_webui_port}"
-        while true; do
-            prompt_text "$_portal_label" ""
-            if normalize_easy_portal "$RETVAL"; then
-                break
+        if noninteractive_active; then
+            if ! normalize_easy_portal "$NONINTERACTIVE_PORTAL"; then
+                err "❌ Install failed: ${VALIDATION_ERROR}"
             fi
-            printf '  %s\n' "$VALIDATION_ERROR" >&3
-        done
+        else
+            while true; do
+                prompt_text "$_portal_label" ""
+                if normalize_easy_portal "$RETVAL"; then
+                    break
+                fi
+                printf '  %s\n' "$VALIDATION_ERROR" >&3
+            done
+        fi
     else
         prompt_executable_file "Path to the compiled Stalwart binary" "${_script_dir}/stalwart" \
             "The Stalwart artifact must be an executable regular file."
@@ -186,14 +202,19 @@ main() {
     fi
     if [ "$RETVAL" -eq 1 ]; then
         _proxy_mode="caddy"
-        while [ "$_webui_origin" != "https://${_webui_hostname}" ]; do
-            printf '  Automatic Caddy publishing uses standard HTTPS port 443.\n' >&3
-            prompt_https_origin "$_portal_label" \
-                "https://${_webui_hostname}"
-            _webui_origin="$RETVAL"
-            origin_hostname "$_webui_origin"
-            _webui_hostname="$RETVAL"
-        done
+        if [ "$_webui_origin" != "https://${_webui_hostname}" ]; then
+            if noninteractive_active; then
+                err "❌ Install failed: Automatic Caddy publishing uses standard HTTPS port 443."
+            fi
+            while [ "$_webui_origin" != "https://${_webui_hostname}" ]; do
+                printf '  Automatic Caddy publishing uses standard HTTPS port 443.\n' >&3
+                prompt_https_origin "$_portal_label" \
+                    "https://${_webui_hostname}"
+                _webui_origin="$RETVAL"
+                origin_hostname "$_webui_origin"
+                _webui_hostname="$RETVAL"
+            done
+        fi
         validate_caddy_config_ownership
     else
         _proxy_mode="operator"
@@ -343,10 +364,21 @@ main() {
         say "🧭 Starting interactive command-line setup..."
         if [ "$_easy_mode" = "true" ]; then
             say "Setup mode: Quick setup"
-            prompt_dns_name "Public mail hostname (This will be your admin portal)" ""
-            _easy_host="$RETVAL"
-            prompt_dns_name "Primary mail domain: eg, if you want admin@example.com as email address, input example.com here" ""
-            _easy_domain="$RETVAL"
+            if noninteractive_active; then
+                if ! normalize_dns_name "$NONINTERACTIVE_MAIL_HOSTNAME"; then
+                    err "❌ Install failed: ${VALIDATION_ERROR}"
+                fi
+                _easy_host="$RETVAL"
+                if ! normalize_dns_name "$NONINTERACTIVE_DOMAIN"; then
+                    err "❌ Install failed: ${VALIDATION_ERROR}"
+                fi
+                _easy_domain="$RETVAL"
+            else
+                prompt_dns_name "Public mail hostname (This will be your admin portal)" ""
+                _easy_host="$RETVAL"
+                prompt_dns_name "Primary mail domain: eg, if you want admin@example.com as email address, input example.com here" ""
+                _easy_domain="$RETVAL"
+            fi
             if ! run_easy_stalwart_setup \
                 "$_bin_file" "$_config_file" "$_setup_result_file" \
                 "$_data_dir" "$_log_dir" "$_public_ipv4" "$_public_ipv6" \
@@ -423,6 +455,9 @@ main() {
         json_field "$_installer_state" "defaultDomain"
         _mail_domain="$RETVAL"
     else
+        if noninteractive_active; then
+            err "❌ Install failed: Existing configuration has no saved mail hostname."
+        fi
         print_server_identity_help
         suggested_public_mail_hostname
         prompt_dns_name "Public mail hostname: eg, mail.example.com" "$RETVAL"
@@ -463,6 +498,9 @@ main() {
     wait_for_http "http://127.0.0.1:${_webui_port}/healthz/ready" "WebUI"
 
     if [ -z "$_admin_username" ] || [ -z "$_admin_secret" ]; then
+        if noninteractive_active; then
+            err "❌ Install failed: The server setup did not provide administrator credentials."
+        fi
         prompt_admin_credentials "admin"
         _admin_username="$ADMIN_USERNAME_RETVAL"
         _admin_secret="$ADMIN_SECRET_RETVAL"
@@ -476,6 +514,9 @@ main() {
             break
         fi
         if [ "$_cors_status" -eq 2 ]; then
+            if noninteractive_active; then
+                err "❌ Install failed: Stalwart rejected the administrator credentials."
+            fi
             printf '  Stalwart rejected those administrator credentials. Enter them again.\n' >&3
             prompt_admin_credentials "$_admin_username"
             _admin_username="$ADMIN_USERNAME_RETVAL"
@@ -503,6 +544,9 @@ main() {
                 break
             fi
             if [ "$_proxy_status" -eq 2 ]; then
+                if noninteractive_active; then
+                    err "❌ Install failed: Stalwart rejected the administrator credentials."
+                fi
                 printf '  Stalwart rejected those administrator credentials. Enter them again.\n' >&3
                 prompt_admin_credentials "$_admin_username"
                 _admin_username="$ADMIN_USERNAME_RETVAL"
@@ -700,7 +744,112 @@ The interactive custom-prefix choice uses a self-contained layout:
 EOF
 }
 
+noninteractive_active() {
+    [ -n "${BEARMAIL_NONINTERACTIVE_FILE:-}" ]
+}
+
+refuse_interactive_prompt() {
+    if noninteractive_active; then
+        err "❌ Install failed: Noninteractive install reached an interactive prompt."
+    fi
+}
+
+# Read portal, mail hostname, domain, SMTP login, and SMTP key from the
+# mode-0600 file named by BEARMAIL_NONINTERACTIVE_FILE. Values stay in shell
+# variables. They are not accepted as arguments.
+load_noninteractive_answers() {
+    local _ni_path _ni_out _nl
+    _ni_path="${BEARMAIL_NONINTERACTIVE_FILE:-}"
+    case "$_ni_path" in
+        /*) ;;
+        *) err "❌ Install failed: BEARMAIL_NONINTERACTIVE_FILE must be an absolute path." ;;
+    esac
+    case "$_ni_path" in
+        *[!A-Za-z0-9_./-]*)
+            err "❌ Install failed: BEARMAIL_NONINTERACTIVE_FILE contains unsupported characters."
+            ;;
+    esac
+    if [ -L "$_ni_path" ]; then
+        err "❌ Install failed: BEARMAIL_NONINTERACTIVE_FILE must not be a symbolic link."
+    fi
+    if [ ! -f "$_ni_path" ]; then
+        err "❌ Install failed: BEARMAIL_NONINTERACTIVE_FILE must be a regular file."
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        err "❌ Install failed: python3 is required for noninteractive installation."
+    fi
+    if ! _ni_out="$(BEARMAIL_NONINTERACTIVE_FILE="$_ni_path" python3 - <<'PY'
+import json
+import os
+import stat
+import sys
+
+path = os.environ.get("BEARMAIL_NONINTERACTIVE_FILE", "")
+try:
+    info = os.lstat(path)
+except OSError as exc:
+    sys.stderr.write("Cannot read the noninteractive answer file: %s\n" % exc.strerror)
+    sys.exit(1)
+if stat.S_ISLNK(info.st_mode):
+    sys.stderr.write("The noninteractive answer file must not be a symbolic link.\n")
+    sys.exit(1)
+if not stat.S_ISREG(info.st_mode):
+    sys.stderr.write("The noninteractive answer file must be a regular file.\n")
+    sys.exit(1)
+if info.st_uid != os.geteuid():
+    sys.stderr.write("The noninteractive answer file must be owned by the current user.\n")
+    sys.exit(1)
+if stat.S_IMODE(info.st_mode) != 0o600:
+    sys.stderr.write("The noninteractive answer file must be mode 0600.\n")
+    sys.exit(1)
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        raw = handle.read()
+except OSError as exc:
+    sys.stderr.write("Cannot read the noninteractive answer file: %s\n" % exc.strerror)
+    sys.exit(1)
+if "\0" in raw:
+    sys.stderr.write("The noninteractive answer file must not contain NUL.\n")
+    sys.exit(1)
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    sys.stderr.write("The noninteractive answer file is not valid JSON.\n")
+    sys.exit(1)
+expected = ("portal", "mailHostname", "domain", "smtpLogin", "smtpKey")
+if not isinstance(data, dict) or set(data) != set(expected):
+    sys.stderr.write("The noninteractive answer file has an unexpected field set.\n")
+    sys.exit(1)
+for key in expected:
+    value = data[key]
+    if not isinstance(value, str) or value == "" or "\n" in value or "\r" in value or "\0" in value:
+        sys.stderr.write("The noninteractive answer field %s is invalid.\n" % key)
+        sys.exit(1)
+    sys.stdout.write(value + "\n")
+PY
+)"; then
+        err "❌ Install failed: The noninteractive answer file was rejected."
+    fi
+    _nl='
+'
+    NONINTERACTIVE_PORTAL=${_ni_out%%"$_nl"*}
+    _ni_out=${_ni_out#*"$_nl"}
+    NONINTERACTIVE_MAIL_HOSTNAME=${_ni_out%%"$_nl"*}
+    _ni_out=${_ni_out#*"$_nl"}
+    NONINTERACTIVE_DOMAIN=${_ni_out%%"$_nl"*}
+    _ni_out=${_ni_out#*"$_nl"}
+    NONINTERACTIVE_SMTP_LOGIN=${_ni_out%%"$_nl"*}
+    _ni_out=${_ni_out#*"$_nl"}
+    NONINTERACTIVE_SMTP_KEY=${_ni_out%%"$_nl"*}
+    if [ -z "$NONINTERACTIVE_PORTAL" ] || [ -z "$NONINTERACTIVE_MAIL_HOSTNAME" ] || \
+        [ -z "$NONINTERACTIVE_DOMAIN" ] || [ -z "$NONINTERACTIVE_SMTP_LOGIN" ] || \
+        [ -z "$NONINTERACTIVE_SMTP_KEY" ]; then
+        err "❌ Install failed: The noninteractive answer file was rejected."
+    fi
+}
+
 prompt_menu() {
+    refuse_interactive_prompt
     local _label="$1" _default="$2" _count _index _answer _choice
     shift 2
     _count=$#
@@ -736,6 +885,7 @@ prompt_menu() {
 }
 
 prompt_text() {
+    refuse_interactive_prompt
     local _label="$1" _default="$2" _answer
     while true; do
         if [ -n "$_default" ]; then
@@ -955,6 +1105,9 @@ confirm_dedicated_webui_origin() {
         _origin_label="Bearmail portal url (The url human access Bearmail, you should input your domain here. eg:bearmail.example.com)"
     fi
     if is_example_webui_placeholder "$_webui_hostname"; then
+        if noninteractive_active; then
+            err "❌ Install failed: The WebUI origin is still the installer example (${_webui_origin})."
+        fi
         printf '  The WebUI origin is still the installer example (%s).\n' "$_webui_origin" >&3
         printf '  Use a dedicated hostname in your mail domain, typically %s\n' "$_suggested" >&3
         prompt_https_origin "$_origin_label" "$_suggested"
@@ -965,6 +1118,9 @@ confirm_dedicated_webui_origin() {
     if webui_hostname_conflicts "$_mode" "$_mail_hostname" "$_mail_domain" "$_webui_hostname" || \
         { [ "$_mode" = "caddy" ] && [ "$_webui_origin" != "https://${_webui_hostname}" ]; }
     then
+        if noninteractive_active; then
+            err "❌ Install failed: The WebUI hostname conflicts with a Stalwart public hostname."
+        fi
         printf '  The WebUI hostname conflicts with a Stalwart public hostname.\n' >&3
         while webui_hostname_conflicts "$_mode" "$_mail_hostname" "$_mail_domain" "$_webui_hostname" || \
             { [ "$_mode" = "caddy" ] && [ "$_webui_origin" != "https://${_webui_hostname}" ]; }
@@ -1023,6 +1179,7 @@ prompt_admin_credentials() {
 }
 
 prompt_secret() {
+    refuse_interactive_prompt
     local _label="$1" _answer _saved_tty
     while true; do
         printf '%s: ' "$_label" >&3
@@ -1047,6 +1204,7 @@ prompt_secret() {
 }
 
 prompt_yes_no() {
+    refuse_interactive_prompt
     local _label="$1" _default="$2" _answer _suffix
     if [ "$_default" = "yes" ]; then
         _suffix="Y/n"
@@ -1501,7 +1659,8 @@ easy_dns_zone_default() {
 }
 
 # Drive the published Stalwart quick-setup wizard. The binary still asks its
-# own questions; easy install answers the fixed ones and keeps the apply prompt.
+# own questions. Easy install answers the fixed ones and keeps the apply prompt.
+# Noninteractive mode accepts that apply on the wizard FIFO without asking.
 run_easy_stalwart_setup() {
     local _bin="$1" _config="$2" _result="$3" _data="$4" _log="$5"
     local _ipv4="$6" _ipv6="$7" _host="$8" _domain="$9" _work="${10}"
@@ -1545,15 +1704,19 @@ run_easy_stalwart_setup() {
         exec 4>&-
         return 1
     fi
-    say ""
-    sed -n '/Setup summary:/,/Apply this configuration/p' "$_out" | sed '/Apply this configuration/d' >&3
-    if prompt_yes_no "Apply this configuration" "yes"; then
+    if noninteractive_active; then
         printf 'y\n' >&4
     else
-        printf 'n\nn\n' >&4
-        wait "$_pid" 2>/dev/null || true
-        exec 4>&-
-        err "Setup cancelled; no configuration was written."
+        say ""
+        sed -n '/Setup summary:/,/Apply this configuration/p' "$_out" | sed '/Apply this configuration/d' >&3
+        if prompt_yes_no "Apply this configuration" "yes"; then
+            printf 'y\n' >&4
+        else
+            printf 'n\nn\n' >&4
+            wait "$_pid" 2>/dev/null || true
+            exec 4>&-
+            err "Setup cancelled; no configuration was written."
+        fi
     fi
     if ! wait "$_pid"; then
         printf '%s\n' "Server setup failed while applying the configuration." >&2
@@ -2294,10 +2457,15 @@ configure_optional_smtp_relay() {
         _user_label="Mailjet API key (SMTP username)"
         _secret_label="Mailjet secret key (SMTP password)"
     fi
-    prompt_text "$_user_label" ""
-    _smtp_user="$RETVAL"
-    prompt_secret "$_secret_label"
-    _smtp_secret="$RETVAL"
+    if noninteractive_active; then
+        _smtp_user="$NONINTERACTIVE_SMTP_LOGIN"
+        _smtp_secret="$NONINTERACTIVE_SMTP_KEY"
+    else
+        prompt_text "$_user_label" ""
+        _smtp_user="$RETVAL"
+        prompt_secret "$_secret_label"
+        _smtp_secret="$RETVAL"
+    fi
     say "🔐 Configuring Stalwart to relay outbound mail through ${_provider}..."
     _errfile="$(mktemp)"
     while true; do
@@ -2313,6 +2481,13 @@ configure_optional_smtp_relay() {
             rm -f "$_errfile"
             RETVAL="$_provider"
             return 0
+        fi
+        if noninteractive_active; then
+            rm -f "$_errfile"
+            if [ "$_status" -eq 2 ]; then
+                err "❌ Install failed: Stalwart rejected the administrator credentials."
+            fi
+            err "❌ Install failed: Stalwart could not apply the ${_provider} SMTP relay."
         fi
         if [ "$_status" -eq 2 ]; then
             printf '  Stalwart rejected those administrator credentials. Enter them again.\n' >&3
@@ -2465,6 +2640,10 @@ publish_optional_dns() {
     local _state="$1" _webui_hostname="$2" _mail_domain="$3" _smtp_relay="$4"
     local _provider
     RETVAL="false"
+    if noninteractive_active; then
+        say "Forward-DNS rows are left for bearmail-install."
+        return 0
+    fi
     say ""
     say "Authoritative DNS"
     say "-----------------"
