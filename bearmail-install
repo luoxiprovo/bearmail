@@ -1,0 +1,1519 @@
+#!/usr/bin/env python3
+"""Noninteractive BearMail installer for BearPortal.
+
+BearPortal calls this program with an input JSON file and a result path.
+The program checks that contract, then runs the existing easy install
+(install.sh and mcp_install.sh) from the artifact directory. It does not
+download a release and it does not replace those installers.
+
+DNS publication for the contract is done here, after the mail services are
+installed, so the existing installer is told to leave the zone unchanged.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import ipaddress
+import json
+import os
+import pty
+import re
+import select
+import smtplib
+import socket
+import ssl
+import stat
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+INSTALLER_VERSION = "1"
+DATA_PATH = "/var/lib/stalwart"
+STATE_NAME = "bearmail-install-state.json"
+REQUIRED_ARTIFACTS = ("install.sh", "stalwart", "bearmail-webui.tar.gz", "mcp_install.sh")
+EXAMPLE_WEBMAIL = {
+    "bearmail.example.com",
+    "bearmail.example.org",
+    "bearmail.example.net",
+    "bearmail.example.test",
+    "webmail.example.com",
+    "webmail.example.org",
+    "webmail.example.net",
+    "webmail.example.test",
+}
+UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+HOST_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
+PUBLIC_SUFFIXES = {
+    "com", "net", "org", "io", "app", "dev", "co", "uk", "us", "si", "de", "fr",
+    "co.uk", "org.uk", "ac.uk", "com.au", "co.nz", "com.br", "co.jp",
+}
+INPUT_KEYS = {
+    "schemaVersion", "operationId", "deploymentId", "generation",
+    "mxCutoverAuthorized", "domain", "mailHostname", "webmailHostname",
+    "publicIpv4", "publicIpv6", "dataPath", "dns", "brevoDnsRecords",
+    "relay", "adminCredentialFile", "mailboxQuotaBytes", "release",
+}
+DNS_KEYS = {"provider", "zone", "credentialFile"}
+RELAY_KEYS = {"host", "port", "tls", "login", "credentialFile"}
+RELEASE_KEYS = {"id", "artifactDir", "checksumFile"}
+RECORD_KEYS = {"purpose", "type", "host", "value"}
+DOC_V4 = (
+    ipaddress.ip_network("192.0.2.0/24"),
+    ipaddress.ip_network("198.51.100.0/24"),
+    ipaddress.ip_network("203.0.113.0/24"),
+)
+DOC_V6 = ipaddress.ip_network("2001:db8::/32")
+
+
+class InstallError(Exception):
+    def __init__(self, code: str, message: str, exit_code: int = 1, retryable: bool = False, plan=None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.exit_code = exit_code
+        self.retryable = retryable
+        self.plan = plan
+
+
+def test_hooks() -> bool:
+    return os.environ.get("BEARMAIL_INSTALL_TEST_HOOKS") == "1"
+
+
+def eprint(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def state_dir(config: dict) -> Path:
+    override = os.environ.get("BEARMAIL_INSTALL_STATE_DIR")
+    if test_hooks() and override:
+        return Path(override)
+    return Path(config["dataPath"])
+
+
+def state_path(config: dict) -> Path:
+    return state_dir(config) / STATE_NAME
+
+
+def read_json_file(path: Path, label: str):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise InstallError("INVALID_INPUT", f"Could not read the {label}.", 2) from exc
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise InstallError("INVALID_INPUT", f"The {label} is not UTF-8 JSON.", 2) from exc
+
+
+def reject_unknown(value: dict, allowed: set[str], label: str) -> None:
+    extra = sorted(set(value) - allowed)
+    if extra:
+        raise InstallError("INVALID_INPUT", f"Unknown {label} field: {extra[0]}.", 2)
+
+
+def normalize_name(value, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise InstallError("INVALID_INPUT", f"{label} must be a DNS name.", 2)
+    name = value.strip().lower()
+    if name.endswith("."):
+        name = name[:-1]
+    try:
+        name = name.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise InstallError("INVALID_INPUT", f"{label} is not a valid DNS name.", 2) from exc
+    if name in {"localhost"} or name.endswith(".local") or "/" in name or ":" in name:
+        raise InstallError("INVALID_INPUT", f"{label} is not a public DNS name.", 2)
+    if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", name):
+        raise InstallError("INVALID_INPUT", f"{label} must be a DNS name.", 2)
+    if not HOST_RE.fullmatch(name) or name in PUBLIC_SUFFIXES:
+        raise InstallError("INVALID_INPUT", f"{label} is not a registrable DNS name.", 2)
+    return name
+
+
+def inside_domain(host: str, domain: str) -> bool:
+    return host == domain or host.endswith("." + domain)
+
+
+def acceptable_ip(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified:
+        return False
+    if address.version == 4 and any(address in network for network in DOC_V4):
+        return True
+    if address.version == 6 and address in DOC_V6:
+        return True
+    return bool(address.is_global)
+
+
+def check_ip(value, label: str, version: int):
+    if version == 6 and value is None:
+        return None
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError as exc:
+        raise InstallError("INVALID_INPUT", f"{label} is not an IP address.", 2) from exc
+    if address.version != version or not acceptable_ip(address):
+        raise InstallError("INVALID_INPUT", f"{label} must be a public address.", 2)
+    return str(address)
+
+
+def require_uuid(value, label: str) -> str:
+    if not isinstance(value, str) or not UUID_RE.fullmatch(value.lower()):
+        raise InstallError("INVALID_INPUT", f"{label} must be a UUID.", 2)
+    return value.lower()
+
+
+def require_abs(value, label: str) -> str:
+    if not isinstance(value, str) or not value.startswith("/") or value != os.path.normpath(value):
+        raise InstallError("INVALID_INPUT", f"{label} must be an absolute path.", 2)
+    return value
+
+
+def validate_input(data) -> dict:
+    if not isinstance(data, dict):
+        raise InstallError("INVALID_INPUT", "The input must be a JSON object.", 2)
+    missing = sorted(INPUT_KEYS - set(data))
+    if missing:
+        raise InstallError("INVALID_INPUT", f"Missing input field: {missing[0]}.", 2)
+    reject_unknown(data, INPUT_KEYS, "input")
+    if data.get("schemaVersion") != 1:
+        raise InstallError("INVALID_INPUT", "schemaVersion must be 1.", 2)
+    generation = data.get("generation")
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+        raise InstallError("INVALID_INPUT", "generation must be an integer of at least 1.", 2)
+    if not isinstance(data.get("mxCutoverAuthorized"), bool):
+        raise InstallError("INVALID_INPUT", "mxCutoverAuthorized must be a boolean.", 2)
+    domain = normalize_name(data.get("domain"), "domain")
+    mail_host = normalize_name(data.get("mailHostname"), "mailHostname")
+    web_host = normalize_name(data.get("webmailHostname"), "webmailHostname")
+    if not inside_domain(mail_host, domain) or not inside_domain(web_host, domain):
+        raise InstallError("INVALID_INPUT", "Mail hostnames must be inside the mail domain.", 2)
+    if mail_host == web_host:
+        raise InstallError("INVALID_INPUT", "mailHostname and webmailHostname must differ.", 2)
+    data_path = data.get("dataPath")
+    if data_path != DATA_PATH:
+        raise InstallError(
+            "INVALID_INPUT",
+            "This BearMail release stores mail at /var/lib/stalwart. Set dataPath to that path.",
+            2,
+        )
+    dns = data.get("dns")
+    if not isinstance(dns, dict):
+        raise InstallError("INVALID_INPUT", "dns must be an object.", 2)
+    reject_unknown(dns, DNS_KEYS, "dns")
+    missing_dns = sorted(DNS_KEYS - set(dns))
+    if missing_dns:
+        raise InstallError("INVALID_INPUT", f"Missing dns field: {missing_dns[0]}.", 2)
+    provider = dns.get("provider")
+    if provider not in {"namecom", "hostinger", "godaddy"}:
+        raise InstallError("DNS_PROVIDER_UNSUPPORTED", "The DNS provider is not supported.", 1)
+    zone = normalize_name(dns.get("zone"), "dns.zone")
+    if not inside_domain(domain, zone):
+        raise InstallError("INVALID_INPUT", "dns.zone must contain the mail domain.", 2)
+    relay = data.get("relay")
+    if not isinstance(relay, dict):
+        raise InstallError("INVALID_INPUT", "relay must be an object.", 2)
+    reject_unknown(relay, RELAY_KEYS, "relay")
+    missing_relay = sorted(RELAY_KEYS - set(relay))
+    if missing_relay:
+        raise InstallError("INVALID_INPUT", f"Missing relay field: {missing_relay[0]}.", 2)
+    if relay.get("host") != "smtp-relay.brevo.com" or relay.get("port") != 587:
+        raise InstallError("INVALID_INPUT", "relay must be smtp-relay.brevo.com port 587.", 2)
+    if relay.get("tls") != "starttls-required":
+        raise InstallError("INVALID_INPUT", "relay.tls must be starttls-required.", 2)
+    if not isinstance(relay.get("login"), str) or not relay.get("login").strip():
+        raise InstallError("INVALID_INPUT", "relay.login is required.", 2)
+    quota = data.get("mailboxQuotaBytes")
+    if isinstance(quota, bool) or not isinstance(quota, int) or quota < 1:
+        raise InstallError("INVALID_INPUT", "mailboxQuotaBytes must be a positive integer.", 2)
+    release = data.get("release")
+    if not isinstance(release, dict):
+        raise InstallError("INVALID_INPUT", "release must be an object.", 2)
+    reject_unknown(release, RELEASE_KEYS, "release")
+    missing_release = sorted(RELEASE_KEYS - set(release))
+    if missing_release:
+        raise InstallError("INVALID_INPUT", f"Missing release field: {missing_release[0]}.", 2)
+    release_id = release.get("id")
+    if not isinstance(release_id, str) or not release_id.strip() or "/" in release_id or release_id in {".", ".."}:
+        raise InstallError("INVALID_INPUT", "release.id is required.", 2)
+    return {
+        "schemaVersion": 1,
+        "operationId": require_uuid(data.get("operationId"), "operationId"),
+        "deploymentId": require_uuid(data.get("deploymentId"), "deploymentId"),
+        "generation": generation,
+        "mxCutoverAuthorized": data["mxCutoverAuthorized"] is True,
+        "domain": domain,
+        "mailHostname": mail_host,
+        "webmailHostname": web_host,
+        "publicIpv4": check_ip(data.get("publicIpv4"), "publicIpv4", 4),
+        "publicIpv6": check_ip(data.get("publicIpv6"), "publicIpv6", 6),
+        "dataPath": data_path,
+        "dns": {
+            "provider": provider,
+            "zone": zone,
+            "credentialFile": require_abs(dns.get("credentialFile"), "dns.credentialFile"),
+        },
+        "brevoDnsRecords": validate_brevo_records(data.get("brevoDnsRecords")),
+        "relay": {
+            "host": "smtp-relay.brevo.com",
+            "port": 587,
+            "tls": "starttls-required",
+            "login": relay["login"].strip(),
+            "credentialFile": require_abs(relay.get("credentialFile"), "relay.credentialFile"),
+        },
+        "adminCredentialFile": require_abs(data.get("adminCredentialFile"), "adminCredentialFile"),
+        "mailboxQuotaBytes": quota,
+        "release": {
+            "id": release_id.strip(),
+            "artifactDir": require_abs(release.get("artifactDir"), "release.artifactDir"),
+            "checksumFile": require_abs(release.get("checksumFile"), "release.checksumFile"),
+        },
+    }
+
+
+def validate_brevo_records(records) -> list:
+    if not isinstance(records, list):
+        raise InstallError("INVALID_INPUT", "brevoDnsRecords must be an array.", 2)
+    found = {}
+    for record in records:
+        if not isinstance(record, dict):
+            raise InstallError("INVALID_INPUT", "A Brevo DNS record must be an object.", 2)
+        reject_unknown(record, RECORD_KEYS, "brevoDnsRecords")
+        purpose = record.get("purpose")
+        if purpose not in {"brevo_code", "dkim", "dmarc"} or purpose in found:
+            raise InstallError("INVALID_INPUT", "brevoDnsRecords needs one brevo_code, dkim, and dmarc record.", 2)
+        if record.get("type") != "TXT":
+            raise InstallError("INVALID_INPUT", "Brevo DNS records must be TXT.", 2)
+        host = record.get("host")
+        value = record.get("value")
+        if not isinstance(host, str) or not host.strip() or not isinstance(value, str) or not value.strip():
+            raise InstallError("INVALID_INPUT", "A Brevo DNS record needs a host and value.", 2)
+        found[purpose] = {"purpose": purpose, "type": "TXT", "host": host.strip(), "value": value.strip()}
+    if set(found) != {"brevo_code", "dkim", "dmarc"}:
+        raise InstallError("INVALID_INPUT", "brevoDnsRecords needs one brevo_code, dkim, and dmarc record.", 2)
+    return [found["brevo_code"], found["dkim"], found["dmarc"]]
+
+
+def identity_of(config: dict) -> dict:
+    return {
+        "domain": config["domain"],
+        "mailHostname": config["mailHostname"],
+        "webmailHostname": config["webmailHostname"],
+        "publicIpv4": config["publicIpv4"],
+        "publicIpv6": config["publicIpv6"],
+        "dnsProvider": config["dns"]["provider"],
+        "dnsZone": config["dns"]["zone"],
+        "brevoDnsRecords": config["brevoDnsRecords"],
+        "relayHost": config["relay"]["host"],
+    }
+
+
+def load_private_json(path: str, label: str) -> dict:
+    file_path = Path(path)
+    try:
+        mode = file_path.lstat().st_mode
+    except OSError as exc:
+        raise InstallError("INVALID_INPUT", f"Could not read the {label} file.", 2) from exc
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+        raise InstallError("INVALID_INPUT", f"The {label} file must be a regular file.", 2)
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise InstallError("INVALID_INPUT", f"The {label} file is not JSON.", 2) from exc
+    if not isinstance(data, dict):
+        raise InstallError("INVALID_INPUT", f"The {label} file must be a JSON object.", 2)
+    return data
+
+
+def load_secrets(config: dict) -> dict:
+    dns = load_private_json(config["dns"]["credentialFile"], "DNS credential")
+    provider = config["dns"]["provider"]
+    if provider == "namecom":
+        reject_unknown(dns, {"username", "token"}, "DNS credential")
+        if not isinstance(dns.get("username"), str) or not dns["username"]:
+            raise InstallError("INVALID_INPUT", "The name.com credential needs a username and token.", 2)
+        if not isinstance(dns.get("token"), str) or not dns["token"]:
+            raise InstallError("INVALID_INPUT", "The name.com credential needs a username and token.", 2)
+    elif provider == "hostinger":
+        reject_unknown(dns, {"token"}, "DNS credential")
+        if not isinstance(dns.get("token"), str) or not dns["token"]:
+            raise InstallError("INVALID_INPUT", "The Hostinger credential needs a token.", 2)
+    else:
+        reject_unknown(dns, {"apiKey", "apiSecret"}, "DNS credential")
+        if not isinstance(dns.get("apiKey"), str) or not dns["apiKey"]:
+            raise InstallError("INVALID_INPUT", "The GoDaddy credential needs an apiKey and apiSecret.", 2)
+        if not isinstance(dns.get("apiSecret"), str) or not dns["apiSecret"]:
+            raise InstallError("INVALID_INPUT", "The GoDaddy credential needs an apiKey and apiSecret.", 2)
+    relay = load_private_json(config["relay"]["credentialFile"], "relay credential")
+    reject_unknown(relay, {"smtpKey"}, "relay credential")
+    if not isinstance(relay.get("smtpKey"), str) or not relay["smtpKey"]:
+        raise InstallError("INVALID_INPUT", "The relay credential needs an smtpKey.", 2)
+    admin = load_private_json(config["adminCredentialFile"], "admin credential")
+    reject_unknown(admin, {"username", "password"}, "admin credential")
+    if not isinstance(admin.get("username"), str) or not admin["username"]:
+        raise InstallError("INVALID_INPUT", "The admin credential needs a username and password.", 2)
+    if not isinstance(admin.get("password"), str) or not admin["password"]:
+        raise InstallError("INVALID_INPUT", "The admin credential needs a username and password.", 2)
+    return {
+        "dns": dns,
+        "smtpKey": relay["smtpKey"],
+        "adminUser": admin["username"],
+        "adminPassword": admin["password"],
+    }
+
+
+def verify_artifacts(config: dict) -> Path:
+    artifact_dir = Path(config["release"]["artifactDir"])
+    checksum_path = Path(config["release"]["checksumFile"])
+    if artifact_dir.name != config["release"]["id"]:
+        raise InstallError("ARTIFACT_MISSING", "The artifact directory name does not match release.id.", 1)
+    if artifact_dir.is_symlink() or not artifact_dir.is_dir():
+        raise InstallError("ARTIFACT_MISSING", "The artifact directory is missing.", 1)
+    try:
+        lines = checksum_path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise InstallError("ARTIFACT_MISSING", "The checksum file is missing.", 1) from exc
+    sums = {}
+    for line in lines:
+        if not line.strip():
+            continue
+        parts = line.split()
+        if len(parts) != 2 or not re.fullmatch(r"[0-9a-fA-F]{64}", parts[0]):
+            raise InstallError("ARTIFACT_CHECKSUM_MISMATCH", "SHA256SUMS has an unreadable line.", 1)
+        name = parts[1][1:] if parts[1].startswith("*") else parts[1]
+        if "/" in name or name.startswith(".") or name in {"", ".", ".."}:
+            raise InstallError("ARTIFACT_CHECKSUM_MISMATCH", "SHA256SUMS names a path outside the artifact directory.", 1)
+        sums[name] = parts[0].lower()
+    missing = [name for name in REQUIRED_ARTIFACTS if name not in sums]
+    if missing:
+        raise InstallError("ARTIFACT_MISSING", f"SHA256SUMS does not list {missing[0]}.", 1)
+    for name in sums:
+        file_path = artifact_dir / name
+        if file_path.is_symlink() or not file_path.is_file():
+            raise InstallError("ARTIFACT_MISSING", f"The release is missing {name}.", 1)
+    for name, expected in sums.items():
+        digest = hashlib.sha256((artifact_dir / name).read_bytes()).hexdigest()
+        if digest != expected:
+            raise InstallError("ARTIFACT_CHECKSUM_MISMATCH", f"{name} does not match SHA256SUMS.", 1)
+    return artifact_dir
+
+
+def check_data_path(config: dict, state: dict | None) -> None:
+    if test_hooks() and os.environ.get("BEARMAIL_INSTALL_ASSUME_MOUNT") == "1":
+        if os.environ.get("BEARMAIL_INSTALL_NONEMPTY") == "1":
+            raise InstallError(
+                "NONEMPTY_DATA_REFUSED",
+                "The mail data directory already contains an unrelated store.",
+                1,
+            )
+        return
+    path = Path(config["dataPath"])
+    mounted = False
+    try:
+        mounts = Path("/proc/mounts").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        mounts = ""
+    for line in mounts.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == config["dataPath"]:
+            mounted = True
+            break
+    if not mounted or path.is_symlink() or not path.is_dir():
+        raise InstallError(
+            "DATA_PATH_UNMOUNTED",
+            "Mount the mail disk at /var/lib/stalwart before installation.",
+            1,
+        )
+    ignored = {STATE_NAME, "lost+found"}
+    children = [child.name for child in path.iterdir() if child.name not in ignored]
+    if not children:
+        return
+    if state and state.get("operationId") == config["operationId"]:
+        return
+    installer_state = Path("/etc/stalwart/installer-state.json")
+    if installer_state.is_file():
+        try:
+            saved = json.loads(installer_state.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            saved = {}
+        if saved.get("defaultDomain") == config["domain"]:
+            return
+    raise InstallError(
+        "NONEMPTY_DATA_REFUSED",
+        "The mail data directory already contains an unrelated store.",
+        1,
+    )
+
+
+def load_state(config: dict) -> dict | None:
+    path = state_path(config)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def save_state(config: dict, state: dict) -> None:
+    directory = state_dir(config)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / STATE_NAME
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+    os.chmod(path, 0o600)
+
+
+def relative_host(host: str, zone: str) -> str:
+    name = host.strip().rstrip(".").lower()
+    if name in {"@", ""}:
+        return "@"
+    if name == zone:
+        return "@"
+    if name.endswith("." + zone):
+        return name[: -(len(zone) + 1)]
+    return name
+
+
+def absolute_host(host: str, zone: str) -> str:
+    relative = relative_host(host, zone)
+    return zone if relative == "@" else f"{relative}.{zone}"
+
+
+def collapse(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().rstrip(".")
+
+
+def spf_lookups(record: str) -> int:
+    body = re.sub(r"(?i)^v=spf1\s*", "", record).strip()
+    count = 0
+    for part in body.split():
+        lower = part.lower().lstrip("+-?~")
+        if lower == "all":
+            continue
+        if lower in {"a", "mx", "ptr"} or lower.startswith(("include:", "a:", "a/", "mx:", "mx/", "ptr:", "ptr/", "exists:", "redirect=")):
+            count += 1
+    return count
+
+
+def merge_spf(existing: list[str]) -> str:
+    records = [collapse(record) for record in existing if record.strip()]
+    if not records:
+        return "v=spf1 include:spf.brevo.com mx ~all"
+    if any(not re.match(r"(?i)^v=spf1(?:\s|$)", record) for record in records):
+        raise InstallError("DNS_RECORD_CONFLICT", "An existing TXT record is not a valid SPF policy.", 1)
+    unique = list(dict.fromkeys(records))
+    if len(unique) > 1:
+        raise InstallError("DNS_RECORD_CONFLICT", "The zone has more than one SPF record and they differ.", 1)
+    policy = unique[0]
+    if "include:spf.brevo.com" not in policy.lower():
+        if re.search(r"\s(?:[-~?+]?)all\s*$", policy, flags=re.I):
+            policy = re.sub(r"\s((?:[-~?+]?)all)\s*$", r" include:spf.brevo.com \1", policy, flags=re.I)
+        else:
+            policy = policy + " include:spf.brevo.com"
+    if spf_lookups(policy) > 10:
+        raise InstallError("DNS_RECORD_CONFLICT", "The merged SPF policy exceeds the 10-lookup limit.", 1)
+    return policy
+
+
+def valid_dmarc(value: str) -> bool:
+    return re.match(r"(?i)^v=DMARC1(?:\s|;|$)", value.strip()) is not None
+
+
+def check_caa(records: list[dict]) -> None:
+    issuers = []
+    for record in records:
+        if record["type"] != "CAA":
+            continue
+        parts = record["value"].split()
+        if len(parts) >= 3 and parts[1] == "issue":
+            issuers.append(parts[2].strip('"').lower())
+    if issuers and not any(item in {"letsencrypt.org", ";"} for item in issuers):
+        raise InstallError("DNS_RECORD_CONFLICT", "A CAA record would block certificate issuance.", 1)
+
+
+def provider_ttl(provider: str) -> int:
+    if provider == "godaddy":
+        return 600
+    return 300
+
+
+def normalize_zone(records, zone: str) -> list[dict]:
+    normalized = []
+    if not isinstance(records, list):
+        return normalized
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        rtype = str(record.get("type") or record.get("recordType") or "").upper()
+        host = relative_host(str(record.get("host") or record.get("name") or "@"), zone)
+        raw_value = record.get("value")
+        if raw_value is None:
+            raw_value = record.get("answer")
+        if raw_value is None:
+            raw_value = record.get("data")
+        value = "" if raw_value is None else str(raw_value)
+        priority = record.get("priority")
+        if priority is None:
+            priority = record.get("prio")
+        if rtype == "MX" and priority is None:
+            parts = value.split()
+            if len(parts) == 2 and parts[0].isdigit():
+                priority = int(parts[0])
+                value = parts[1]
+        if rtype == "MX":
+            value = value.rstrip(".")
+        if not rtype or not str(value).strip():
+            continue
+        normalized.append({
+            "type": rtype,
+            "host": host,
+            "value": str(value).strip(),
+            "priority": None if priority is None or priority == "" else int(priority),
+            "id": record.get("id") or record.get("recordId"),
+        })
+    return normalized
+
+
+def records_at(records: list[dict], rtype: str, host: str, zone: str) -> list[dict]:
+    relative = relative_host(host, zone)
+    return [record for record in records if record["type"] == rtype and record["host"] == relative]
+
+
+def build_plan(config: dict, existing: list[dict], engine_dkim: dict | None) -> dict:
+    zone = config["dns"]["zone"]
+    domain = config["domain"]
+    check_caa(existing)
+    previous_mx = []
+    for record in records_at(existing, "MX", domain, zone):
+        target = record["value"].rstrip(".")
+        priority = 10 if record.get("priority") is None else int(record["priority"])
+        previous_mx.append({"priority": priority, "target": target})
+    domain_txt = records_at(existing, "TXT", domain, zone)
+    spf = merge_spf([record["value"] for record in domain_txt if re.match(r"(?i)^v=spf1(?:\s|$)", record["value"])])
+    brevo = {record["purpose"]: record for record in config["brevoDnsRecords"]}
+    dmarc_host = relative_host(brevo["dmarc"]["host"], zone)
+    dmarc_txt = records_at(existing, "TXT", dmarc_host, zone)
+    if not dmarc_txt:
+        dmarc_action = "published"
+        dmarc_value = brevo["dmarc"]["value"]
+    elif len(dmarc_txt) != 1 or not valid_dmarc(dmarc_txt[0]["value"]):
+        raise InstallError("DNS_RECORD_CONFLICT", "The existing DMARC record is not valid.", 1)
+    else:
+        dmarc_action = "preserved"
+        dmarc_value = None
+    planned = []
+
+    def add(rtype: str, host: str, value: str) -> None:
+        planned.append({
+            "type": rtype,
+            "host": absolute_host(host, zone),
+            "value": value,
+            "state": "planned",
+        })
+
+    for host in (config["mailHostname"], config["webmailHostname"]):
+        add("A", host, config["publicIpv4"])
+        if config["publicIpv6"]:
+            add("AAAA", host, config["publicIpv6"])
+    add("MX", domain, f"10 {config['mailHostname']}")
+    for purpose in ("brevo_code", "dkim"):
+        record = brevo[purpose]
+        add("TXT", record["host"], record["value"])
+    if engine_dkim and engine_dkim.get("host") and engine_dkim.get("value"):
+        add("TXT", engine_dkim["host"], engine_dkim["value"])
+    add("TXT", domain, spf)
+    if dmarc_action == "published" and dmarc_value:
+        add("TXT", brevo["dmarc"]["host"], dmarc_value)
+    preserved = ["NS"]
+    apex_is_managed = zone in {config["mailHostname"], config["webmailHostname"]}
+    www_name = f"www.{zone}"
+    www_is_managed = www_name in {config["mailHostname"], config["webmailHostname"]}
+    if not apex_is_managed and records_at(existing, "A", zone, zone):
+        preserved.append("apex A")
+    if not apex_is_managed and records_at(existing, "AAAA", zone, zone):
+        preserved.append("apex AAAA")
+    if not www_is_managed and records_at(existing, "A", www_name, zone):
+        preserved.append("www A")
+    if not www_is_managed and records_at(existing, "AAAA", www_name, zone):
+        preserved.append("www AAAA")
+    managed_txt = {(item["host"], collapse(item["value"])) for item in planned if item["type"] == "TXT"}
+    for record in existing:
+        if record["type"] != "TXT":
+            continue
+        key = (absolute_host(record["host"], zone), collapse(record["value"]))
+        if key not in managed_txt and not (dmarc_action == "preserved" and record["host"] == dmarc_host):
+            if "unrelated TXT" not in preserved:
+                preserved.append("unrelated TXT")
+    engine_host = None
+    engine_value = None
+    if engine_dkim and engine_dkim.get("host") and engine_dkim.get("value"):
+        engine_host = absolute_host(str(engine_dkim["host"]), zone)
+        engine_value = engine_dkim["value"]
+    return {
+        "previousMx": previous_mx,
+        "published": planned,
+        "preserved": preserved,
+        "spf": spf,
+        "dmarcAction": dmarc_action,
+        "engineDkimHost": engine_host,
+        "engineDkimValue": engine_value,
+        "minimumTtl": provider_ttl(config["dns"]["provider"]),
+    }
+
+
+def find_engine_dkim(records: list[dict], config: dict) -> dict | None:
+    zone = config["dns"]["zone"]
+    brevo_host = relative_host(
+        next(record["host"] for record in config["brevoDnsRecords"] if record["purpose"] == "dkim"),
+        zone,
+    )
+    found = []
+    for record in records:
+        if record["type"] != "TXT" or record["host"] == brevo_host:
+            continue
+        if "_domainkey" not in record["host"]:
+            continue
+        if not re.match(r"(?i)^v=DKIM1(?:\s|;|$)", record["value"]):
+            continue
+        found.append(record)
+    if len(found) != 1:
+        return None
+    return {"host": absolute_host(found[0]["host"], zone), "value": found[0]["value"]}
+
+
+def load_engine_dkim(config: dict, state: dict | None, records: list[dict]) -> dict | None:
+    saved = (state or {}).get("engineDkim") or {}
+    if saved.get("host") and saved.get("value"):
+        return {"host": saved["host"], "value": saved["value"]}
+    candidates = [state_dir(config) / "engine-dkim.json"]
+    override = os.environ.get("BEARMAIL_INSTALL_ENGINE_DKIM_FILE")
+    if override:
+        candidates.insert(0, Path(override))
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict) and data.get("host") and data.get("value"):
+            return {"host": data["host"], "value": data["value"]}
+    if not test_hooks():
+        installer_state = Path("/etc/stalwart/installer-state.json")
+        if installer_state.is_file():
+            try:
+                saved_state = json.loads(installer_state.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                saved_state = {}
+            rows = []
+            for record in saved_state.get("dnsRecords") or []:
+                if not isinstance(record, dict):
+                    continue
+                rows.append({
+                    "type": record.get("recordType") or record.get("type"),
+                    "host": record.get("host") or "@",
+                    "value": record.get("answer") or record.get("value") or "",
+                })
+            found = find_engine_dkim(normalize_zone(rows, config["dns"]["zone"]), config)
+            if found:
+                return found
+    return find_engine_dkim(records, config)
+
+
+def fixture_payload() -> dict | None:
+    path = os.environ.get("BEARMAIL_INSTALL_DNS_FIXTURE")
+    if not path:
+        if test_hooks():
+            raise InstallError("DNS_PUBLISH_FAILED", "The DNS fixture is missing.", 1)
+        return None
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise InstallError("DNS_PUBLISH_FAILED", "The DNS fixture could not be read.", 1) from exc
+    if not isinstance(data, dict):
+        raise InstallError("DNS_PUBLISH_FAILED", "The DNS fixture could not be read.", 1)
+    return data
+
+
+def http_json(method: str, url: str, headers: dict, body=None):
+    payload = None if body is None else json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(url, data=payload, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            text = response.read().decode("utf-8")
+            return response.status, json.loads(text) if text else {}
+    except urllib.error.HTTPError as exc:
+        return exc.code, None
+    except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+        raise InstallError("DNS_PUBLISH_FAILED", "The DNS provider could not be reached.", 10, True) from exc
+
+
+def status_error(status: int) -> None:
+    if status in {401, 403}:
+        raise InstallError("DNS_AUTH_FAILED", "The DNS provider rejected the credential.", 1)
+    if status == 404:
+        raise InstallError("DNS_ZONE_NOT_FOUND", "The DNS zone was not found.", 1)
+    if status == 429:
+        raise InstallError("DNS_RATE_LIMITED", "The DNS provider asked the client to slow down.", 10, True)
+    if status >= 500:
+        raise InstallError("DNS_PUBLISH_FAILED", "The DNS provider returned a temporary error.", 10, True)
+    if status >= 400:
+        raise InstallError("DNS_PUBLISH_FAILED", "The DNS provider rejected the request.", 1)
+
+
+def provider_headers(config: dict, secrets: dict) -> dict:
+    provider = config["dns"]["provider"]
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if provider == "namecom":
+        token = base64.b64encode(f"{secrets['dns']['username']}:{secrets['dns']['token']}".encode()).decode()
+        headers["Authorization"] = f"Basic {token}"
+    elif provider == "hostinger":
+        headers["Authorization"] = f"Bearer {secrets['dns']['token']}"
+    else:
+        headers["Authorization"] = f"sso-key {secrets['dns']['apiKey']}:{secrets['dns']['apiSecret']}"
+    return headers
+
+
+def flatten_provider_payload(payload, zone: str) -> list[dict]:
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        if isinstance(payload.get("records"), list):
+            rows = payload["records"]
+        elif isinstance(payload.get("zone"), list):
+            rows = []
+            for group in payload["zone"]:
+                if not isinstance(group, dict):
+                    continue
+                for item in group.get("records") or []:
+                    content = item.get("content") if isinstance(item, dict) else None
+                    rows.append({
+                        "type": group.get("type"),
+                        "host": group.get("name") or "@",
+                        "value": content,
+                        "ttl": group.get("ttl"),
+                    })
+            return normalize_zone(rows, zone)
+        elif isinstance(payload.get("data"), list):
+            rows = payload["data"]
+        else:
+            rows = []
+    else:
+        rows = []
+    return normalize_zone(rows, zone)
+
+
+def read_zone(config: dict, secrets: dict) -> list[dict]:
+    fixture = fixture_payload()
+    zone = config["dns"]["zone"]
+    if fixture is not None:
+        status = int(fixture.get("httpStatus", 200))
+        status_error(status) if status >= 400 else None
+        return normalize_zone(fixture.get("records") or [], zone)
+    headers = provider_headers(config, secrets)
+    provider = config["dns"]["provider"]
+    if provider == "namecom":
+        url = f"https://api.name.com/v4/domains/{zone}/records?perPage=1000&page=1"
+    elif provider == "hostinger":
+        url = f"https://developers.hostinger.com/api/dns/v1/zones/{zone}"
+    else:
+        url = f"https://api.godaddy.com/v1/domains/{zone}/records"
+    status, payload = http_json("GET", url, headers)
+    status_error(status)
+    return flatten_provider_payload(payload, zone)
+
+
+def append_write_log(entry: dict) -> None:
+    path = os.environ.get("BEARMAIL_INSTALL_DNS_WRITE_LOG")
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry) + "\n")
+
+
+def persist_fixture(records: list[dict]) -> None:
+    path = os.environ.get("BEARMAIL_INSTALL_DNS_FIXTURE")
+    if not path:
+        return
+    payload = {"httpStatus": 200, "records": records}
+    temporary = Path(path + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def record_key(record: dict) -> tuple:
+    return (record["type"], record["host"], collapse(record["value"]), record.get("priority"))
+
+
+def ensure_planned(records: list[dict], item: dict, zone: str) -> tuple[list[dict], bool]:
+    relative = relative_host(item["host"], zone)
+    rtype = item["type"]
+    value = item["value"]
+    priority = None
+    stored_value = value
+    if rtype == "MX":
+        parts = value.split()
+        priority = int(parts[0])
+        stored_value = parts[1]
+    desired = {"type": rtype, "host": relative, "value": stored_value, "priority": priority, "id": None}
+    changed = False
+    kept = []
+    if rtype in {"A", "AAAA", "MX"}:
+        for record in records:
+            if record["type"] == rtype and record["host"] == relative:
+                changed = True
+                continue
+            kept.append(record)
+        records = kept
+    elif rtype == "TXT" and re.match(r"(?i)^v=spf1(?:\s|$)", stored_value):
+        for record in records:
+            if record["type"] == "TXT" and record["host"] == relative and re.match(r"(?i)^v=spf1(?:\s|$)", record["value"]):
+                changed = True
+                continue
+            kept.append(record)
+        records = kept
+    if any(record_key(record) == record_key(desired) for record in records):
+        return records, False
+    records.append(desired)
+    return records, True
+
+
+def delete_stale_aaaa(records: list[dict], config: dict) -> tuple[list[dict], bool]:
+    if config["publicIpv6"]:
+        return records, False
+    zone = config["dns"]["zone"]
+    hosts = {relative_host(config["mailHostname"], zone), relative_host(config["webmailHostname"], zone)}
+    kept = []
+    changed = False
+    for record in records:
+        if record["type"] == "AAAA" and record["host"] in hosts:
+            changed = True
+            continue
+        kept.append(record)
+    return kept, changed
+
+
+def live_replace(config: dict, secrets: dict, before: list[dict], after: list[dict]) -> None:
+    headers = provider_headers(config, secrets)
+    provider = config["dns"]["provider"]
+    zone = config["dns"]["zone"]
+    ttl = provider_ttl(provider)
+    before_groups: dict[tuple, list] = {}
+    after_groups: dict[tuple, list] = {}
+    for record in before:
+        before_groups.setdefault((record["type"], record["host"]), []).append(record)
+    for record in after:
+        after_groups.setdefault((record["type"], record["host"]), []).append(record)
+    touched = [
+        key for key in set(before_groups) | set(after_groups)
+        if [record_key(item) for item in before_groups.get(key, [])] != [record_key(item) for item in after_groups.get(key, [])]
+    ]
+    for key in touched:
+        rtype, host = key
+        desired = after_groups.get(key, [])
+        if provider == "namecom":
+            api_host = "" if host == "@" else host
+            base = f"https://api.name.com/v4/domains/{zone}/records"
+            for record in before_groups.get(key, []):
+                if record.get("id") is None:
+                    continue
+                status, _payload = http_json("DELETE", f"{base}/{record['id']}", headers)
+                status_error(status)
+            for record in desired:
+                body = {"host": api_host, "type": rtype, "answer": record["value"], "ttl": ttl}
+                if rtype == "MX":
+                    body["priority"] = record["priority"] if record["priority"] is not None else 10
+                status, _payload = http_json("POST", base, headers, body)
+                status_error(status)
+        elif provider == "hostinger":
+            name = "@" if host == "@" else host
+            base = f"https://developers.hostinger.com/api/dns/v1/zones/{zone}"
+            if not desired:
+                status, _payload = http_json("DELETE", base, headers, {"filters": [{"name": name, "type": rtype}]})
+                status_error(status)
+                continue
+            contents = []
+            for record in desired:
+                if rtype == "MX":
+                    priority = 10 if record["priority"] is None else record["priority"]
+                    contents.append({"content": f"{priority} {record['value']}"})
+                else:
+                    contents.append({"content": record["value"]})
+            status, _payload = http_json("PUT", base, headers, {
+                "overwrite": True,
+                "zone": [{"name": name, "type": rtype, "ttl": ttl, "records": contents}],
+            })
+            status_error(status)
+        else:
+            name = "@" if host == "@" else host
+            base = f"https://api.godaddy.com/v1/domains/{zone}/records/{rtype}/{name}"
+            if not desired:
+                status, _payload = http_json("DELETE", base, headers)
+                status_error(status)
+                continue
+            body = []
+            for record in desired:
+                row = {"data": record["value"], "ttl": ttl}
+                if rtype == "MX":
+                    row["priority"] = 10 if record["priority"] is None else record["priority"]
+                body.append(row)
+            status, _payload = http_json("PUT", base, headers, body)
+            status_error(status)
+
+
+def publish_zone(config: dict, secrets: dict, records: list[dict], plan: dict) -> dict:
+    zone = config["dns"]["zone"]
+    working = [dict(record) for record in records]
+    original = [dict(record) for record in records]
+    states = []
+    fail_after = os.environ.get("BEARMAIL_INSTALL_FAIL_AFTER") if test_hooks() else None
+    for item in plan["published"]:
+        working, changed = ensure_planned(working, item, zone)
+        published = dict(item)
+        published["state"] = "published"
+        states.append(published)
+        if changed:
+            append_write_log({
+                "action": "upsert",
+                "type": item["type"],
+                "host": item["host"],
+                "value": item["value"],
+            })
+        if fail_after == "mx" and item["type"] == "MX":
+            working, _deleted = delete_stale_aaaa(working, config)
+            if fixture_payload() is not None:
+                persist_fixture(working)
+            partial = dict(plan)
+            partial["published"] = states + [
+                {**rest, "state": "failed"} for rest in plan["published"][len(states):]
+            ]
+            raise InstallError(
+                "DNS_PUBLISH_FAILED",
+                "The DNS provider accepted only part of the record set.",
+                10,
+                True,
+                partial,
+            )
+    working, deleted = delete_stale_aaaa(working, config)
+    if deleted:
+        append_write_log({"action": "delete", "type": "AAAA", "host": "mail-and-webmail"})
+    if fixture_payload() is not None:
+        persist_fixture(working)
+    else:
+        live_replace(config, secrets, original, working)
+    updated = dict(plan)
+    updated["published"] = states
+    return updated
+
+
+def check_relay(config: dict, smtp_key: str) -> None:
+    capture = os.environ.get("BEARMAIL_INSTALL_RELAY_CAPTURE")
+    if test_hooks() and os.environ.get("BEARMAIL_INSTALL_RELAY_REJECT") == "1":
+        raise InstallError("RELAY_AUTH_FAILED", "The Brevo SMTP login was rejected.", 1)
+    if test_hooks() and os.environ.get("BEARMAIL_INSTALL_RELAY_OK") == "1":
+        if capture:
+            Path(capture).write_text(hashlib.sha256(smtp_key.encode()).hexdigest() + "\n", encoding="utf-8")
+        return
+    try:
+        smtp = smtplib.SMTP(config["relay"]["host"], config["relay"]["port"], timeout=20)
+        smtp.ehlo()
+        smtp.starttls(context=ssl.create_default_context())
+        smtp.ehlo()
+        smtp.login(config["relay"]["login"], smtp_key)
+        smtp.quit()
+    except smtplib.SMTPAuthenticationError as exc:
+        raise InstallError("RELAY_AUTH_FAILED", "The Brevo SMTP login was rejected.", 1) from exc
+    except (OSError, smtplib.SMTPException) as exc:
+        raise InstallError("SERVICE_FAILED", "The Brevo SMTP relay could not be reached.", 10, True) from exc
+    if capture:
+        Path(capture).write_text(hashlib.sha256(smtp_key.encode()).hexdigest() + "\n", encoding="utf-8")
+
+
+def versions_from(artifact_dir: Path) -> dict:
+    engine = "0.0.0"
+    binary = artifact_dir / "stalwart"
+    if binary.is_file() and not binary.is_symlink() and os.access(binary, os.X_OK):
+        try:
+            completed = subprocess.run([str(binary), "-V"], check=False, capture_output=True, text=True, timeout=20)
+            match = re.search(r"(\d+\.\d+\.\d+)", completed.stdout + completed.stderr)
+            if match:
+                engine = match.group(1)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return {
+        "installer": INSTALLER_VERSION,
+        "engine": engine,
+        "webui": "bearmail-webui.tar.gz",
+        "adminUi": "bundled-with-engine",
+        "mcp": "mcp_install.sh",
+    }
+
+
+def blank_result(config: dict | None, status: str, error: InstallError | None, plan: dict | None, versions: dict | None) -> dict:
+    dns_plan = plan or {}
+    return {
+        "schemaVersion": 1,
+        "operationId": None if config is None else config["operationId"],
+        "generation": None if config is None else config["generation"],
+        "status": status,
+        "installedVersions": versions or {
+            "installer": INSTALLER_VERSION,
+            "engine": "0.0.0",
+            "webui": "0.0.0",
+            "adminUi": "0.0.0",
+            "mcp": "0.0.0",
+        },
+        "serviceChecks": {
+            "engine": "not-checked",
+            "webui": "not-checked",
+            "https": "not-checked",
+            "mcp": "not-checked",
+        },
+        "dns": {
+            "provider": None if config is None else config["dns"]["provider"],
+            "zone": None if config is None else config["dns"]["zone"],
+            "previousMx": dns_plan.get("previousMx", []),
+            "published": dns_plan.get("published", []),
+            "preserved": dns_plan.get("preserved", []),
+            "spf": dns_plan.get("spf"),
+            "dmarcAction": dns_plan.get("dmarcAction"),
+            "engineDkimHost": dns_plan.get("engineDkimHost"),
+            "engineDkimValue": dns_plan.get("engineDkimValue"),
+            "minimumTtl": dns_plan.get("minimumTtl"),
+        },
+        "tls": {
+            "mail": {"status": "not-checked", "notAfter": None},
+            "webmail": {"status": "not-checked", "notAfter": None},
+        },
+        "errorCode": None if error is None else error.code,
+        "errorMessage": None if error is None else error.message,
+        "retryable": False if error is None else error.retryable,
+    }
+
+
+def secret_values(secrets: dict | None) -> list[str]:
+    if not secrets:
+        return []
+    values = [secrets.get("smtpKey", ""), secrets.get("adminPassword", "")]
+    dns = secrets.get("dns") or {}
+    values.extend(str(dns.get(key) or "") for key in ("token", "username", "apiKey", "apiSecret"))
+    return [value for value in values if len(value) >= 4]
+
+
+def write_result(path: Path, payload: dict, secrets: list[str]) -> None:
+    if path.is_symlink():
+        raise InstallError("SERVICE_FAILED", "The result path must not be a symbolic link.", 1)
+    text = json.dumps(payload, indent=2) + "\n"
+    for secret in secrets:
+        if secret and secret in text:
+            raise InstallError("SERVICE_FAILED", "The result builder tried to record a credential.", 1)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+    os.chmod(path, 0o600)
+
+
+def finish(result_path: Path | None, payload: dict, secrets: dict | None, exit_code: int) -> int:
+    values = secret_values(secrets)
+    if result_path is None:
+        return exit_code
+    try:
+        write_result(result_path, payload, values)
+    except InstallError as exc:
+        eprint(exc.message)
+        return exc.exit_code
+    text = result_path.read_text(encoding="utf-8")
+    for value in values:
+        if value in text:
+            eprint("The result file contained a credential and was removed.")
+            result_path.unlink(missing_ok=True)
+            return 1
+    return exit_code
+
+
+def redact(text: str, secrets: list[str]) -> str:
+    redacted = text
+    for secret in secrets:
+        redacted = redacted.replace(secret, "***")
+    return redacted
+
+
+def easy_answers(config: dict, secrets: dict) -> list[tuple[str, str]]:
+    return [
+        ("Bearmail portal url", config["webmailHostname"]),
+        ("Public mail hostname", config["mailHostname"]),
+        ("Primary mail domain", config["domain"]),
+        ("Apply this configuration", "y"),
+        ("Brevo SMTP login (username)", config["relay"]["login"]),
+        ("Brevo SMTP API key", secrets["smtpKey"]),
+        ("Select Domain name provider", "4"),
+    ]
+
+
+def drive_process(command: list[str], env: dict, cwd: Path, answers: list[tuple[str, str]], secrets: list[str], log_path: Path) -> int:
+    import fcntl
+    import termios
+
+    master, slave = pty.openpty()
+
+    def become_session():
+        os.setsid()
+        try:
+            fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+        except OSError:
+            return
+
+    process = subprocess.Popen(
+        command,
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        cwd=str(cwd),
+        env=env,
+        preexec_fn=become_session,
+        close_fds=True,
+    )
+    os.close(slave)
+    buffer = ""
+    sent = set()
+    captured = []
+    deadline = time.time() + (30 if test_hooks() else 45 * 60)
+    while time.time() < deadline:
+        ready, _, _ = select.select([master], [], [], 0.2)
+        if ready:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                chunk = b""
+            if chunk:
+                text = chunk.decode("utf-8", "replace")
+                buffer += text
+                captured.append(text)
+                for marker, answer in answers:
+                    key = marker + "\0" + answer
+                    if key not in sent and marker in buffer:
+                        os.write(master, (answer + "\n").encode())
+                        sent.add(key)
+                        buffer = buffer[-4000:]
+        if process.poll() is not None:
+            break
+    else:
+        process.kill()
+        process.wait()
+    try:
+        os.close(master)
+    except OSError:
+        pass
+    status = process.wait()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(redact("".join(captured), secrets), encoding="utf-8")
+    os.chmod(log_path, 0o600)
+    return status
+
+
+def run_existing_install(config: dict, secrets: dict, artifact_dir: Path) -> None:
+    if config["webmailHostname"] in EXAMPLE_WEBMAIL and not (test_hooks() and os.environ.get("BEARMAIL_INSTALL_APPLY_SCRIPT")):
+        raise InstallError(
+            "INVALID_INPUT",
+            "webmailHostname is an installer example. Send the customer's webmail hostname.",
+            2,
+        )
+    dkim_file = state_dir(config) / "engine-dkim.json"
+    env = os.environ.copy()
+    env["BEARMAIL_EASY"] = "1"
+    env["BEARMAIL_INSTALL_ENGINE_DKIM_FILE"] = str(dkim_file)
+    reminder = state_dir(config) / ".bearmail-reminder"
+    env["BEARMAIL_REMINDER_FILE"] = str(reminder)
+    if test_hooks() and os.environ.get("BEARMAIL_INSTALL_APPLY_SCRIPT"):
+        command = ["sh", os.environ["BEARMAIL_INSTALL_APPLY_SCRIPT"]]
+    else:
+        if os.geteuid() != 0:
+            raise InstallError("SERVICE_FAILED", "Run bearmail-install as root.", 1)
+        command = ["bash", str(artifact_dir / "install.sh")]
+    log_path = state_dir(config) / "bearmail-install.log"
+    status = drive_process(command, env, artifact_dir, easy_answers(config, secrets), secret_values(secrets), log_path)
+    if status != 0:
+        raise InstallError("SERVICE_FAILED", "The existing BearMail installer did not finish.", 1)
+    if not test_hooks():
+        mcp = subprocess.run(
+            ["sh", str(artifact_dir / "mcp_install.sh"), "--server-url", f"https://{config['mailHostname']}"],
+            cwd=str(artifact_dir),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if mcp.returncode != 0:
+            raise InstallError("SERVICE_FAILED", "The MCP sidecar installer did not finish.", 10, True)
+    align_admin_password(config, secrets)
+    apply_quota(config, secrets)
+
+
+def jmap_call(config: dict, username: str, password: str, method: str, arguments: dict) -> dict:
+    body = json.dumps({
+        "using": ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"],
+        "methodCalls": [[method, arguments, "call"]],
+    }).encode()
+    token = base64.b64encode(f"{username}:{password}".encode()).decode()
+    url = os.environ.get("BEARMAIL_INSTALL_JMAP_URL") or "http://127.0.0.1:8080/jmap/"
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Authorization": f"Basic {token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError) as exc:
+        raise InstallError("SERVICE_FAILED", "The mail engine rejected a management call.", 1) from exc
+    responses = payload.get("methodResponses") or []
+    if not responses or responses[0][0] == "error":
+        raise InstallError("SERVICE_FAILED", "The mail engine rejected a management call.", 1)
+    return responses[0][1]
+
+
+def align_admin_password(config: dict, secrets: dict) -> None:
+    if test_hooks() and os.environ.get("BEARMAIL_INSTALL_SKIP_JMAP") == "1":
+        reminder = state_dir(config) / ".bearmail-reminder"
+        if reminder.is_file():
+            reminder.unlink()
+        return
+    reminder = state_dir(config) / ".bearmail-reminder"
+    engine_password = secrets["adminPassword"]
+    if reminder.is_file():
+        lines = reminder.read_text(encoding="utf-8").splitlines()
+        if len(lines) >= 2 and lines[1]:
+            engine_password = lines[1]
+        reminder.unlink()
+    username = secrets["adminUser"]
+    if "@" not in username:
+        username = f"{username}@{config['domain']}"
+    engine_user = f"admin@{config['domain']}"
+    queried = jmap_call(config, engine_user, engine_password, "x:Principal/query", {"filter": {"name": engine_user}})
+    ids = queried.get("ids") or []
+    if len(ids) != 1:
+        raise InstallError("SERVICE_FAILED", "The engine administrator account was not found.", 1)
+    principal_id = ids[0]
+    current = jmap_call(config, engine_user, engine_password, "x:Principal/get", {
+        "ids": [principal_id],
+        "properties": ["name", "credentials"],
+    })
+    listed = current.get("list") or []
+    credential_id = None
+    if listed:
+        for credential in listed[0].get("credentials") or []:
+            if isinstance(credential, dict) and credential.get("@type") == "Password":
+                credential_id = credential.get("credentialId")
+                break
+    password_credential = {"@type": "Password", "secret": secrets["adminPassword"]}
+    if credential_id is not None:
+        password_credential["credentialId"] = credential_id
+    update = {"credentials": [password_credential]}
+    if username != engine_user:
+        update["name"] = username
+    if engine_password == secrets["adminPassword"] and username == engine_user:
+        return
+    jmap_call(config, engine_user, engine_password, "x:Principal/set", {"update": {principal_id: update}})
+
+
+def apply_quota(config: dict, secrets: dict) -> None:
+    if test_hooks() and os.environ.get("BEARMAIL_INSTALL_SKIP_JMAP") == "1":
+        return
+    try:
+        username = secrets["adminUser"]
+        if "@" not in username:
+            username = f"{username}@{config['domain']}"
+        queried = jmap_call(config, username, secrets["adminPassword"], "x:Principal/query", {"filter": {"name": username}})
+        ids = queried.get("ids") or []
+        if len(ids) != 1:
+            return
+        jmap_call(config, username, secrets["adminPassword"], "x:Principal/set", {
+            "update": {ids[0]: {"quotas": {"maxDiskQuota": config["mailboxQuotaBytes"]}}},
+        })
+    except InstallError:
+        return
+
+
+def service_checks() -> dict:
+    if test_hooks():
+        return {"engine": "running", "webui": "running", "https": "running", "mcp": "loopback"}
+
+    def active(unit: str) -> str:
+        completed = subprocess.run(["systemctl", "is-active", unit], check=False, capture_output=True, text=True)
+        return "running" if completed.stdout.strip() == "active" else "stopped"
+
+    return {
+        "engine": active("stalwart.service"),
+        "webui": active("bearmail-webui.service"),
+        "https": active("caddy.service"),
+        "mcp": "loopback" if active("bearmail-mcp.service") == "running" else "stopped",
+    }
+
+
+def certificate_not_after(hostname: str) -> str | None:
+    root = Path("/var/lib/caddy/.local/share/caddy/certificates")
+    if not root.is_dir():
+        return None
+    matches = list(root.glob(f"**/{hostname}/{hostname}.crt"))
+    if not matches:
+        matches = list(root.glob(f"**/{hostname}.crt"))
+    if not matches:
+        return None
+    try:
+        completed = subprocess.run(
+            ["openssl", "x509", "-in", str(matches[0]), "-noout", "-enddate"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = re.search(r"notAfter=(.+)", completed.stdout)
+    if not match or completed.returncode != 0:
+        return None
+    try:
+        parsed = time.strptime(match.group(1).strip(), "%b %d %H:%M:%S %Y %Z")
+    except ValueError:
+        return None
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", parsed)
+
+
+def tls_status(config: dict) -> dict:
+    if test_hooks():
+        pending = os.environ.get("BEARMAIL_INSTALL_TLS") == "pending"
+        item = {"status": "pending" if pending else "issued", "notAfter": None if pending else "2027-01-30T00:00:00Z"}
+        return {"mail": dict(item), "webmail": dict(item)}
+    result = {}
+    for key, host in (("mail", config["mailHostname"]), ("webmail", config["webmailHostname"])):
+        not_after = certificate_not_after(host)
+        if not_after:
+            result[key] = {"status": "issued", "notAfter": not_after}
+        else:
+            result[key] = {"status": "pending", "notAfter": None}
+    return result
+
+
+def checkpoint(config: dict, plan: dict, status: str, versions: dict, checks: dict | None, tls: dict | None) -> None:
+    payload = blank_result(config, status, None, plan, versions)
+    if checks:
+        payload["serviceChecks"] = checks
+    if tls:
+        payload["tls"] = tls
+    save_state(config, {
+        "operationId": config["operationId"],
+        "identity": identity_of(config),
+        "status": status,
+        "mxPublished": any(item["type"] == "MX" and item["state"] == "published" for item in plan.get("published", [])),
+        "engineDkim": {
+            "host": plan.get("engineDkimHost"),
+            "value": plan.get("engineDkimValue"),
+        },
+        "result": payload,
+    })
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="bearmail-install", add_help=True)
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--result", required=True)
+    parser.add_argument("--dry-run", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str]) -> int:
+    result_path = None
+    secrets = None
+    config = None
+    try:
+        try:
+            args = parse_args(argv)
+        except SystemExit as exc:
+            if exc.code not in (0, None):
+                eprint("Usage: bearmail-install --input <input.json> --result <result.json> [--dry-run]")
+                return 2
+            return 0
+        result_path = Path(args.result)
+        config = validate_input(read_json_file(Path(args.input), "input"))
+        if not args.dry_run and not config["mxCutoverAuthorized"]:
+            raise InstallError("MX_NOT_AUTHORIZED", "MX replacement was not authorized.", 1)
+        secrets = load_secrets(config)
+        artifact_dir = verify_artifacts(config)
+        state = load_state(config)
+        if state and state.get("operationId") == config["operationId"] and state.get("identity") != identity_of(config):
+            raise InstallError("IDEMPOTENCY_CONFLICT", "This operationId was already used for a different configuration.", 1)
+        if state and state.get("operationId") == config["operationId"] and state.get("status") == "succeeded" and not args.dry_run:
+            payload = state.get("result") or blank_result(config, "succeeded", None, None, versions_from(artifact_dir))
+            payload["generation"] = config["generation"]
+            payload["retryable"] = False
+            return finish(result_path, payload, secrets, 0)
+        check_data_path(config, state)
+        if not args.dry_run:
+            published_mx = bool(state and state.get("mxPublished"))
+            try:
+                check_relay(config, secrets["smtpKey"])
+            except InstallError as exc:
+                if exc.code == "RELAY_AUTH_FAILED" and published_mx:
+                    raise InstallError("RELAY_AUTH_FAILED", "The Brevo SMTP login was rejected.", 1) from exc
+                raise
+        existing = read_zone(config, secrets)
+        engine_dkim = load_engine_dkim(config, state, existing)
+        plan = build_plan(config, existing, engine_dkim if args.dry_run else None)
+        versions = versions_from(artifact_dir)
+        if args.dry_run:
+            return finish(result_path, blank_result(config, "dry_run", None, plan, versions), secrets, 0)
+        run_existing_install(config, secrets, artifact_dir)
+        existing = read_zone(config, secrets)
+        engine_dkim = load_engine_dkim(config, state, existing)
+        if not engine_dkim:
+            raise InstallError("SERVICE_FAILED", "The mail engine did not produce a DKIM key.", 1)
+        plan = build_plan(config, existing, engine_dkim)
+        plan = publish_zone(config, secrets, existing, plan)
+        checks = service_checks()
+        if any(value == "stopped" for value in checks.values()):
+            raise InstallError("SERVICE_FAILED", "A required service is not running.", 1)
+        tls = tls_status(config)
+        pending = tls["mail"]["status"] != "issued" or tls["webmail"]["status"] != "issued"
+        status = "tls_pending" if pending else "succeeded"
+        error = InstallError("TLS_PENDING", "Certificate issuance is waiting on DNS propagation.", 10, True) if pending else None
+        payload = blank_result(config, status, error, plan, versions)
+        payload["serviceChecks"] = checks
+        payload["tls"] = tls
+        payload["retryable"] = pending
+        checkpoint(config, plan, status, versions, checks, tls)
+        return finish(result_path, payload, secrets, 10 if pending else 0)
+    except InstallError as exc:
+        if result_path is None:
+            eprint(exc.message)
+            return exc.exit_code
+        status = "failed"
+        if exc.code == "TLS_PENDING":
+            status = "tls_pending"
+        elif exc.code == "DNS_PUBLISH_FAILED" and exc.retryable and exc.plan:
+            status = "dns_partial"
+        elif exc.code == "DNS_RATE_LIMITED":
+            status = "dns_partial"
+        payload = blank_result(config, status, exc, exc.plan, None)
+        payload["retryable"] = exc.retryable
+        if exc.plan and config is not None and exc.retryable:
+            versions = payload["installedVersions"]
+            checkpoint(config, exc.plan, status, versions, None, None)
+        return finish(result_path, payload, secrets, exc.exit_code)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
