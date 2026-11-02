@@ -141,4 +141,89 @@ if grep -q PROMPTED "${TEST_TMP_DIR}/example-err"; then
 fi
 grep -q "installer example" "${TEST_TMP_DIR}/example-err" || fail "the example hostname was not rejected"
 
+if ! sh -c '
+. "$1"
+require_compatible_setup_help "Quick setup asks only
+STALWART_SETUP_RESULT_PATH
+"
+' sh "${TEST_TMP_DIR}/install-functions.sh" \
+    >"${TEST_TMP_DIR}/help-old-out" 2>"${TEST_TMP_DIR}/help-old-err"
+then
+    fail "interactive setup help was rejected without the apply marker"
+fi
+
+if env BEARMAIL_NONINTERACTIVE_FILE="$ANSWERS" sh -c '
+. "$1"
+require_compatible_setup_help "Quick setup asks only
+STALWART_SETUP_RESULT_PATH
+"
+' sh "${TEST_TMP_DIR}/install-functions.sh" \
+    >"${TEST_TMP_DIR}/help-ni-old-out" 2>"${TEST_TMP_DIR}/help-ni-old-err"
+then
+    fail "noninteractive setup accepted a binary without STALWART_SETUP_APPLY"
+fi
+grep -q "noninteractive setup apply" "${TEST_TMP_DIR}/help-ni-old-err" \
+    || fail "a binary without noninteractive apply was not explained"
+
+if ! env BEARMAIL_NONINTERACTIVE_FILE="$ANSWERS" sh -c '
+. "$1"
+require_compatible_setup_help "Quick setup asks only
+STALWART_SETUP_RESULT_PATH
+STALWART_SETUP_APPLY
+"
+' sh "${TEST_TMP_DIR}/install-functions.sh" \
+    >"${TEST_TMP_DIR}/help-ni-out" 2>"${TEST_TMP_DIR}/help-ni-err"
+then
+    fail "noninteractive setup rejected help that documents STALWART_SETUP_APPLY"
+fi
+
+SETUP_WORK="${TEST_TMP_DIR}/setup-work"
+CAPTURE="${TEST_TMP_DIR}/capture"
+mkdir -p "$SETUP_WORK" "$CAPTURE"
+FAKE="${TEST_TMP_DIR}/fake-stalwart"
+cat > "$FAKE" <<EOF
+#!/bin/sh
+printf '%s\\n' "\${STALWART_SETUP_APPLY:-}" > "$CAPTURE/apply"
+cat > "$CAPTURE/stdin"
+exit 0
+EOF
+chmod 755 "$FAKE"
+BEARMAIL_NONINTERACTIVE_FILE="$ANSWERS"
+if ! run_easy_stalwart_setup \
+    "$FAKE" "${SETUP_WORK}/config.json" "${SETUP_WORK}/result.json" \
+    /var/lib/stalwart /var/log/stalwart 203.0.113.10 "" \
+    mail.example.com example.com "$SETUP_WORK"
+then
+    fail "noninteractive setup failed when the binary did not print the apply sentence"
+fi
+[ "$(cat "$CAPTURE/apply")" = "1" ] || fail "STALWART_SETUP_APPLY was not 1"
+printf '1\nmail.example.com\nexample.com\n' > "${TEST_TMP_DIR}/expected-stdin"
+cmp -s "$CAPTURE/stdin" "${TEST_TMP_DIR}/expected-stdin" \
+    || fail "setup stdin was not the three ordered answers"
+if grep -q y "$CAPTURE/stdin"; then
+    fail "noninteractive setup sent a confirmation"
+fi
+if grep -q 'Apply this configuration' "$CAPTURE/stdin" "${SETUP_WORK}/setup-stdout"; then
+    fail "noninteractive setup matched the apply sentence"
+fi
+
+FAKE_FAIL="${TEST_TMP_DIR}/fake-stalwart-fail"
+cat > "$FAKE_FAIL" <<'EOF'
+#!/bin/sh
+cat >/dev/null
+exit 1
+EOF
+chmod 755 "$FAKE_FAIL"
+if run_easy_stalwart_setup \
+    "$FAKE_FAIL" "${SETUP_WORK}/config.json" "${SETUP_WORK}/result.json" \
+    /var/lib/stalwart /var/log/stalwart 203.0.113.10 "" \
+    mail.example.com example.com "$SETUP_WORK" \
+    >"${TEST_TMP_DIR}/setup-fail-out" 2>"${TEST_TMP_DIR}/setup-fail-err"
+then
+    fail "a failing engine setup was treated as success"
+fi
+grep -q "Server setup failed while applying the configuration." "${TEST_TMP_DIR}/setup-fail-err" \
+    || fail "a failing engine setup was not explained"
+unset BEARMAIL_NONINTERACTIVE_FILE || true
+
 printf 'PASS: noninteractive install answers come from the file\n'

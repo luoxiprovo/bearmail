@@ -258,14 +258,7 @@ main() {
     if ! _setup_help="$("$_source_binary" --setup --help 2>/dev/null)"; then
         err "❌ Install failed: The selected binary is not compatible with this installer's command-line setup."
     fi
-    case "$_setup_help" in
-        *"Quick setup asks only"*) ;;
-        *) err "❌ Install failed: The selected binary predates this installer's quick setup and DNS table. Rebuild it from this source revision." ;;
-    esac
-    case "$_setup_help" in
-        *"STALWART_SETUP_RESULT_PATH"*) ;;
-        *) err "❌ Install failed: The selected binary predates the secure combined-installer handoff. Rebuild it from this source revision." ;;
-    esac
+    require_compatible_setup_help "$_setup_help"
 
     _webui_stage="${_tmp}/webui"
     ensure mkdir -p "$_webui_stage"
@@ -1658,20 +1651,62 @@ easy_dns_zone_default() {
     RETVAL="$_mail"
 }
 
-# Drive the published Stalwart quick-setup wizard. The binary still asks its
-# own questions. Easy install answers the fixed ones and keeps the apply prompt.
-# Noninteractive mode accepts that apply on the wizard FIFO without asking.
+# Reject a Stalwart binary this installer cannot drive. Noninteractive apply
+# requires STALWART_SETUP_APPLY in --setup --help. An older binary would ignore
+# that value and wait for a confirmation this installer no longer sends.
+require_compatible_setup_help() {
+    local _help="$1"
+    case "$_help" in
+        *"Quick setup asks only"*) ;;
+        *) err "❌ Install failed: The selected binary predates this installer's quick setup and DNS table. Rebuild it from this source revision." ;;
+    esac
+    case "$_help" in
+        *"STALWART_SETUP_RESULT_PATH"*) ;;
+        *) err "❌ Install failed: The selected binary predates the secure combined-installer handoff. Rebuild it from this source revision." ;;
+    esac
+    if noninteractive_active; then
+        case "$_help" in
+            *"STALWART_SETUP_APPLY"*) ;;
+            *) err "❌ Install failed: The selected binary predates noninteractive setup apply. Rebuild it from this source revision." ;;
+        esac
+    fi
+}
+
+# Drive the published Stalwart quick-setup wizard.
+# Interactive easy install answers the fixed questions and keeps the apply prompt.
+# Noninteractive mode writes the three ordered answers, sets STALWART_SETUP_APPLY=1,
+# and closes stdin. It does not match prompt text or send a confirmation.
 run_easy_stalwart_setup() {
     local _bin="$1" _config="$2" _result="$3" _data="$4" _log="$5"
     local _ipv4="$6" _ipv6="$7" _host="$8" _domain="$9" _work="${10}"
     local _out="${_work}/setup-stdout" _errf="${_work}/setup-stderr"
-    local _fifo="${_work}/setup-stdin" _pid="" _i=0
-    need_cmd mkfifo
-    rm -f "$_fifo" "$_out" "$_errf"
-    mkfifo "$_fifo"
+    local _stdin="${_work}/setup-stdin" _pid="" _i=0
+    rm -f "$_stdin" "$_out" "$_errf"
     : >"$_out"
+    if noninteractive_active; then
+        # The file ends after mode, hostname, and domain. A later question
+        # reads EOF and setup fails instead of receiving an invented answer.
+        printf '1\n%s\n%s\n' "$_host" "$_domain" >"$_stdin"
+        if ! env \
+            STALWART_SETUP_DATA_PATH="$_data" \
+            STALWART_SETUP_LOG_PATH="$_log" \
+            STALWART_SETUP_PUBLIC_IPV4="$_ipv4" \
+            STALWART_SETUP_PUBLIC_IPV6="$_ipv6" \
+            STALWART_SETUP_RESULT_PATH="$_result" \
+            STALWART_SETUP_APPLY=1 \
+            "$_bin" --config="$_config" --setup <"$_stdin" >"$_out" 2>"$_errf"
+        then
+            printf '%s\n' "Server setup failed while applying the configuration." >&2
+            [ -s "$_errf" ] && cat "$_errf" >&2
+            [ -s "$_out" ] && cat "$_out" >&2
+            return 1
+        fi
+        return 0
+    fi
+    need_cmd mkfifo
+    mkfifo "$_stdin"
     # Linux allows a read-write open so this does not wait for the wizard.
-    exec 4<>"$_fifo"
+    exec 4<>"$_stdin"
     printf '1\n%s\n%s\n' "$_host" "$_domain" >&4
     env \
         STALWART_SETUP_DATA_PATH="$_data" \
@@ -1679,7 +1714,7 @@ run_easy_stalwart_setup() {
         STALWART_SETUP_PUBLIC_IPV4="$_ipv4" \
         STALWART_SETUP_PUBLIC_IPV6="$_ipv6" \
         STALWART_SETUP_RESULT_PATH="$_result" \
-        "$_bin" --config="$_config" --setup <"$_fifo" >"$_out" 2>"$_errf" &
+        "$_bin" --config="$_config" --setup <"$_stdin" >"$_out" 2>"$_errf" &
     _pid=$!
     while [ "$_i" -lt 600 ]; do
         if grep -q 'Apply this configuration' "$_out" 2>/dev/null; then
@@ -1704,19 +1739,15 @@ run_easy_stalwart_setup() {
         exec 4>&-
         return 1
     fi
-    if noninteractive_active; then
+    say ""
+    sed -n '/Setup summary:/,/Apply this configuration/p' "$_out" | sed '/Apply this configuration/d' >&3
+    if prompt_yes_no "Apply this configuration" "yes"; then
         printf 'y\n' >&4
     else
-        say ""
-        sed -n '/Setup summary:/,/Apply this configuration/p' "$_out" | sed '/Apply this configuration/d' >&3
-        if prompt_yes_no "Apply this configuration" "yes"; then
-            printf 'y\n' >&4
-        else
-            printf 'n\nn\n' >&4
-            wait "$_pid" 2>/dev/null || true
-            exec 4>&-
-            err "Setup cancelled; no configuration was written."
-        fi
+        printf 'n\nn\n' >&4
+        wait "$_pid" 2>/dev/null || true
+        exec 4>&-
+        err "Setup cancelled; no configuration was written."
     fi
     if ! wait "$_pid"; then
         printf '%s\n' "Server setup failed while applying the configuration." >&2

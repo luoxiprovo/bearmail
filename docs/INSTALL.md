@@ -147,8 +147,9 @@ Confirm that the binary contains the installer-compatible setup command:
 ./stalwart --setup --help
 ```
 
-The output must mention quick setup and `STALWART_SETUP_RESULT_PATH`. If either
-is missing, rebuild the binary from the same source revision as `install.sh`.
+The output must mention quick setup, `STALWART_SETUP_RESULT_PATH`, and
+`STALWART_SETUP_APPLY`. If any of those is missing, rebuild the binary from the
+same source revision as `install.sh`.
 
 ## 2. Build the WebUI artifact
 
@@ -654,9 +655,9 @@ not invoke it from a background job or a non-interactive automation runner.
 ### The Stalwart binary is incompatible
 
 Rebuild `stalwart` from the same source revision as `install.sh`. Run
-`./stalwart --setup --help` and confirm that the output mentions quick setup
-and `STALWART_SETUP_RESULT_PATH`. Also confirm that the binary is executable and
-matches the target platform.
+`./stalwart --setup --help` and confirm that the output mentions quick setup,
+`STALWART_SETUP_RESULT_PATH`, and `STALWART_SETUP_APPLY`. Also confirm that the
+binary is executable and matches the target platform.
 
 ### The WebUI archive is rejected
 

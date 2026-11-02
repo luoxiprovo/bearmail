@@ -51,6 +51,7 @@ Installer-provided defaults:
   STALWART_SETUP_PUBLIC_IPV4  Detected public IPv4 address
   STALWART_SETUP_PUBLIC_IPV6  Detected public IPv6 address
   STALWART_SETUP_RESULT_PATH  Root-only JSON result used by the combined installer
+  STALWART_SETUP_APPLY      Set to 1 to apply valid quick setup without a confirmation prompt
 "#;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -137,7 +138,13 @@ pub async fn run() -> Result<(), String> {
         )
     )
     .map_err(io_error)?;
-    let answers = prompt_for_answers(&mut stdin, &mut stdout, &default_hostname, &default_domain)?;
+    let answers = prompt_for_answers(
+        &mut stdin,
+        &mut stdout,
+        &default_hostname,
+        &default_domain,
+        setup_apply_requested(env::var("STALWART_SETUP_APPLY").ok().as_deref()),
+    )?;
     drop(stdin);
     drop(stdout);
 
@@ -265,11 +272,17 @@ where
     })
 }
 
+/// Exact value `1` applies a valid quick setup. Any other value keeps the prompt.
+fn setup_apply_requested(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
 fn prompt_for_answers<R: BufRead, W: Write>(
     input: &mut R,
     output: &mut W,
     default_hostname: &str,
     default_domain: &str,
+    apply_without_prompt: bool,
 ) -> Result<SetupAnswers, String> {
     let mut defaults = Bootstrap {
         server_hostname: default_hostname.to_string(),
@@ -290,6 +303,13 @@ fn prompt_for_answers<R: BufRead, W: Write>(
     let mut current = serde_json::to_value(defaults)
         .map_err(|err| format!("Failed to prepare setup defaults: {err}"))?;
     let quick_setup = prompt_setup_mode(input, output)?;
+    // A later question must see EOF instead of an invented confirmation.
+    if apply_without_prompt && !quick_setup {
+        return Err(
+            "Noninteractive setup applies only quick setup. No configuration was written."
+                .to_string(),
+        );
+    }
     let mut ipv4 = env::var("STALWART_SETUP_PUBLIC_IPV4")
         .ok()
         .and_then(|value| value.trim().parse().ok());
@@ -321,17 +341,24 @@ fn prompt_for_answers<R: BufRead, W: Write>(
         let bootstrap: Bootstrap = match serde_json::from_value(current.clone()) {
             Ok(bootstrap) => bootstrap,
             Err(err) => {
-                writeln!(
-                    output,
-                    "\nThe selected values could not be converted to a bootstrap configuration: {err}"
-                )
-                .map_err(io_error)?;
+                let message = format!(
+                    "The selected values could not be converted to a bootstrap configuration: {err}"
+                );
+                if apply_without_prompt {
+                    return Err(message);
+                }
+                writeln!(output, "\n{message}").map_err(io_error)?;
                 writeln!(output, "Please review the questionnaire again.").map_err(io_error)?;
                 continue;
             }
         };
         let mut validation_errors = Vec::new();
         if !bootstrap.validate(&mut validation_errors) {
+            if apply_without_prompt {
+                return Err(format!(
+                    "The configuration has validation errors: {validation_errors:?}"
+                ));
+            }
             writeln!(output, "\nThe configuration has validation errors:").map_err(io_error)?;
             for error in validation_errors {
                 writeln!(output, "  - {error:?}").map_err(io_error)?;
@@ -341,6 +368,13 @@ fn prompt_for_answers<R: BufRead, W: Write>(
         }
 
         print_summary(output, &bootstrap, ipv4, ipv6)?;
+        if apply_without_prompt {
+            return Ok(SetupAnswers {
+                bootstrap,
+                ipv4,
+                ipv6,
+            });
+        }
         if prompt_yes_no(input, output, "Apply this configuration", quick_setup)? {
             return Ok(SetupAnswers {
                 bootstrap,
@@ -786,8 +820,60 @@ fn io_error(error: io::Error) -> String {
 mod tests {
     use super::*;
     use registry::schema::prelude::ObjectType;
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn setup_apply_accepts_only_the_exact_value() {
+        assert!(setup_apply_requested(Some("1")));
+        assert!(!setup_apply_requested(Some("true")));
+        assert!(!setup_apply_requested(Some("yes")));
+        assert!(!setup_apply_requested(Some("1\n")));
+        assert!(!setup_apply_requested(Some("")));
+        assert!(!setup_apply_requested(None));
+    }
+
+    #[test]
+    fn setup_help_documents_noninteractive_apply() {
+        assert!(SETUP_HELP.contains("Quick setup asks only"));
+        assert!(SETUP_HELP.contains("STALWART_SETUP_RESULT_PATH"));
+        assert!(SETUP_HELP.contains("STALWART_SETUP_APPLY"));
+    }
+
+    #[test]
+    fn quick_setup_apply_flag_does_not_read_confirmation() {
+        let mut input = Cursor::new(b"1\nmail.example.com\nexample.com\nn\n".as_slice());
+        let mut output = Vec::new();
+        let answers = prompt_for_answers(&mut input, &mut output, "", "", true).unwrap();
+        assert_eq!(answers.bootstrap.server_hostname, "mail.example.com");
+        assert_eq!(answers.bootstrap.default_domain, "example.com");
+        let text = String::from_utf8(output).unwrap();
+        assert!(!text.contains("Apply this configuration"));
+        let mut rest = String::new();
+        input.read_to_string(&mut rest).unwrap();
+        assert_eq!(rest, "n\n");
+    }
+
+    #[test]
+    fn apply_flag_rejects_advanced_setup_without_reading_further() {
+        let mut input = Cursor::new(b"2\nn\n".as_slice());
+        let mut output = Vec::new();
+        let error = prompt_for_answers(&mut input, &mut output, "", "", true).unwrap_err();
+        assert!(error.contains("quick setup"));
+        assert!(!String::from_utf8(output).unwrap().contains("Apply this configuration"));
+        let mut rest = String::new();
+        input.read_to_string(&mut rest).unwrap();
+        assert_eq!(rest, "n\n");
+    }
+
+    #[test]
+    fn quick_setup_without_apply_flag_still_asks_for_confirmation() {
+        let mut input = Cursor::new(b"1\nmail.example.com\nexample.com\n".as_slice());
+        let mut output = Vec::new();
+        let error = prompt_for_answers(&mut input, &mut output, "", "", false).unwrap_err();
+        assert!(error.contains("Setup input ended"));
+        assert!(String::from_utf8(output).unwrap().contains("Apply this configuration"));
+    }
 
     #[test]
     fn parses_setup_arguments() {
