@@ -408,7 +408,15 @@ def verify_artifacts(config: dict) -> Path:
     return artifact_dir
 
 
-def check_data_path(config: dict, state: dict | None) -> None:
+def data_directory(config: dict) -> Path:
+    if test_hooks():
+        override = os.environ.get("BEARMAIL_INSTALL_DATA_DIR", "")
+        if override:
+            return Path(override)
+    return Path(config["dataPath"])
+
+
+def check_data_path(config: dict, state: dict | None, create: bool) -> None:
     if test_hooks() and os.environ.get("BEARMAIL_INSTALL_ASSUME_MOUNT") == "1":
         if os.environ.get("BEARMAIL_INSTALL_NONEMPTY") == "1":
             raise InstallError(
@@ -417,29 +425,29 @@ def check_data_path(config: dict, state: dict | None) -> None:
                 1,
             )
         return
-    path = Path(config["dataPath"])
-    mounted = False
-    try:
-        mounts = Path("/proc/mounts").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        mounts = ""
-    for line in mounts.splitlines():
-        parts = line.split()
-        if len(parts) >= 2 and parts[1] == config["dataPath"]:
-            mounted = True
-            break
-    if not mounted or path.is_symlink() or not path.is_dir():
-        raise InstallError(
-            "DATA_PATH_UNMOUNTED",
-            "Mount the mail disk at /var/lib/stalwart before installation.",
-            1,
-        )
+    path = data_directory(config)
+    if create:
+        try:
+            # Same as install.sh: mkdir -p the data directory when it is missing.
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise InstallError("SERVICE_FAILED", "Could not create /var/lib/stalwart.", 1) from exc
+    elif not path.exists():
+        return
+    if not path.is_dir():
+        raise InstallError("SERVICE_FAILED", "Could not create /var/lib/stalwart.", 1)
     ignored = {STATE_NAME, "lost+found", ANSWER_NAME}
     children = [child.name for child in path.iterdir() if child.name not in ignored]
     if not children:
         return
     if state and state.get("operationId") == config["operationId"]:
         return
+    if test_hooks():
+        raise InstallError(
+            "NONEMPTY_DATA_REFUSED",
+            "The mail data directory already contains an unrelated store.",
+            1,
+        )
     installer_state = Path("/etc/stalwart/installer-state.json")
     if installer_state.is_file():
         try:
@@ -1453,7 +1461,7 @@ def main(argv: list[str]) -> int:
             payload["generation"] = config["generation"]
             payload["retryable"] = False
             return finish(result_path, payload, secrets, 0)
-        check_data_path(config, state)
+        check_data_path(config, state, create=not args.dry_run)
         if not args.dry_run:
             published_mx = bool(state and state.get("mxPublished"))
             try:

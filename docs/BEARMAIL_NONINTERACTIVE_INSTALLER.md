@@ -85,7 +85,7 @@ The result JSON contains no credential, token, password, or SMTP key. It may con
   "webmailHostname": "webmail.example.com",
   "publicIpv4": "203.0.113.10",
   "publicIpv6": null,
-  "dataPath": "/var/lib/bearportal/mail",
+  "dataPath": "/var/lib/stalwart",
   "dns": {
     "provider": "namecom",
     "zone": "example.com",
@@ -139,7 +139,7 @@ The result JSON contains no credential, token, password, or SMTP key. It may con
 | `mailHostname`, `webmailHostname` | Same name rules. Both must be inside `domain` or equal to it. They must differ from each other. BearPortal sends `mail.<domain>` and `webmail.<domain>` for the beta. |
 | `publicIpv4` | Public unicast IPv4 of this mail server. Reject loopback, private, link-local, multicast, and unspecified addresses. |
 | `publicIpv6` | `null`, or a public unicast IPv6 address. `null` means the installer must not publish AAAA for the mail hostnames. |
-| `dataPath` | Absolute path of the already-mounted mail data directory. The installer stores mail data, engine configuration state, DKIM keys, and certificate state here. |
+| `dataPath` | Must be `/var/lib/stalwart`. An applying run creates that directory if it is missing. The installer stores mail data, engine configuration state, DKIM keys, and certificate state here. It does not partition or format a disk. |
 | `dns.provider` | `namecom`, `hostinger`, or `godaddy`. Any other value is `DNS_PROVIDER_UNSUPPORTED`. |
 | `dns.zone` | The DNS zone that contains the mail domain. It may be the mail domain or an ancestor. The installer uses this zone for API calls. |
 | `dns.credentialFile` | See §5.2. |
@@ -267,7 +267,7 @@ The first installation creates no customer mailbox password that BearPortal can 
 
 Before writing data:
 
-- `dataPath` must already be a mounted directory with space for the mail store. If it is missing or not a mount dedicated to this data, return `DATA_PATH_UNMOUNTED` and do not start an empty mail store on the boot disk.
+- `dataPath` is `/var/lib/stalwart`. An applying run creates it with the equivalent of `mkdir -p` if it is missing. A dry run does not create it.
 - Do not partition, format, or resize a disk.
 - If `dataPath` already contains a mail store from the same `operationId` or the same domain and engine identity, resume it.
 - If `dataPath` contains an unrelated nonempty mail store, return `NONEMPTY_DATA_REFUSED` and change nothing.
@@ -353,8 +353,7 @@ Use these stable `errorCode` values. `errorMessage` is one short sentence with n
 | `DNS_RATE_LIMITED` | Provider asked the client to slow down. Exit `10`. |
 | `ARTIFACT_MISSING` | A required release file is absent. |
 | `ARTIFACT_CHECKSUM_MISMATCH` | A file does not match `SHA256SUMS`. |
-| `DATA_PATH_UNMOUNTED` | Mail data directory is missing or is not the prepared mount. |
-| `NONEMPTY_DATA_REFUSED` | Unrelated mail data is already at `dataPath`. |
+| `NONEMPTY_DATA_REFUSED` | Unrelated mail data is already at `/var/lib/stalwart`. |
 | `RELAY_AUTH_FAILED` | Brevo SMTP login was rejected. |
 | `TLS_PENDING` | Retry certificate issuance. Exit `10`. |
 | `SERVICE_FAILED` | A required service did not reach the reported check. |
@@ -372,7 +371,7 @@ These tests use a disposable Linux VM and recorded DNS-provider fixtures. A live
 7. Existing stricter DMARC is preserved. Absent DMARC is created from the Brevo value.
 8. Two existing SPF records that cannot be merged return `DNS_RECORD_CONFLICT` before any write.
 9. A bad checksum and a missing artifact change neither the server nor DNS.
-10. A missing data mount does not create `/var/lib` mail data on the root filesystem.
+10. An applying run creates a missing `/var/lib/stalwart`. A dry run does not create it. The installer does not partition or format a disk.
 11. A fixture that fails after the MX write, then a retry, ends with one MX and one engine DKIM key.
 12. Provider tests for `namecom`, `hostinger`, and `godaddy` each reject a bad token with `DNS_AUTH_FAILED`.
 13. The result file and the process output do not contain the fixture’s DNS token, SMTP key, or admin password.

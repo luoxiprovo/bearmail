@@ -61,9 +61,9 @@ sha256sum install.sh stalwart bearmail-webui.tar.gz mcp_install.sh > SHA256SUMS
 
 ### Mail disk
 
-This release stores mail, engine state, and DKIM material at `/var/lib/stalwart`. Mount the dedicated mail disk at that path before you call the installer. Set `dataPath` to exactly `/var/lib/stalwart`.
+This release stores mail, engine state, and DKIM material at `/var/lib/stalwart`. Set `dataPath` to exactly `/var/lib/stalwart`.
 
-The program does not partition, format, or create that directory. If the path is missing or is not a mount, the result is `DATA_PATH_UNMOUNTED` and no mail store is created on the boot disk.
+An applying run creates that directory if it is missing. The program does not partition or format a disk. A dry run does not create the directory. If the directory already holds an unrelated mail store, the result is `NONEMPTY_DATA_REFUSED` and nothing is changed.
 
 ### Credential files
 
@@ -198,8 +198,7 @@ The same `operationId` with a different domain, mail hostname, webmail hostname,
 | `DNS_RATE_LIMITED` | Provider rate limit. Exit 10. |
 | `ARTIFACT_MISSING` | A required release file is absent. |
 | `ARTIFACT_CHECKSUM_MISMATCH` | A file does not match `SHA256SUMS`. |
-| `DATA_PATH_UNMOUNTED` | `/var/lib/stalwart` is missing or is not a mount. |
-| `NONEMPTY_DATA_REFUSED` | That directory already holds an unrelated mail store. |
+| `NONEMPTY_DATA_REFUSED` | `/var/lib/stalwart` already holds an unrelated mail store. |
 | `RELAY_AUTH_FAILED` | Brevo rejected the SMTP login. MX is not published unless a previous attempt of this `operationId` already published it. |
 | `TLS_PENDING` | Retry certificate issuance. Exit 10. |
 | `SERVICE_FAILED` | A required service did not come up. |

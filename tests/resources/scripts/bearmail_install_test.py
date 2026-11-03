@@ -396,7 +396,7 @@ def test_dmarc_and_spf_conflicts() -> None:
         check(not (tmp / "ran").exists(), "spf conflict started installation")
 
 
-def test_artifacts_and_mount() -> None:
+def test_artifacts_and_data_directory() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
         infile, outfile, fixture, payload = prepare(tmp)
@@ -411,16 +411,44 @@ def test_artifacts_and_mount() -> None:
         (artifact.parent / "mcp_install.sh").unlink()
         missing = run_installer(["--input", str(infile), "--result", str(outfile)], environment)
         check(json.loads(outfile.read_text(encoding="utf-8"))["errorCode"] == "ARTIFACT_MISSING", "missing artifact")
-    existed = Path("/var/lib/stalwart").exists()
+    real_data = Path("/var/lib/stalwart")
+    existed = real_data.exists()
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
+        data = tmp / "var" / "lib" / "stalwart"
         infile, outfile, fixture, _payload = prepare(tmp)
-        environment = env_for(tmp, fixture)
+        environment = env_for(tmp, fixture, {"BEARMAIL_INSTALL_DATA_DIR": str(data)})
+        del environment["BEARMAIL_INSTALL_ASSUME_MOUNT"]
+        dry = run_installer(["--dry-run", "--input", str(infile), "--result", str(outfile)], environment)
+        check(dry.returncode == 0, f"dry-run missing data dir {dry.returncode}: {dry.stderr}")
+        check(not data.exists(), "dry-run created the data directory")
+        proc = run_installer(["--input", str(infile), "--result", str(outfile)], environment)
+        check(proc.returncode == 0, f"create data dir exit {proc.returncode}: {proc.stderr}")
+        check(data.is_dir(), "applying run did not create the data directory")
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        data = tmp / "occupied"
+        data.mkdir()
+        (data / "existing-store").write_text("mail", encoding="utf-8")
+        infile, outfile, fixture, _payload = prepare(tmp)
+        environment = env_for(tmp, fixture, {"BEARMAIL_INSTALL_DATA_DIR": str(data)})
         del environment["BEARMAIL_INSTALL_ASSUME_MOUNT"]
         proc = run_installer(["--input", str(infile), "--result", str(outfile)], environment)
-        check(proc.returncode == 1, "unmounted exit")
-        check(json.loads(outfile.read_text(encoding="utf-8"))["errorCode"] == "DATA_PATH_UNMOUNTED", "unmounted code")
-        check(Path("/var/lib/stalwart").exists() == existed, "unmounted run created /var/lib/stalwart")
+        check(proc.returncode == 1, f"nonempty exit {proc.returncode}: {proc.stderr}")
+        check(json.loads(outfile.read_text(encoding="utf-8"))["errorCode"] == "NONEMPTY_DATA_REFUSED", "nonempty code")
+        check((data / "existing-store").is_file(), "nonempty refusal removed existing mail")
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        blocked = tmp / "blocked"
+        blocked.write_text("not a directory", encoding="utf-8")
+        infile, outfile, fixture, _payload = prepare(tmp)
+        environment = env_for(tmp, fixture, {"BEARMAIL_INSTALL_DATA_DIR": str(blocked)})
+        del environment["BEARMAIL_INSTALL_ASSUME_MOUNT"]
+        proc = run_installer(["--input", str(infile), "--result", str(outfile)], environment)
+        check(proc.returncode == 1, f"blocked data path exit {proc.returncode}: {proc.stderr}")
+        check(json.loads(outfile.read_text(encoding="utf-8"))["errorCode"] == "SERVICE_FAILED", "blocked data path code")
+        check(blocked.is_file(), "blocked path was replaced")
+    check(real_data.exists() == existed, "test created /var/lib/stalwart")
 
 
 def test_provider_auth_and_crash() -> None:
@@ -493,7 +521,7 @@ def main() -> int:
     test_apply_publish_and_secrets()
     test_conflict_and_mx_flag()
     test_dmarc_and_spf_conflicts()
-    test_artifacts_and_mount()
+    test_artifacts_and_data_directory()
     test_provider_auth_and_crash()
     test_invalid_input()
     if FAILURES:
