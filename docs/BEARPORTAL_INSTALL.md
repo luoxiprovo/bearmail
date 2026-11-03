@@ -59,11 +59,11 @@ sha256sum install.sh stalwart bearmail-webui.tar.gz mcp_install.sh > SHA256SUMS
 
 `release.checksumFile` is the absolute path of that `SHA256SUMS` file. A missing file or a mismatched hash stops the run before it changes the server or DNS.
 
-### Mail disk
+### Mail data directory
 
-This release stores mail, engine state, and DKIM material at `/var/lib/stalwart`. Set `dataPath` to exactly `/var/lib/stalwart`.
+Do not create or mount this directory before the run. Set `dataPath` to exactly `/var/lib/stalwart`. Mail, engine state, and DKIM material are stored there.
 
-An applying run creates that directory if it is missing. The program does not partition or format a disk. A dry run does not create the directory. If the directory already holds an unrelated mail store, the result is `NONEMPTY_DATA_REFUSED` and nothing is changed.
+An applying run creates `/var/lib/stalwart` if it is missing. A dry run does not create it. The program does not partition or format a disk. If the directory already holds an unrelated mail store, the result is `NONEMPTY_DATA_REFUSED` and nothing is changed.
 
 ### Credential files
 
@@ -223,4 +223,4 @@ Ports 8080, 8081, and 8082 stay on localhost. The MCP sidecar listens on loopbac
 
 ## Out of scope
 
-This program does not create the server, open ports, or format a disk. BearPortal does not open ports either. The operator opens inbound TCP 25, 80, 443, 465, and 993. This program does not create the Brevo domain, call Brevo authenticate, or see the Brevo REST key. It does not choose the customer or the server. It does not publish DNS for any provider other than Name.com, Hostinger, and GoDaddy.
+This program does not create the server, open ports, or format a disk. An applying run creates `/var/lib/stalwart` when that directory is missing. It does not require that path to be a mount. BearPortal does not open ports either. The operator opens inbound TCP 25, 80, 443, 465, and 993. This program does not create the Brevo domain, call Brevo authenticate, or see the Brevo REST key. It does not choose the customer or the server. It does not publish DNS for any provider other than Name.com, Hostinger, and GoDaddy.

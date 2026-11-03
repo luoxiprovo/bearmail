@@ -501,6 +501,8 @@ The standard layout uses:
 | WebUI unit | `/etc/systemd/system/bearmail-webui.service` |
 | MCP unit (optional HTTP) | `/etc/systemd/system/bearmail-mcp.service` |
 
+`bearmail-install` stores mail at `/var/lib/stalwart/` and creates that directory if it is missing. `install.sh` does the same on the standard layout. Neither program requires that path to be a separate mount, and neither partitions or formats a disk.
+
 A custom Stalwart prefix uses `$PREFIX/bin`, `$PREFIX/etc`, `$PREFIX/data`, and
 `$PREFIX/logs`. The WebUI prefix must not contain, or be contained by, any
 Stalwart binary, configuration, data, or log directory or by the private

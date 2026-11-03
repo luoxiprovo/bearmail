@@ -33,6 +33,7 @@ The installer can assume the following, and it must still fail closed if the inp
 - An operator added a Brevo account in the BearPortal admin inventory. The account includes a Brevo REST API key, the SMTP login, and the SMTP key. Brevo’s documented API can create and authenticate a domain. It does not document an API that generates an SMTP key, so the operator supplies the SMTP key when adding the account. BearPortal stores it and passes it to this installer.
 - BearPortal assigned that Brevo account to this user and called `POST https://api.brevo.com/v3/senders/domains` with the customer domain. The response `dns_records` are copied into `brevoDnsRecords`. BearPortal does not invent SPF, DKIM, or Brevo-code values.
 - BearPortal saved the SMTP relay settings for this user: host `smtp-relay.brevo.com`, port `587`, STARTTLS required, the account’s SMTP login, and the SMTP key.
+- BearPortal does not create or mount `/var/lib/stalwart`. An applying run creates that directory if it is missing.
 
 Brevo will not mark the domain authenticated until the Brevo DNS records are visible. Those records are part of the set this installer publishes. BearPortal calls `PUT /v3/senders/domains/{domainName}/authenticate` only after this installer reports that the provider accepted the DNS writes. That follow-up call is BearPortal’s work. The installer does not call the Brevo API and does not receive the Brevo REST API key.
 
@@ -46,7 +47,7 @@ Brevo will not mark the domain authenticated until the Brevo DNS records are vis
 - Exit `10` when the same input can be retried safely because of provider rate limiting, a transient provider error, or TLS issuance still waiting on DNS propagation. The result file then contains the checkpoint.
 - Exit `1` for a permanent failure.
 - Exit `2` for invalid input.
-- `--dry-run` validates credentials against the DNS provider, reads the zone, and writes the planned record changes. It does not install software, reload services, or write DNS. A successful dry run exits `0`.
+- `--dry-run` validates credentials against the DNS provider, reads the zone, and writes the planned record changes. It does not install software, reload services, write DNS, or create `/var/lib/stalwart`. A successful dry run exits `0`.
 
 Re-running the same `operationId` with the same desired configuration continues from the last checkpoint. It returns the same logical result when the work is already complete. It does not create a second copy of the services, a second DKIM key, or duplicate DNS records.
 
@@ -232,7 +233,7 @@ Publish exactly one SPF TXT record at `domain`.
 
 ### 7.5 Write order inside one run
 
-1. Validate input, checksums, the data directory, and DNS credentials.
+1. Validate input, checksums, and DNS credentials. An applying run creates `/var/lib/stalwart` if it is missing. A dry run does not.
 2. Read the current zone and build the record plan.
 3. Install and start the mail services so the engine DKIM key exists. Do this before any DNS write.
 4. Publish the full §7.1 set, including MX.
