@@ -73,7 +73,7 @@ DNS credential, selected by `dns.provider`:
 |---|---|
 | `namecom` | `{"username":"<name.com account username>","token":"<production API token>"}` |
 | `hostinger` | `{"token":"<hPanel API token>"}` |
-| `godaddy` | `{"apiKey":"<key>","apiSecret":"<secret>"}` |
+| `godaddy` | `{"token":"<personal access token>"}` |
 
 Relay credential, named by `relay.credentialFile`:
 
@@ -95,7 +95,7 @@ The relay login in the input is the Brevo SMTP login (often `something@smtp-brev
 |---|---|
 | `namecom` | Name.com DNS API v4, `https://api.name.com/v4` |
 | `hostinger` | Hostinger DNS API v1, `https://developers.hostinger.com/api/dns/v1` |
-| `godaddy` | GoDaddy Domains API v1, `https://api.godaddy.com/v1/domains/{zone}/records`, header `sso-key {apiKey}:{apiSecret}` |
+| `godaddy` | GoDaddy Domains API v1, `https://api.godaddy.com/v1/domains/{zone}/records`, header `Authorization: Bearer {token}` |
 
 TTL is 300 seconds for Name.com and Hostinger. GoDaddy's minimum is 600 seconds. The result field `dns.minimumTtl` is the value used.
 

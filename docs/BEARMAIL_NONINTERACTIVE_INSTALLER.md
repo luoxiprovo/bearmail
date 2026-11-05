@@ -161,7 +161,7 @@ The file is a JSON object. The required members depend on `dns.provider`:
 |---|---|
 | `namecom` | `{"username":"<name.com account username>","token":"<production API token>"}` |
 | `hostinger` | `{"token":"<hPanel API token>"}` |
-| `godaddy` | `{"apiKey":"<key>","apiSecret":"<secret>"}` |
+| `godaddy` | `{"token":"<personal access token from developer.godaddy.com>"}` |
 
 Use the provider’s current documented DNS API. Record the API version in the installer release notes. The required capabilities are: authenticate, confirm the zone exists and is editable, list the relevant records, and create or replace the records in §7 without dropping unrelated records at the same name.
 

@@ -76,7 +76,7 @@ def base_input(tmp: Path, directory: Path, checksum: Path, provider: str = "name
     elif provider == "hostinger":
         dns_secret = {"token": DNS_TOKEN}
     else:
-        dns_secret = {"apiKey": DNS_USER, "apiSecret": DNS_TOKEN}
+        dns_secret = {"token": DNS_TOKEN}
     dns_path = tmp / f"dns-{provider}.json"
     relay_path = tmp / "relay.json"
     admin_path = tmp / "admin.json"

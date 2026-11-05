@@ -349,11 +349,9 @@ def load_secrets(config: dict) -> dict:
         if not isinstance(dns.get("token"), str) or not dns["token"]:
             raise InstallError("INVALID_INPUT", "The Hostinger credential needs a token.", 2)
     else:
-        reject_unknown(dns, {"apiKey", "apiSecret"}, "DNS credential")
-        if not isinstance(dns.get("apiKey"), str) or not dns["apiKey"]:
-            raise InstallError("INVALID_INPUT", "The GoDaddy credential needs an apiKey and apiSecret.", 2)
-        if not isinstance(dns.get("apiSecret"), str) or not dns["apiSecret"]:
-            raise InstallError("INVALID_INPUT", "The GoDaddy credential needs an apiKey and apiSecret.", 2)
+        reject_unknown(dns, {"token"}, "DNS credential")
+        if not isinstance(dns.get("token"), str) or not dns["token"]:
+            raise InstallError("INVALID_INPUT", "The GoDaddy credential needs a personal access token.", 2)
     relay = load_private_json(config["relay"]["credentialFile"], "relay credential")
     reject_unknown(relay, {"smtpKey"}, "relay credential")
     if not isinstance(relay.get("smtpKey"), str) or not relay["smtpKey"]:
@@ -792,7 +790,7 @@ def provider_headers(config: dict, secrets: dict) -> dict:
     elif provider == "hostinger":
         headers["Authorization"] = f"Bearer {secrets['dns']['token']}"
     else:
-        headers["Authorization"] = f"sso-key {secrets['dns']['apiKey']}:{secrets['dns']['apiSecret']}"
+        headers["Authorization"] = f"Bearer {secrets['dns']['token']}"
     return headers
 
 
