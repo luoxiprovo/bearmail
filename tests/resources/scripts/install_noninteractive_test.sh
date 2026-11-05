@@ -43,6 +43,13 @@ load_noninteractive_answers
 [ "$NONINTERACTIVE_SMTP_LOGIN" = "login@smtp-brevo.com" ] || fail "SMTP login was not loaded"
 [ "$NONINTERACTIVE_SMTP_KEY" = 'smtp-secret-$value' ] || fail "SMTP key was not loaded verbatim"
 
+cat > "$ANSWERS" <<'EOF'
+{"portal":"webmail.customer.com","mailHostname":"mail.customer.com","domain":"customer.com","smtpLogin":"login@smtp-brevo.com","smtpKey":"smtp-secret-$value","adminUsername":"admin@customer.com","adminPassword":"admin-secret-$value"}
+EOF
+load_noninteractive_answers
+[ "$NONINTERACTIVE_ADMIN_USERNAME" = "admin@customer.com" ] || fail "administrator username was not loaded"
+[ "$NONINTERACTIVE_ADMIN_PASSWORD" = 'admin-secret-$value' ] || fail "administrator password was not loaded verbatim"
+
 expect_reject() {
     _label="$1"
     shift

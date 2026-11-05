@@ -491,12 +491,16 @@ main() {
     wait_for_http "http://127.0.0.1:${_webui_port}/healthz/ready" "WebUI"
 
     if [ -z "$_admin_username" ] || [ -z "$_admin_secret" ]; then
-        if noninteractive_active; then
+        if noninteractive_active && [ "${NONINTERACTIVE_ADMIN_USERNAME:--}" != "-" ] && [ "${NONINTERACTIVE_ADMIN_PASSWORD:--}" != "-" ]; then
+            _admin_username="$NONINTERACTIVE_ADMIN_USERNAME"
+            _admin_secret="$NONINTERACTIVE_ADMIN_PASSWORD"
+        elif noninteractive_active; then
             err "❌ Install failed: The server setup did not provide administrator credentials."
+        else
+            prompt_admin_credentials "admin"
+            _admin_username="$ADMIN_USERNAME_RETVAL"
+            _admin_secret="$ADMIN_SECRET_RETVAL"
         fi
-        prompt_admin_credentials "admin"
-        _admin_username="$ADMIN_USERNAME_RETVAL"
-        _admin_secret="$ADMIN_SECRET_RETVAL"
     fi
     say "🔐 Adding the exact WebUI CORS origin to Stalwart..."
     local _cors_status
@@ -810,13 +814,19 @@ except json.JSONDecodeError:
     sys.stderr.write("The noninteractive answer file is not valid JSON.\n")
     sys.exit(1)
 expected = ("portal", "mailHostname", "domain", "smtpLogin", "smtpKey")
-if not isinstance(data, dict) or set(data) != set(expected):
+optional = ("adminUsername", "adminPassword")
+if not isinstance(data, dict) or not set(expected).issubset(data) or set(data) - set(expected) - set(optional):
     sys.stderr.write("The noninteractive answer file has an unexpected field set.\n")
     sys.exit(1)
 for key in expected:
     value = data[key]
     if not isinstance(value, str) or value == "" or "\n" in value or "\r" in value or "\0" in value:
         sys.stderr.write("The noninteractive answer field %s is invalid.\n" % key)
+        sys.exit(1)
+    sys.stdout.write(value + "\n")
+for key in optional:
+    value = data.get(key, "-")
+    if not isinstance(value, str) or not value or any(c in value for c in "\n\r\0"):
         sys.exit(1)
     sys.stdout.write(value + "\n")
 PY
@@ -834,6 +844,9 @@ PY
     NONINTERACTIVE_SMTP_LOGIN=${_ni_out%%"$_nl"*}
     _ni_out=${_ni_out#*"$_nl"}
     NONINTERACTIVE_SMTP_KEY=${_ni_out%%"$_nl"*}
+    _ni_out=${_ni_out#*"$_nl"}
+    NONINTERACTIVE_ADMIN_USERNAME=${_ni_out%%"$_nl"*}
+    NONINTERACTIVE_ADMIN_PASSWORD=${_ni_out#*"$_nl"}
     if [ -z "$NONINTERACTIVE_PORTAL" ] || [ -z "$NONINTERACTIVE_MAIL_HOSTNAME" ] || \
         [ -z "$NONINTERACTIVE_DOMAIN" ] || [ -z "$NONINTERACTIVE_SMTP_LOGIN" ] || \
         [ -z "$NONINTERACTIVE_SMTP_KEY" ]; then

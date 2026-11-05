@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import runpy
 import stat
 import subprocess
 import sys
@@ -153,7 +154,7 @@ if stat.S_IMODE(info.st_mode) != 0o600:
     sys.exit(24)
 with open(path, encoding="utf-8") as handle:
     data = json.load(handle)
-if set(data) != {"portal", "mailHostname", "domain", "smtpLogin", "smtpKey"}:
+if set(data) != {"portal", "mailHostname", "domain", "smtpLogin", "smtpKey", "adminUsername", "adminPassword"}:
     sys.exit(25)
 expected = {
     "portal": os.environ["EXPECT_PORTAL"],
@@ -254,6 +255,44 @@ def assert_clean(proc: subprocess.CompletedProcess, result: Path, log: Path | No
         blob += log.read_text(encoding="utf-8")
     for secret in (DNS_TOKEN, DNS_USER, SMTP_KEY, ADMIN_PASSWORD):
         check(secret not in blob, f"output contained a credential ({secret[:8]})")
+
+
+def test_multiple_engine_dkim_keys() -> None:
+    namespace = runpy.run_path(str(INSTALLER), run_name="bearmail_installer_test")
+    rows = [
+        {"type": "TXT", "host": "ed._domainkey", "value": "v=DKIM1; k=ed25519; p=EDKEY"},
+        {"type": "TXT", "host": "rsa._domainkey", "value": "v=DKIM1; k=rsa; p=RSAKEY"},
+    ]
+    result = namespace["find_engine_dkim"](rows, {"dns": {"zone": "customer.com"}, "brevoDnsRecords": []})
+    check(result == {"host": "rsa._domainkey.customer.com", "value": rows[1]["value"]}, "multiple engine keys select RSA deterministically")
+
+
+def test_admin_account_alignment() -> None:
+    namespace = runpy.run_path(str(INSTALLER), run_name="bearmail_installer_test")
+    align = namespace["align_admin_password"]
+    quota = namespace["apply_quota"]
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        reminder = tmp / ".bearmail-reminder"
+        reminder.write_text("admin@customer.com\noriginal-password\n", encoding="utf-8")
+        calls = []
+        def call(config, user, password, method, arguments):
+            calls.append((user, password, method, arguments))
+            return {"ids": ["b"]} if method.endswith("/query") else {"updated": {"b": None}}
+        align.__globals__["test_hooks"] = lambda: False
+        align.__globals__["state_dir"] = lambda config: tmp
+        align.__globals__["jmap_call"] = call
+        config = {"domain": "customer.com", "mailboxQuotaBytes": 1024}
+        secrets = {"adminUser": "admin@customer.com", "adminPassword": ADMIN_PASSWORD}
+        align(config, secrets)
+        check(calls[0] == ("admin@customer.com", "original-password", "x:Account/query", {"filter": {"name": "admin"}}), "administrator lookup uses the generated identity and Account API")
+        check(calls[1][3] == {"update": {"b": {"credentials": {"0": {"@type": "Password", "secret": ADMIN_PASSWORD}}}}}, "password credentials use the engine map format")
+        check(not reminder.exists(), "successful alignment removes the generated credential")
+        quota(config, secrets)
+        check(calls[-1][2:] == ("x:Account/set", {"update": {"b": {"quotas": {"maxDiskQuota": 1024}}}}), "quota uses Account API")
+        calls.clear()
+        align(config, secrets)
+        check(len(calls) == 1 and calls[0][1] == ADMIN_PASSWORD, "rerun reuses the saved administrator credential")
 
 
 def test_dry_run_and_stdin() -> None:
@@ -548,6 +587,8 @@ def main() -> int:
     if not os.access(INSTALLER, os.X_OK):
         fail("bearmail-install is not executable")
     test_no_prompt_driver()
+    test_multiple_engine_dkim_keys()
+    test_admin_account_alignment()
     test_dry_run_and_stdin()
     test_apply_publish_and_secrets()
     test_conflict_and_mx_flag()

@@ -704,8 +704,11 @@ def find_engine_dkim(records: list[dict], config: dict) -> dict | None:
         if not re.match(r"(?i)^v=DKIM1(?:\s|;|$)", record["value"]):
             continue
         found.append(record)
-    if len(found) != 1:
+    if not found:
         return None
+    # Current engines emit RSA and Ed25519 selectors. The contract reports one
+    # engine key; prefer RSA for broad verifier compatibility.
+    found.sort(key=lambda row: (0 if re.search(r"(?i)(?:^|;)\s*k=rsa(?:;|$)", row["value"]) else 1, row["host"]))
     return {"host": absolute_host(found[0]["host"], zone), "value": found[0]["value"]}
 
 
@@ -1176,6 +1179,8 @@ def write_noninteractive_answers(path: Path, config: dict, secrets: dict) -> Non
         "domain": config["domain"],
         "smtpLogin": config["relay"]["login"],
         "smtpKey": secrets["smtpKey"],
+        "adminUsername": secrets["adminUser"],
+        "adminPassword": secrets["adminPassword"],
     }
     for value in fields.values():
         if not isinstance(value, str) or not value or "\n" in value or "\r" in value or "\0" in value:
@@ -1289,69 +1294,46 @@ def jmap_call(config: dict, username: str, password: str, method: str, arguments
     responses = payload.get("methodResponses") or []
     if not responses or responses[0][0] == "error":
         raise InstallError("SERVICE_FAILED", "The mail engine rejected a management call.", 1)
-    return responses[0][1]
+    result = responses[0][1]
+    if result.get("notUpdated") or result.get("notCreated"):
+        raise InstallError("SERVICE_FAILED", "The mail engine rejected a management update.", 1)
+    return result
 
 
 def align_admin_password(config: dict, secrets: dict) -> None:
     if test_hooks() and os.environ.get("BEARMAIL_INSTALL_SKIP_JMAP") == "1":
-        reminder = state_dir(config) / ".bearmail-reminder"
-        if reminder.is_file():
-            reminder.unlink()
+        (state_dir(config) / ".bearmail-reminder").unlink(missing_ok=True)
         return
     reminder = state_dir(config) / ".bearmail-reminder"
+    engine_user = secrets["adminUser"]
     engine_password = secrets["adminPassword"]
     if reminder.is_file():
         lines = reminder.read_text(encoding="utf-8").splitlines()
-        if len(lines) >= 2 and lines[1]:
-            engine_password = lines[1]
-        reminder.unlink()
-    username = secrets["adminUser"]
-    if "@" not in username:
-        username = f"{username}@{config['domain']}"
-    engine_user = f"admin@{config['domain']}"
-    queried = jmap_call(config, engine_user, engine_password, "x:Principal/query", {"filter": {"name": engine_user}})
+        if len(lines) >= 2 and lines[0] and lines[1]:
+            engine_user, engine_password = lines[:2]
+    local_name = engine_user.split("@", 1)[0]
+    queried = jmap_call(config, engine_user, engine_password, "x:Account/query", {"filter": {"name": local_name}})
     ids = queried.get("ids") or []
     if len(ids) != 1:
         raise InstallError("SERVICE_FAILED", "The engine administrator account was not found.", 1)
-    principal_id = ids[0]
-    current = jmap_call(config, engine_user, engine_password, "x:Principal/get", {
-        "ids": [principal_id],
-        "properties": ["name", "credentials"],
-    })
-    listed = current.get("list") or []
-    credential_id = None
-    if listed:
-        for credential in listed[0].get("credentials") or []:
-            if isinstance(credential, dict) and credential.get("@type") == "Password":
-                credential_id = credential.get("credentialId")
-                break
-    password_credential = {"@type": "Password", "secret": secrets["adminPassword"]}
-    if credential_id is not None:
-        password_credential["credentialId"] = credential_id
-    update = {"credentials": [password_credential]}
-    if username != engine_user:
-        update["name"] = username
-    if engine_password == secrets["adminPassword"] and username == engine_user:
-        return
-    jmap_call(config, engine_user, engine_password, "x:Principal/set", {"update": {principal_id: update}})
+    if engine_password != secrets["adminPassword"]:
+        jmap_call(config, engine_user, engine_password, "x:Account/set", {
+            "update": {ids[0]: {"credentials": {"0": {"@type": "Password", "secret": secrets["adminPassword"]}}}},
+        })
+    reminder.unlink(missing_ok=True)
 
 
 def apply_quota(config: dict, secrets: dict) -> None:
     if test_hooks() and os.environ.get("BEARMAIL_INSTALL_SKIP_JMAP") == "1":
         return
-    try:
-        username = secrets["adminUser"]
-        if "@" not in username:
-            username = f"{username}@{config['domain']}"
-        queried = jmap_call(config, username, secrets["adminPassword"], "x:Principal/query", {"filter": {"name": username}})
-        ids = queried.get("ids") or []
-        if len(ids) != 1:
-            return
-        jmap_call(config, username, secrets["adminPassword"], "x:Principal/set", {
-            "update": {ids[0]: {"quotas": {"maxDiskQuota": config["mailboxQuotaBytes"]}}},
-        })
-    except InstallError:
-        return
+    username = secrets["adminUser"]
+    queried = jmap_call(config, username, secrets["adminPassword"], "x:Account/query", {"filter": {"name": username.split("@", 1)[0]}})
+    ids = queried.get("ids") or []
+    if len(ids) != 1:
+        raise InstallError("SERVICE_FAILED", "The engine administrator account was not found.", 1)
+    jmap_call(config, username, secrets["adminPassword"], "x:Account/set", {
+        "update": {ids[0]: {"quotas": {"maxDiskQuota": config["mailboxQuotaBytes"]}}},
+    })
 
 
 def service_checks() -> dict:
