@@ -486,6 +486,37 @@ def test_provider_auth_and_crash() -> None:
         check(sum(1 for item in zone if item["value"] == DKIM_VALUE) == 1, "retry DKIM count")
 
 
+def test_smtp_login_without_brevo_records() -> None:
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        infile, outfile, fixture, payload = prepare(tmp)
+        payload.pop("brevoDnsRecords")
+        write_json(infile, payload)
+        environment = env_for(tmp, fixture)
+        proc = run_installer(["--dry-run", "--input", str(infile), "--result", str(outfile)], environment)
+        check(proc.returncode == 0, f"omit records exit {proc.returncode}: {proc.stderr}")
+        result = json.loads(outfile.read_text(encoding="utf-8"))
+        values = [item["value"] for item in result["dns"]["published"]]
+        check(not any(str(value).startswith("brevo-code:") for value in values), "omitted input published a Brevo code")
+        check(not any(value == "k=rsa;p=BREVOKEY" for value in values), "omitted input published Brevo DKIM")
+        check(not any(str(value).startswith("v=DMARC1") for value in values), "omitted input invented DMARC")
+        check(result["dns"]["dmarcAction"] == "preserved", "absent Brevo DMARC stays unpublished")
+        check(any(item["type"] == "MX" for item in result["dns"]["published"]), "mail MX still planned")
+        payload["brevoDnsRecords"] = []
+        write_json(infile, payload)
+        empty = run_installer(["--dry-run", "--input", str(infile), "--result", str(outfile)], environment)
+        check(empty.returncode == 0, f"empty records exit {empty.returncode}: {empty.stderr}")
+        payload["brevoDnsRecords"] = brevo_records()[:2]
+        write_json(infile, payload)
+        partial = run_installer(["--dry-run", "--input", str(infile), "--result", str(outfile)], environment)
+        check(partial.returncode == 2, f"partial records exit {partial.returncode}")
+        del payload["brevoDnsRecords"]
+        payload["relay"]["login"] = " "
+        write_json(infile, payload)
+        missing_login = run_installer(["--input", str(infile), "--result", str(outfile)], environment)
+        check(missing_login.returncode == 2, f"blank SMTP login exit {missing_login.returncode}")
+
+
 def test_invalid_input() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
@@ -523,6 +554,7 @@ def main() -> int:
     test_dmarc_and_spf_conflicts()
     test_artifacts_and_data_directory()
     test_provider_auth_and_crash()
+    test_smtp_login_without_brevo_records()
     test_invalid_input()
     if FAILURES:
         print(f"{FAILURES} failure(s)", file=sys.stderr)

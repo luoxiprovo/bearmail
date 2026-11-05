@@ -58,12 +58,13 @@ PUBLIC_SUFFIXES = {
     "com", "net", "org", "io", "app", "dev", "co", "uk", "us", "si", "de", "fr",
     "co.uk", "org.uk", "ac.uk", "com.au", "co.nz", "com.br", "co.jp",
 }
-INPUT_KEYS = {
+REQUIRED_INPUT_KEYS = {
     "schemaVersion", "operationId", "deploymentId", "generation",
     "mxCutoverAuthorized", "domain", "mailHostname", "webmailHostname",
-    "publicIpv4", "publicIpv6", "dataPath", "dns", "brevoDnsRecords",
+    "publicIpv4", "publicIpv6", "dataPath", "dns",
     "relay", "adminCredentialFile", "mailboxQuotaBytes", "release",
 }
+ALLOWED_INPUT_KEYS = REQUIRED_INPUT_KEYS | {"brevoDnsRecords"}
 DNS_KEYS = {"provider", "zone", "credentialFile"}
 RELAY_KEYS = {"host", "port", "tls", "login", "credentialFile"}
 RELEASE_KEYS = {"id", "artifactDir", "checksumFile"}
@@ -182,10 +183,10 @@ def require_abs(value, label: str) -> str:
 def validate_input(data) -> dict:
     if not isinstance(data, dict):
         raise InstallError("INVALID_INPUT", "The input must be a JSON object.", 2)
-    missing = sorted(INPUT_KEYS - set(data))
+    missing = sorted(REQUIRED_INPUT_KEYS - set(data))
     if missing:
         raise InstallError("INVALID_INPUT", f"Missing input field: {missing[0]}.", 2)
-    reject_unknown(data, INPUT_KEYS, "input")
+    reject_unknown(data, ALLOWED_INPUT_KEYS, "input")
     if data.get("schemaVersion") != 1:
         raise InstallError("INVALID_INPUT", "schemaVersion must be 1.", 2)
     generation = data.get("generation")
@@ -282,8 +283,12 @@ def validate_input(data) -> dict:
 
 
 def validate_brevo_records(records) -> list:
+    if records is None:
+        return []
     if not isinstance(records, list):
         raise InstallError("INVALID_INPUT", "brevoDnsRecords must be an array.", 2)
+    if not records:
+        return []
     found = {}
     for record in records:
         if not isinstance(record, dict):
@@ -611,11 +616,15 @@ def build_plan(config: dict, existing: list[dict], engine_dkim: dict | None) -> 
     domain_txt = records_at(existing, "TXT", domain, zone)
     spf = merge_spf([record["value"] for record in domain_txt if re.match(r"(?i)^v=spf1(?:\s|$)", record["value"])])
     brevo = {record["purpose"]: record for record in config["brevoDnsRecords"]}
-    dmarc_host = relative_host(brevo["dmarc"]["host"], zone)
+    dmarc_record = brevo.get("dmarc")
+    dmarc_host = relative_host(dmarc_record["host"], zone) if dmarc_record else relative_host("_dmarc", zone)
     dmarc_txt = records_at(existing, "TXT", dmarc_host, zone)
-    if not dmarc_txt:
+    if dmarc_record is None:
+        dmarc_action = "preserved"
+        dmarc_value = None
+    elif not dmarc_txt:
         dmarc_action = "published"
-        dmarc_value = brevo["dmarc"]["value"]
+        dmarc_value = dmarc_record["value"]
     elif len(dmarc_txt) != 1 or not valid_dmarc(dmarc_txt[0]["value"]):
         raise InstallError("DNS_RECORD_CONFLICT", "The existing DMARC record is not valid.", 1)
     else:
@@ -637,8 +646,9 @@ def build_plan(config: dict, existing: list[dict], engine_dkim: dict | None) -> 
             add("AAAA", host, config["publicIpv6"])
     add("MX", domain, f"10 {config['mailHostname']}")
     for purpose in ("brevo_code", "dkim"):
-        record = brevo[purpose]
-        add("TXT", record["host"], record["value"])
+        record = brevo.get(purpose)
+        if record:
+            add("TXT", record["host"], record["value"])
     if engine_dkim and engine_dkim.get("host") and engine_dkim.get("value"):
         add("TXT", engine_dkim["host"], engine_dkim["value"])
     add("TXT", domain, spf)
@@ -683,13 +693,11 @@ def build_plan(config: dict, existing: list[dict], engine_dkim: dict | None) -> 
 
 def find_engine_dkim(records: list[dict], config: dict) -> dict | None:
     zone = config["dns"]["zone"]
-    brevo_host = relative_host(
-        next(record["host"] for record in config["brevoDnsRecords"] if record["purpose"] == "dkim"),
-        zone,
-    )
+    dkim_rows = [record for record in config["brevoDnsRecords"] if record["purpose"] == "dkim"]
+    brevo_host = relative_host(dkim_rows[0]["host"], zone) if dkim_rows else None
     found = []
     for record in records:
-        if record["type"] != "TXT" or record["host"] == brevo_host:
+        if record["type"] != "TXT" or (brevo_host is not None and record["host"] == brevo_host):
             continue
         if "_domainkey" not in record["host"]:
             continue

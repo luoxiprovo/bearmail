@@ -31,11 +31,11 @@ The installer can assume the following, and it must still fail closed if the inp
 - The customer is a verified BearPortal user and has submitted installation. BearPortal sets `mxCutoverAuthorized` to `true` only for that submission.
 - One mail server is assigned to that user. `publicIpv4` is that server’s registered address.
 - An operator added a Brevo account in the BearPortal admin inventory. The account includes a Brevo REST API key, the SMTP login, and the SMTP key. Brevo’s documented API can create and authenticate a domain. It does not document an API that generates an SMTP key, so the operator supplies the SMTP key when adding the account. BearPortal stores it and passes it to this installer.
-- BearPortal assigned that Brevo account to this user and called `POST https://api.brevo.com/v3/senders/domains` with the customer domain. The response `dns_records` are copied into `brevoDnsRecords`. BearPortal does not invent SPF, DKIM, or Brevo-code values.
-- BearPortal saved the SMTP relay settings for this user: host `smtp-relay.brevo.com`, port `587`, STARTTLS required, the account’s SMTP login, and the SMTP key.
+- BearPortal assigned that Brevo account to this user. The installer needs the account’s SMTP login and SMTP key. It does not need Brevo’s DNS records and it does not call the Brevo API. BearPortal does not invent SPF, DKIM, or Brevo-code values.
+- BearPortal saved the SMTP relay settings for this user: host `smtp-relay.brevo.com`, port `587`, STARTTLS required, the account’s SMTP login, and the SMTP key. The login is the SMTP login from the Brevo account form, not the Brevo REST login email. The key is the SMTP key from that form, stored as `smtpKey`.
 - BearPortal does not create or mount `/var/lib/stalwart`. An applying run creates that directory if it is missing.
 
-Brevo will not mark the domain authenticated until the Brevo DNS records are visible. Those records are part of the set this installer publishes. BearPortal calls `PUT /v3/senders/domains/{domainName}/authenticate` only after this installer reports that the provider accepted the DNS writes. That follow-up call is BearPortal’s work. The installer does not call the Brevo API and does not receive the Brevo REST API key.
+Brevo domain authentication is BearPortal’s work. The customer DNS credential step publishes the Brevo verification records and calls `PUT /v3/senders/domains/{domainName}/authenticate`. This installer does not call the Brevo API, does not receive the Brevo REST API key, and does not require those DNS records. It configures the relay with the SMTP login and the SMTP key.
 
 ## 3. Command behavior
 
@@ -144,7 +144,7 @@ The result JSON contains no credential, token, password, or SMTP key. It may con
 | `dns.provider` | `namecom`, `hostinger`, or `godaddy`. Any other value is `DNS_PROVIDER_UNSUPPORTED`. |
 | `dns.zone` | The DNS zone that contains the mail domain. It may be the mail domain or an ancestor. The installer uses this zone for API calls. |
 | `dns.credentialFile` | See §5.2. |
-| `brevoDnsRecords` | One record each for `brevo_code`, `dkim`, and `dmarc`, copied from the Brevo domain response. `type` is `TXT`. `host` is the hostname Brevo returned, relative to the zone, with `@` meaning the zone apex. `value` is the exact TXT value. The installer publishes these values and does not rewrite them. |
+| `brevoDnsRecords` | Optional. Omit the field, or send an empty array, when BearPortal does not have Brevo’s three TXT records. The installer then publishes no Brevo code, no Brevo DKIM, and no DMARC value. When the field is present and not empty, it is one TXT each for `brevo_code`, `dkim`, and `dmarc`. A partial array is rejected. `host` is relative to the zone, with `@` meaning the apex. The installer publishes those values and does not rewrite them. It does not invent a TXT DKIM value. |
 | `relay.host` | `smtp-relay.brevo.com` for this beta. |
 | `relay.port` | `587`. |
 | `relay.tls` | `starttls-required`. Cleartext SMTP and optional STARTTLS are rejected. |
@@ -193,8 +193,8 @@ The installer is the only program that updates DNS for this deployment. One appl
 | A | `webmailHostname` | `publicIpv4` |
 | AAAA | `mailHostname` and `webmailHostname` | `publicIpv6`, only when it is non-null |
 | MX | `domain` | priority `10`, target `mailHostname` |
-| TXT | host and value of the `brevo_code` input | exact Brevo value |
-| TXT | host and value of the Brevo `dkim` input | exact Brevo value |
+| TXT | host and value of the `brevo_code` input, only when that record is present | exact Brevo value |
+| TXT | host and value of the Brevo `dkim` input, only when that record is present | exact Brevo value |
 | TXT | engine DKIM name | the selector and key generated or already stored for this installation |
 | TXT | `domain` SPF | one SPF policy that authorizes Brevo and this server, as specified in §7.3 |
 | TXT | DMARC | as specified in §7.4 |
@@ -227,9 +227,10 @@ Publish exactly one SPF TXT record at `domain`.
 
 ### 7.4 DMARC
 
-- When `_dmarc.<domain>` has no TXT record, publish the `dmarc` value from `brevoDnsRecords`.
-- When a DMARC record already exists, leave it in place and set `dmarcAction` to `preserved` in the result. Do not replace a stricter policy with Brevo’s `p=none` example.
-- When the existing record is not valid DMARC, fail with `DNS_RECORD_CONFLICT`.
+- When `brevoDnsRecords` includes `dmarc` and `_dmarc.<domain>` has no TXT record, publish that `dmarc` value.
+- When `brevoDnsRecords` is omitted or empty, do not publish a DMARC record. An existing DMARC record stays in place.
+- When a DMARC record already exists and the input includes `dmarc`, leave the existing record in place and set `dmarcAction` to `preserved`. Do not replace a stricter policy with Brevo’s `p=none` example.
+- When the input includes `dmarc` and the existing record is not valid DMARC, fail with `DNS_RECORD_CONFLICT`.
 
 ### 7.5 Write order inside one run
 

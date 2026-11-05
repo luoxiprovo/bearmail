@@ -107,7 +107,9 @@ TTL is 300 seconds for Name.com and Hostinger. GoDaddy's minimum is 600 seconds.
 
 `publicIpv6` is `null` when the server has no public IPv6 address. The installer then removes a stale AAAA record on the mail and webmail names.
 
-`brevoDnsRecords` is the `dns_records` array from Brevo's create-domain response: one TXT each for `brevo_code`, `dkim`, and `dmarc`. Copy the host and value. Do not invent them.
+`brevoDnsRecords` is optional. Omit it, or send `[]`, when BearPortal does not have three TXT records. The installer then does not publish a Brevo code, a Brevo DKIM record, or a DMARC record. When the field is present and not empty, it is one TXT each for `brevo_code`, `dkim`, and `dmarc`. Copy the host and value. Do not invent them. A partial array is invalid.
+
+The required Brevo account fields are `relay.login` and the relay credential file `{"smtpKey":"..."}`. `relay.login` is the SMTP login from the Brevo account form. `smtpKey` is the SMTP key from that form. The Brevo REST API key and the account login email are not installer inputs.
 
 `relay.host` is `smtp-relay.brevo.com`, `relay.port` is `587`, and `relay.tls` is `starttls-required`.
 
