@@ -33,7 +33,7 @@ export function ConnectionPage() {
   return (
     <div className="connect-page">
       <section className="connect-story">
-        <div className="brand brand-light"><span className="brand-mark">B</span><span>{config?.appName}</span></div>
+        <div className="brand brand-light"><img className="brand-mark" src="/icon.svg" alt="" /><span>{config?.appName}</span></div>
         <div className="story-copy">
           <p className="eyebrow">YOUR MAIL. YOUR CALENDAR. YOUR SERVER.</p>
           <h1>A calmer place for the work that arrives.</h1>

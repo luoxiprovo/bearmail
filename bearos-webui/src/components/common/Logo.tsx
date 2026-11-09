@@ -11,7 +11,8 @@ import { getLogoState, loadLogoOnce, subscribeToLogo } from '@/lib/logoCache';
 export function DefaultLogo() {
   const { t } = useTranslation();
   return (
-    <span aria-label={t('logo.alt', 'BearOS')} className="text-2xl font-semibold tracking-tight">
+    <span aria-label={t('logo.alt', 'BearOS')} className="inline-flex items-center gap-2.5 text-xl font-semibold tracking-tight">
+      <img src="./icon.svg" alt="" className="h-8 w-8 shrink-0" />
       BearOS
     </span>
   );
