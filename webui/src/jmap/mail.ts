@@ -81,6 +81,108 @@ export async function getEmails(
   return { emails: get.list, total: query.total ?? get.list.length, queryState: query.queryState };
 }
 
+const SENDER_EXCLUDED_ROLES = new Set(["sent", "drafts", "junk", "trash"]);
+
+export interface SenderAddress {
+  name: string;
+  email: string;
+}
+
+export interface RecipientToken {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export function uniqueSenderAddresses(emails: Array<Pick<Email, "from">>, ownEmails: string[] = []): SenderAddress[] {
+  const own = new Set(ownEmails.map((email) => email.trim().toLowerCase()).filter(Boolean));
+  const seen = new Set<string>();
+  const senders: SenderAddress[] = [];
+  for (const email of emails) {
+    for (const from of email.from ?? []) {
+      const address = from.email?.trim() ?? "";
+      const key = address.toLowerCase();
+      if (!address.includes("@") || own.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      senders.push({ name: from.name?.trim() ?? "", email: address });
+    }
+  }
+  return senders;
+}
+
+export function mergeSenderAddresses(primary: SenderAddress[], extra: SenderAddress[]): SenderAddress[] {
+  const seen = new Set(primary.map((sender) => sender.email.toLowerCase()));
+  const merged = [...primary];
+  for (const sender of extra) {
+    const key = sender.email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(sender);
+  }
+  return merged;
+}
+
+export function matchSenderAddresses(senders: SenderAddress[], query: string, limit = 8): SenderAddress[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  return senders
+    .map((sender, index) => {
+      const email = sender.email.toLowerCase();
+      const name = sender.name.toLowerCase();
+      const rank = email.startsWith(needle) ? 0 : name.startsWith(needle) ? 1 : email.includes(needle) ? 2 : name.includes(needle) ? 3 : -1;
+      return { sender, index, rank };
+    })
+    .filter((item) => item.rank >= 0)
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .slice(0, limit)
+    .map((item) => item.sender);
+}
+
+export function recipientTokenAt(value: string, cursor: number): RecipientToken {
+  const safe = Math.max(0, Math.min(cursor, value.length));
+  const comma = value.lastIndexOf(",", Math.max(0, safe - 1));
+  const start = comma === -1 ? 0 : comma + 1;
+  const next = value.indexOf(",", safe);
+  const end = next === -1 ? value.length : next;
+  return { start, end, text: value.slice(start, end).trim() };
+}
+
+export function replaceRecipientToken(value: string, token: RecipientToken, email: string): string {
+  const before = value.slice(0, token.start).replace(/\s+$/, "").replace(/,\s*$/, "");
+  const after = value.slice(token.end).replace(/^\s*,?\s*/, "");
+  return `${before ? `${before}, ` : ""}${email}${after ? `, ${after}` : ""}`;
+}
+
+export async function listSenderAddresses(
+  client: JmapClient,
+  mailboxes: Mailbox[],
+  options: { from?: string; ownEmails?: string[]; limit?: number; signal?: AbortSignal } = {},
+): Promise<SenderAddress[]> {
+  const conditions: Record<string, unknown>[] = [];
+  const exclude = mailboxes.filter((box) => box.role && SENDER_EXCLUDED_ROLES.has(box.role)).map((box) => box.id);
+  if (exclude.length) conditions.push({ inMailboxOtherThan: exclude });
+  const from = options.from?.trim();
+  if (from) conditions.push({ from });
+  const filter = conditions.length <= 1 ? (conditions[0] ?? {}) : { operator: "AND", conditions };
+  const response = await client.request([CAPABILITIES.mail], [
+    ["Email/query", {
+      accountId: client.mailAccountId,
+      filter,
+      sort: [{ property: "receivedAt", isAscending: false }],
+      collapseThreads: false,
+      position: 0,
+      limit: options.limit ?? (from ? 30 : 200),
+    }, "query"],
+    ["Email/get", {
+      accountId: client.mailAccountId,
+      "#ids": { resultOf: "query", name: "Email/query", path: "/ids" },
+      properties: ["id", "from"],
+    }, "get"],
+  ], options.signal);
+  const get = findResponse<GetResult<Email>>(response.methodResponses, "get");
+  return uniqueSenderAddresses(get.list, options.ownEmails ?? []);
+}
+
 export async function getEmail(client: JmapClient, id: string): Promise<Email> {
   const result = await client.call<GetResult<Email>>(CAPABILITIES.mail, "Email/get", {
     accountId: client.mailAccountId,

@@ -263,6 +263,12 @@
   .compose-title h1 { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; font-size: 26px; font-weight: 500; }
   .compose-field { display: grid; min-height: 47px; grid-template-columns: 70px 1fr; align-items: center; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 12px; font-weight: 750; }
   .compose-field input { height: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); }
+  .recipient-field { position: relative; align-self: stretch; display: flex; align-items: center; min-width: 0; }
+  .recipient-field input { width: 100%; }
+  .recipient-suggestions { position: absolute; z-index: 6; top: calc(100% - 2px); left: 0; right: 0; max-height: 240px; margin: 0; padding: 4px; overflow: auto; list-style: none; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); box-shadow: var(--shadow); }
+  .recipient-suggestions button { display: flex; width: 100%; align-items: baseline; justify-content: space-between; gap: 12px; border-radius: 7px; padding: 8px 10px; color: var(--ink); text-align: left; font-weight: 650; }
+  .recipient-suggestions button[aria-selected="true"], .recipient-suggestions button:hover { background: var(--line-soft); }
+  .recipient-suggestions small { overflow: hidden; color: var(--muted); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
   .compose-body { width: 100%; min-height: 330px; border: 0; padding: 22px 0; resize: vertical; outline: 0; background: transparent; line-height: 1.65; }
   .compose-editor { margin: 16px 0 8px; }
   .richtext { display: grid; gap: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-strong); overflow: hidden; }

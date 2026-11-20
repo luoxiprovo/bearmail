@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildMimeMessage, composeDraftBody, composeDraftHtml, forwardedMessage, forwardSubject, identitySignatureHtml, identitySignatureText, isDraftEmail, listedMailboxes, patchEmails, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, updateIdentitySignatures } from "./mail";
+import { buildMimeMessage, composeDraftBody, composeDraftHtml, forwardedMessage, forwardSubject, identitySignatureHtml, identitySignatureText, isDraftEmail, listSenderAddresses, listedMailboxes, matchSenderAddresses, mergeSenderAddresses, patchEmails, recipientTokenAt, replaceRecipientToken, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, uniqueSenderAddresses, updateIdentitySignatures } from "./mail";
 import type { JmapClient } from "./client";
 import type { Email } from "../types";
 
@@ -12,6 +12,75 @@ describe("mailbox list order", () => {
       { id: "drafts", name: "Drafts", role: "drafts", sortOrder: 3 },
     ]);
     expect(ordered.map((box) => box.name)).toEqual(["Inbox", "Drafts", "Archive", "Projects"]);
+  });
+});
+
+describe("sender suggestions", () => {
+  const senders = [
+    { name: "Bob Stone", email: "bob@example.test" },
+    { name: "Ada Lovelace", email: "ada@example.test" },
+    { name: "", email: "notes@example.test" },
+  ];
+
+  it("keeps the newest sender for each address and skips this account", () => {
+    expect(uniqueSenderAddresses([
+      { from: [{ name: "Bob Stone", email: "bob@example.test" }, { email: "ada@example.test" }] },
+      { from: [{ name: "Robert", email: "Bob@example.test" }] },
+      { from: [{ name: "Notes", email: "notes@example.test" }] },
+    ], ["ada@example.test"])).toEqual([
+      { name: "Bob Stone", email: "bob@example.test" },
+      { name: "Notes", email: "notes@example.test" },
+    ]);
+  });
+
+  it("matches a typed name or address and keeps the recent order within a rank", () => {
+    expect(matchSenderAddresses(senders, "a").map((sender) => sender.email)).toEqual(["ada@example.test", "bob@example.test", "notes@example.test"]);
+    expect(matchSenderAddresses(senders, "stone").map((sender) => sender.email)).toEqual(["bob@example.test"]);
+    expect(matchSenderAddresses(senders, "")).toEqual([]);
+  });
+
+  it("replaces only the address being typed", () => {
+    const value = "ada@example.test, bo";
+    const token = recipientTokenAt(value, value.length);
+    expect(token.text).toBe("bo");
+    expect(replaceRecipientToken(value, token, "bob@example.test")).toBe("ada@example.test, bob@example.test");
+  });
+
+  it("asks for mail received by this account, excluding sent, drafts, junk, and trash", async () => {
+    let arguments_: Record<string, unknown> | undefined;
+    const client = {
+      mailAccountId: "account-1",
+      request: async (_using: unknown, calls: Array<[string, Record<string, unknown>, string]>) => {
+        arguments_ = calls[0][1];
+        return {
+          methodResponses: [
+            ["Email/query", { ids: ["m1"] }, "query"],
+            ["Email/get", { list: [{ id: "m1", from: [{ name: "Bob Stone", email: "bob@example.test" }] }] }, "get"],
+          ],
+        };
+      },
+    } as unknown as JmapClient;
+
+    const found = await listSenderAddresses(client, [
+      { id: "inbox", name: "Inbox", role: "inbox" },
+      { id: "sent", name: "Sent", role: "sent" },
+      { id: "drafts", name: "Drafts", role: "drafts" },
+      { id: "junk", name: "Junk", role: "junk" },
+      { id: "trash", name: "Trash", role: "trash" },
+    ], { from: "bo", ownEmails: ["ada@example.test"] });
+
+    expect(found).toEqual([{ name: "Bob Stone", email: "bob@example.test" }]);
+    expect(arguments_).toMatchObject({
+      filter: { operator: "AND", conditions: [{ inMailboxOtherThan: ["sent", "drafts", "junk", "trash"] }, { from: "bo" }] },
+      sort: [{ property: "receivedAt", isAscending: false }],
+    });
+  });
+
+  it("appends senders that were not in the recent list", () => {
+    expect(mergeSenderAddresses(senders.slice(0, 1), [senders[1], senders[0]]).map((sender) => sender.email)).toEqual([
+      "bob@example.test",
+      "ada@example.test",
+    ]);
   });
 });
 

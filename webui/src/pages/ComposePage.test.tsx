@@ -157,4 +157,28 @@ describe("compose page", () => {
       expect.objectContaining({ destroy: ["draft-1"] }),
     ));
   });
+
+  it("offers people who have emailed this account and inserts the selected address", async () => {
+    const request = vi.fn().mockResolvedValue({
+      methodResponses: [
+        ["Email/query", { ids: ["m1", "m2"] }, "query"],
+        ["Email/get", { list: [
+          { id: "m1", from: [{ name: "Bob Stone", email: "bob@example.test" }] },
+          { id: "m2", from: [{ name: "Ada Rivera", email: "ada@example.test" }] },
+          { id: "m3", from: [{ name: "Cara Miles", email: "cara@example.test" }] },
+        ] }, "get"],
+      ],
+    });
+    composeApp({ mailAccountId: "account", request } as unknown as Partial<JmapClient>);
+    render(<Router><ComposePage /></Router>);
+
+    const to = screen.getByPlaceholderText("name@example.com");
+    fireEvent.change(to, { target: { value: "bo" } });
+    const option = await screen.findByRole("option", { name: /Bob Stone/ });
+    expect(screen.queryByRole("option", { name: /Ada Rivera/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Cara Miles/ })).not.toBeInTheDocument();
+    fireEvent.click(option);
+    expect(to).toHaveValue("bob@example.test");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
 });

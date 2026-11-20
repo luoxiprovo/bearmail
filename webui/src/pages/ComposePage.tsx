@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, FileText, Image as ImageIcon, Paperclip, Save, Send, Trash2, X } from "lucide-react";
+import { RecipientField } from "../components/RecipientField";
 import { RichTextEditor, type RichTextEditorHandle } from "../components/RichTextEditor";
 import { useApp } from "../app-context";
 import {
   composeDraftBody, composeDraftHtml, destroyEmail, draftBodyFromEmail, forwardedMessage, forwardedMessageHtml,
-  forwardSubject, getEmail, identitySignatureHtml, identitySignatureText, replyQuote, replyQuoteHtml, replySubject,
-  saveDraft, sendDraft,
+  forwardSubject, getEmail, identitySignatureHtml, identitySignatureText, listSenderAddresses, mergeSenderAddresses,
+  replyQuote, replyQuoteHtml, replySubject, saveDraft, sendDraft, type SenderAddress,
 } from "../jmap/mail";
 import { fileToCompressedDataUrl, htmlToPlainText } from "../richtext";
-import type { DraftInput, Email } from "../types";
+import type { DraftInput, Email, Mailbox } from "../types";
+import type { JmapClient } from "../jmap/client";
 import { useLocationState, useNavigate } from "../router";
 
 interface ComposeState { replyTo?: Email; replyAll?: boolean; forward?: Email }
@@ -21,6 +23,7 @@ export function ComposePage({ draftId: routeDraftId }: { draftId?: string }) {
   const { client, mailboxes, identities, notify } = useApp();
   const navigate = useNavigate();
   const identity = identities[0];
+  const { suggestions, searchSenders } = useSenderDirectory(client, mailboxes, identity?.email);
   const draftMailbox = mailboxes.find((box) => box.role === "drafts");
   const sentMailbox = mailboxes.find((box) => box.role === "sent");
   const unsignedBody = useMemo(
@@ -207,8 +210,8 @@ export function ComposePage({ draftId: routeDraftId }: { draftId?: string }) {
       <div className="compose-sheet">
         <div className="compose-title"><p className="eyebrow">{forward ? "FORWARD" : reply ? "REPLY" : "NEW MESSAGE"}</p><h1>{input.subject || "Write something worth reading"}</h1></div>
         <label className="compose-field"><span>From</span><input disabled value={`${identity.name} <${identity.email}>`} /></label>
-        <label className="compose-field"><span>To</span><input autoFocus required placeholder="name@example.com" value={input.to} onChange={(event) => update("to", event.target.value)} /></label>
-        <label className="compose-field"><span>Cc</span><input placeholder="Optional" value={input.cc ?? ""} onChange={(event) => update("cc", event.target.value)} /></label>
+        <div className="compose-field"><label htmlFor="compose-to">To</label><RecipientField id="compose-to" autoFocus required placeholder="name@example.com" value={input.to} onChange={(value) => update("to", value)} suggestions={suggestions} onSearch={searchSenders} /></div>
+        <div className="compose-field"><label htmlFor="compose-cc">Cc</label><RecipientField id="compose-cc" placeholder="Optional" value={input.cc ?? ""} onChange={(value) => update("cc", value)} suggestions={suggestions} onSearch={searchSenders} /></div>
         <label className="compose-field"><span>Subject</span><input placeholder="Subject" value={input.subject} onChange={(event) => update("subject", event.target.value)} /></label>
         <RichTextEditor
           ref={editorRef}
@@ -234,6 +237,38 @@ export function ComposePage({ draftId: routeDraftId }: { draftId?: string }) {
       </div>
     </form>
   );
+}
+
+function useSenderDirectory(client: JmapClient | null, mailboxes: Mailbox[], ownEmail?: string) {
+  const [suggestions, setSuggestions] = useState<SenderAddress[]>([]);
+  const mailboxesRef = useRef(mailboxes);
+  mailboxesRef.current = mailboxes;
+  const directoryKey = mailboxes.map((box) => `${box.id}:${box.role ?? ""}`).join("\n");
+  const ownEmails = useMemo(() => (ownEmail ? [ownEmail] : []), [ownEmail]);
+
+  useEffect(() => {
+    if (!client) return;
+    const controller = new AbortController();
+    listSenderAddresses(client, mailboxesRef.current, { ownEmails, signal: controller.signal })
+      .then((found) => {
+        if (!controller.signal.aborted) setSuggestions((current) => mergeSenderAddresses(found, current));
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [client, directoryKey, ownEmails]);
+
+  const searchSenders = useCallback((text: string) => {
+    if (!client) return () => undefined;
+    const controller = new AbortController();
+    listSenderAddresses(client, mailboxesRef.current, { from: text, ownEmails, signal: controller.signal })
+      .then((found) => {
+        if (!controller.signal.aborted) setSuggestions((current) => mergeSenderAddresses(current, found));
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [client, ownEmails]);
+
+  return { suggestions, searchSenders };
 }
 
 function draftFingerprint(input: DraftInput, attachments: File[]): string {
