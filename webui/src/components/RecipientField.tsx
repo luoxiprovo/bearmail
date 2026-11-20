@@ -102,7 +102,7 @@ export function RecipientField({ id, value, onChange, suggestions, onSearch, pla
         }}
       />
       {visible && (
-        <ul id={listId} className="recipient-suggestions" role="listbox" aria-label="People who emailed you">
+        <ul id={listId} className="recipient-suggestions" role="listbox" aria-label="People from your mail">
           {matches.map((sender, index) => (
             <li key={sender.email} role="presentation">
               <button

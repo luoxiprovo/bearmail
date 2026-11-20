@@ -158,17 +158,25 @@ describe("compose page", () => {
     ));
   });
 
-  it("offers people who have emailed this account and inserts the selected address", async () => {
-    const request = vi.fn().mockResolvedValue({
-      methodResponses: [
-        ["Email/query", { ids: ["m1", "m2"] }, "query"],
-        ["Email/get", { list: [
-          { id: "m1", from: [{ name: "Bob Stone", email: "bob@example.test" }] },
-          { id: "m2", from: [{ name: "Ada Rivera", email: "ada@example.test" }] },
-          { id: "m3", from: [{ name: "Cara Miles", email: "cara@example.test" }] },
-        ] }, "get"],
-      ],
-    });
+  it("offers people who emailed this account and people this account sent mail to", async () => {
+    const request = vi.fn().mockImplementation(async (_using: unknown, calls: Array<[string, unknown, string]>) => ({
+      methodResponses: calls.map((call) => {
+        const tag = call[2];
+        if (tag === "get") {
+          return ["Email/get", { list: [
+            { id: "m1", from: [{ name: "Bob Stone", email: "bob@example.test" }] },
+            { id: "m2", from: [{ name: "Ada Rivera", email: "ada@example.test" }] },
+            { id: "m3", from: [{ name: "Cara Miles", email: "cara@example.test" }] },
+          ] }, tag];
+        }
+        if (tag === "sentGet") {
+          return ["Email/get", { list: [
+            { id: "s1", to: [{ name: "Bea Quinn", email: "bea@example.test" }], cc: [{ name: "Ned Cole", email: "ned@example.test" }] },
+          ] }, tag];
+        }
+        return ["Email/query", { ids: ["m1"] }, tag];
+      }),
+    }));
     composeApp({ mailAccountId: "account", request } as unknown as Partial<JmapClient>);
     render(<Router><ComposePage /></Router>);
 
@@ -180,5 +188,9 @@ describe("compose page", () => {
     fireEvent.click(option);
     expect(to).toHaveValue("bob@example.test");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    fireEvent.change(to, { target: { value: "be" } });
+    fireEvent.click(await screen.findByRole("option", { name: /Bea Quinn/ }));
+    expect(to).toHaveValue("bea@example.test");
   });
 });

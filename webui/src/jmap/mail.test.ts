@@ -22,6 +22,19 @@ describe("sender suggestions", () => {
     { name: "", email: "notes@example.test" },
   ];
 
+  it("includes people this account sent mail to and skips this account", () => {
+    expect(uniqueSenderAddresses([
+      {
+        to: [{ name: "Bea Quinn", email: "bea@example.test" }, { email: "ada@example.test" }],
+        cc: [{ name: "Ned Cole", email: "ned@example.test" }],
+        bcc: [{ name: "Bea Again", email: "Bea@example.test" }],
+      },
+    ], ["ada@example.test"], ["to", "cc", "bcc"])).toEqual([
+      { name: "Bea Quinn", email: "bea@example.test" },
+      { name: "Ned Cole", email: "ned@example.test" },
+    ]);
+  });
+
   it("keeps the newest sender for each address and skips this account", () => {
     expect(uniqueSenderAddresses([
       { from: [{ name: "Bob Stone", email: "bob@example.test" }, { email: "ada@example.test" }] },
@@ -46,16 +59,18 @@ describe("sender suggestions", () => {
     expect(replaceRecipientToken(value, token, "bob@example.test")).toBe("ada@example.test, bob@example.test");
   });
 
-  it("asks for mail received by this account, excluding sent, drafts, junk, and trash", async () => {
-    let arguments_: Record<string, unknown> | undefined;
+  it("asks for people who emailed this account and people this account sent mail to", async () => {
+    let calls: Array<[string, Record<string, unknown>, string]> = [];
     const client = {
       mailAccountId: "account-1",
-      request: async (_using: unknown, calls: Array<[string, Record<string, unknown>, string]>) => {
-        arguments_ = calls[0][1];
+      request: async (_using: unknown, methodCalls: Array<[string, Record<string, unknown>, string]>) => {
+        calls = methodCalls;
         return {
           methodResponses: [
             ["Email/query", { ids: ["m1"] }, "query"],
             ["Email/get", { list: [{ id: "m1", from: [{ name: "Bob Stone", email: "bob@example.test" }] }] }, "get"],
+            ["Email/query", { ids: ["s1"] }, "sentQuery"],
+            ["Email/get", { list: [{ id: "s1", to: [{ name: "Bea Quinn", email: "bea@example.test" }], cc: [{ email: "bob@example.test" }], bcc: [{ name: "Ada", email: "ada@example.test" }] }] }, "sentGet"],
           ],
         };
       },
@@ -69,11 +84,18 @@ describe("sender suggestions", () => {
       { id: "trash", name: "Trash", role: "trash" },
     ], { from: "bo", ownEmails: ["ada@example.test"] });
 
-    expect(found).toEqual([{ name: "Bob Stone", email: "bob@example.test" }]);
-    expect(arguments_).toMatchObject({
+    expect(found).toEqual([
+      { name: "Bob Stone", email: "bob@example.test" },
+      { name: "Bea Quinn", email: "bea@example.test" },
+    ]);
+    expect(calls[0][1]).toMatchObject({
       filter: { operator: "AND", conditions: [{ inMailboxOtherThan: ["sent", "drafts", "junk", "trash"] }, { from: "bo" }] },
       sort: [{ property: "receivedAt", isAscending: false }],
     });
+    expect(calls[2][1]).toMatchObject({
+      filter: { operator: "AND", conditions: [{ inMailbox: "sent" }, { operator: "OR", conditions: [{ to: "bo" }, { cc: "bo" }, { bcc: "bo" }] }] },
+    });
+    expect(calls[3][1]).toMatchObject({ properties: ["id", "to", "cc", "bcc"] });
   });
 
   it("appends senders that were not in the recent list", () => {

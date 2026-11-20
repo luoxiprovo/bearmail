@@ -81,6 +81,7 @@ export interface Email {
   from?: EmailAddress[];
   to?: EmailAddress[];
   cc?: EmailAddress[];
+  bcc?: EmailAddress[];
   subject?: string;
   preview?: string;
   hasAttachment?: boolean;

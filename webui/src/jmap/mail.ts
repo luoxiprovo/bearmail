@@ -1,5 +1,5 @@
 import { bytesToBase64, extractInlineImages, htmlToPlainText, looksLikeHtml, plainTextToHtml, sanitizeComposeHtml } from "../richtext";
-import { CAPABILITIES, type DraftInput, type Email, type EmailBodyPart, type Identity, type Mailbox } from "../types";
+import { CAPABILITIES, type DraftInput, type Email, type EmailBodyPart, type Identity, type JmapMethodCall, type Mailbox } from "../types";
 import { JmapClient, JmapError, findResponse } from "./client";
 
 interface GetResult<T> { accountId: string; state: string; list: T[]; notFound?: string[] }
@@ -97,6 +97,7 @@ export async function getEmails(
 }
 
 const SENDER_EXCLUDED_ROLES = new Set(["sent", "drafts", "junk", "trash"]);
+type AddressField = "from" | "to" | "cc" | "bcc";
 
 export interface SenderAddress {
   name: string;
@@ -109,17 +110,23 @@ export interface RecipientToken {
   text: string;
 }
 
-export function uniqueSenderAddresses(emails: Array<Pick<Email, "from">>, ownEmails: string[] = []): SenderAddress[] {
+export function uniqueSenderAddresses(
+  emails: Array<Partial<Pick<Email, AddressField>>>,
+  ownEmails: string[] = [],
+  fields: AddressField[] = ["from"],
+): SenderAddress[] {
   const own = new Set(ownEmails.map((email) => email.trim().toLowerCase()).filter(Boolean));
   const seen = new Set<string>();
   const senders: SenderAddress[] = [];
   for (const email of emails) {
-    for (const from of email.from ?? []) {
-      const address = from.email?.trim() ?? "";
-      const key = address.toLowerCase();
-      if (!address.includes("@") || own.has(key) || seen.has(key)) continue;
-      seen.add(key);
-      senders.push({ name: from.name?.trim() ?? "", email: address });
+    for (const field of fields) {
+      for (const party of email[field] ?? []) {
+        const address = party.email?.trim() ?? "";
+        const key = address.toLowerCase();
+        if (!address.includes("@") || own.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        senders.push({ name: party.name?.trim() ?? "", email: address });
+      }
     }
   }
   return senders;
@@ -173,29 +180,50 @@ export async function listSenderAddresses(
   mailboxes: Mailbox[],
   options: { from?: string; ownEmails?: string[]; limit?: number; signal?: AbortSignal } = {},
 ): Promise<SenderAddress[]> {
-  const conditions: Record<string, unknown>[] = [];
+  const text = options.from?.trim();
+  const limit = options.limit ?? (text ? 30 : 200);
+  const received: Record<string, unknown>[] = [];
   const exclude = mailboxes.filter((box) => box.role && SENDER_EXCLUDED_ROLES.has(box.role)).map((box) => box.id);
-  if (exclude.length) conditions.push({ inMailboxOtherThan: exclude });
-  const from = options.from?.trim();
-  if (from) conditions.push({ from });
-  const filter = conditions.length <= 1 ? (conditions[0] ?? {}) : { operator: "AND", conditions };
-  const response = await client.request([CAPABILITIES.mail], [
-    ["Email/query", {
-      accountId: client.mailAccountId,
-      filter,
-      sort: [{ property: "receivedAt", isAscending: false }],
-      collapseThreads: false,
-      position: 0,
-      limit: options.limit ?? (from ? 30 : 200),
-    }, "query"],
+  if (exclude.length) received.push({ inMailboxOtherThan: exclude });
+  if (text) received.push({ from: text });
+  const sentId = mailboxes.find((box) => box.role === "sent")?.id;
+  const sent: Record<string, unknown>[] = [];
+  if (sentId) {
+    sent.push({ inMailbox: sentId });
+    if (text) sent.push({ operator: "OR", conditions: [{ to: text }, { cc: text }, { bcc: text }] });
+  }
+  const query = (filter: Record<string, unknown>, tag: string): JmapMethodCall => ["Email/query", {
+    accountId: client.mailAccountId,
+    filter,
+    sort: [{ property: "receivedAt", isAscending: false }],
+    collapseThreads: false,
+    position: 0,
+    limit,
+  }, tag];
+  const calls: JmapMethodCall[] = [
+    query(received.length <= 1 ? (received[0] ?? {}) : { operator: "AND", conditions: received }, "query"),
     ["Email/get", {
       accountId: client.mailAccountId,
       "#ids": { resultOf: "query", name: "Email/query", path: "/ids" },
       properties: ["id", "from"],
     }, "get"],
-  ], options.signal);
-  const get = findResponse<GetResult<Email>>(response.methodResponses, "get");
-  return uniqueSenderAddresses(get.list, options.ownEmails ?? []);
+  ];
+  if (sentId) {
+    calls.push(query(sent.length === 1 ? sent[0] : { operator: "AND", conditions: sent }, "sentQuery"));
+    calls.push(["Email/get", {
+      accountId: client.mailAccountId,
+      "#ids": { resultOf: "sentQuery", name: "Email/query", path: "/ids" },
+      properties: ["id", "to", "cc", "bcc"],
+    }, "sentGet"]);
+  }
+  const response = await client.request([CAPABILITIES.mail], calls, options.signal);
+  const own = options.ownEmails ?? [];
+  const receivedMessages = findResponse<GetResult<Email>>(response.methodResponses, "get").list;
+  const sentMessages = sentId ? findResponse<GetResult<Email>>(response.methodResponses, "sentGet").list : [];
+  return mergeSenderAddresses(
+    uniqueSenderAddresses(receivedMessages, own, ["from"]),
+    uniqueSenderAddresses(sentMessages, own, ["to", "cc", "bcc"]),
+  );
 }
 
 export async function getEmail(client: JmapClient, id: string): Promise<Email> {
