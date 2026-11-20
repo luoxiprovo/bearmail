@@ -50,9 +50,24 @@ export async function createMailbox(client: JmapClient, name: string): Promise<M
   return { id: created.id, name: created.name ?? trimmed, parentId: created.parentId ?? null, role: created.role ?? null };
 }
 
+export const MAIL_PAGE_SIZES = [50, 100] as const;
+export type MailPageSize = (typeof MAIL_PAGE_SIZES)[number];
+
+export function mailPageWindow(position: number, pageSize: number, total: number): { start: number; end: number } | null {
+  if (total <= 0 || pageSize <= 0) return null;
+  const startIndex = Math.max(0, Math.min(position, total - 1));
+  return { start: startIndex + 1, end: Math.min(startIndex + pageSize, total) };
+}
+
+export function mailPageLabel(position: number, pageSize: number, total: number): string {
+  const window = mailPageWindow(position, pageSize, total);
+  if (!window) return "";
+  return `${window.start.toLocaleString()}-${window.end.toLocaleString()} of ${total.toLocaleString()}`;
+}
+
 export async function getEmails(
   client: JmapClient,
-  options: { mailboxId?: string; text?: string; hasAttachment?: boolean; hasKeyword?: string; position?: number; limit?: number; signal?: AbortSignal },
+  options: { mailboxId?: string; text?: string; hasAttachment?: boolean; hasKeyword?: string; position?: number; limit?: number; newestFirst?: boolean; signal?: AbortSignal },
 ): Promise<EmailPage> {
   const conditions: Record<string, unknown>[] = [];
   if (options.mailboxId) conditions.push({ inMailbox: options.mailboxId });
@@ -64,7 +79,7 @@ export async function getEmails(
     ["Email/query", {
       accountId: client.mailAccountId,
       filter,
-      sort: [{ property: "receivedAt", isAscending: false }],
+      sort: [{ property: "receivedAt", isAscending: options.newestFirst === false }],
       collapseThreads: true,
       calculateTotal: true,
       position: options.position ?? 0,

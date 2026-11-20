@@ -41,7 +41,9 @@ describe("mail list", () => {
 
     expect(await screen.findByText("Unread note")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Inbox/ })).toHaveTextContent("3");
-    expect(screen.getByText(/2 conversations/)).toHaveTextContent("3 unread");
+    expect(screen.getByText(/1-2 of 2/)).toHaveTextContent("3 unread");
+    expect(screen.getByRole("button", { name: "Older" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Newer" })).toBeDisabled();
 
     fireEvent.click(screen.getByLabelText("Select Unread note"));
     fireEvent.click(screen.getByRole("button", { name: "Mark read" }));
@@ -251,6 +253,48 @@ describe("mail list", () => {
     resolveFirst(page("mail-1", "Stale note"));
     await waitFor(() => expect(screen.queryByText("Stale note")).not.toBeInTheDocument());
     expect(screen.getByText("Fresh note")).toBeInTheDocument();
+  });
+
+  it("moves between newer and older pages and can list the oldest mail first", async () => {
+    const request = vi.fn().mockImplementation(async (_capability: unknown, calls: Array<[string, { position: number; limit: number; sort: Array<{ isAscending: boolean }> }]>) => {
+      const query = calls[0][1];
+      const id = `${query.sort[0].isAscending ? "old" : "new"}-${query.position}`;
+      return {
+        methodResponses: [
+          ["Email/query", { ids: [id], total: 120, queryState: "q" }, "query"],
+          ["Email/get", { list: [
+            { id, mailboxIds: { inbox: true }, keywords: { $seen: true }, receivedAt: "2026-08-20T12:00:00Z", from: [{ name: "Bob" }], subject: id, preview: "Hello" },
+          ] }, "get"],
+        ],
+      };
+    });
+    mockedUseApp.mockReturnValue({
+      client: { mailAccountId: "account", request, call: vi.fn() } as unknown as JmapClient,
+      mailboxes: [{ id: "inbox", name: "Inbox", role: "inbox", unreadEmails: 0, totalEmails: 120 }],
+      notify: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined),
+      syncVersion: 0,
+    } as unknown as ReturnType<typeof useApp>);
+
+    render(<Router><MailPage /></Router>);
+    expect(await screen.findByText("new-0")).toBeInTheDocument();
+    expect(screen.getByText(/1-50 of 120/)).toBeInTheDocument();
+    expect(request.mock.calls[0][1][0][1]).toMatchObject({ position: 0, limit: 50, sort: [{ property: "receivedAt", isAscending: false }] });
+
+    fireEvent.click(screen.getByRole("button", { name: "Older" }));
+    expect(await screen.findByText("new-50")).toBeInTheDocument();
+    expect(screen.getByText(/51-100 of 120/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Newer" }));
+    expect(await screen.findByText("new-0")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Oldest" }));
+    expect(await screen.findByText("old-0")).toBeInTheDocument();
+    expect(request.mock.calls.at(-1)?.[1][0][1].sort).toEqual([{ property: "receivedAt", isAscending: true }]);
+
+    fireEvent.change(screen.getByLabelText("Emails per page"), { target: { value: "100" } });
+    await waitFor(() => expect(request.mock.calls.at(-1)?.[1][0][1]).toMatchObject({ position: 0, limit: 100 }));
+    expect(screen.getByText(/1-100 of 120/)).toBeInTheDocument();
   });
 
   it("shows a retry when the message query fails", async () => {

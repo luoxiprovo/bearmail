@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Archive, Ban, CalendarDays, ChevronRight, Folder, FolderPlus, Inbox, LoaderCircle, Mail, MailOpen, OctagonAlert, Paperclip, Search, Star, Trash2 } from "lucide-react";
 import { useApp } from "../app-context";
 import { FolderPicker } from "../components/FolderPicker";
-import { createMailbox, findCalendarInvitationPart, getEmails, isDraftEmail, listedMailboxes, patchEmail, patchEmails, userFolders } from "../jmap/mail";
+import { createMailbox, findCalendarInvitationPart, getEmails, isDraftEmail, listedMailboxes, mailPageLabel, MAIL_PAGE_SIZES, patchEmail, patchEmails, userFolders, type MailPageSize } from "../jmap/mail";
 import { blockSender, emailIsInMailbox, markEmailAsNotSpam, markEmailAsSpam, senderAddress } from "../jmap/spam";
 import type { Email, Mailbox } from "../types";
 import { useNavigate } from "../router";
@@ -18,6 +18,9 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
   );
   const [emails, setEmails] = useState<Email[]>([]);
   const [total, setTotal] = useState(0);
+  const [pageSize, setPageSize] = useState<MailPageSize>(50);
+  const [newestFirst, setNewestFirst] = useState(true);
+  const [position, setPosition] = useState(0);
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -49,8 +52,15 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
         mailboxId: search || starred ? undefined : activeMailbox?.id,
         hasKeyword: search || !starred ? undefined : "$flagged",
         text: search || undefined,
+        position,
+        limit: pageSize,
+        newestFirst,
       });
       if (request !== loadId.current) return;
+      if (page.total > 0 && position >= page.total) {
+        setPosition(Math.floor((page.total - 1) / pageSize) * pageSize);
+        return;
+      }
       setEmails(page.emails); setTotal(page.total);
       setSelected((current) => new Set([...current].filter((id) => page.emails.some((email) => email.id === id))));
     } catch (error) {
@@ -59,11 +69,13 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
       setLoadError(message);
       notify(message, "error");
     } finally { if (request === loadId.current) setLoading(false); }
-  }, [activeMailbox, client, notify, search, starred, syncVersion]);
+  }, [activeMailbox, client, newestFirst, notify, pageSize, position, search, starred, syncVersion]);
 
   useEffect(() => { void load(); }, [load]);
 
-  useEffect(() => { setSelected(new Set()); }, [activeMailbox?.id, search, starred]);
+  useEffect(() => { setPosition(0); }, [activeMailbox?.id, search, starred]);
+
+  useEffect(() => { setSelected(new Set()); }, [activeMailbox?.id, newestFirst, pageSize, position, search, starred]);
 
   const action = async (email: Email, patch: Record<string, unknown>, success: string) => {
     if (!client) return;
@@ -218,6 +230,14 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
     }
   };
   const unreadCount = search || starred ? emails.filter((email) => !email.keywords?.["$seen"]).length : (activeMailbox?.unreadEmails ?? emails.filter((email) => !email.keywords?.["$seen"]).length);
+  const rangeLabel = mailPageLabel(position, pageSize, total);
+  const atStart = position <= 0;
+  const atEnd = total <= 0 || position + pageSize >= total;
+  const newerDisabled = newestFirst ? atStart : atEnd;
+  const olderDisabled = newestFirst ? atEnd : atStart;
+  const stepPage = (towardNewer: boolean) => {
+    setPosition((current) => Math.max(0, current + ((newestFirst === towardNewer) ? -pageSize : pageSize)));
+  };
   return (
     <div className="mail-layout">
       <aside className="mailbox-panel">
@@ -244,9 +264,23 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
         <div className="list-meta">
           <label className="select-all">
             <input type="checkbox" checked={allSelected} disabled={!emails.length} onChange={toggleAll} aria-label="Select all messages" />
-            <span>{total ? `${total.toLocaleString()} conversation${total === 1 ? "" : "s"}` : "No conversations"}{unreadCount ? ` · ${unreadCount} unread` : ""}</span>
+            <span>{rangeLabel || "No conversations"}{unreadCount ? ` · ${unreadCount} unread` : ""}</span>
           </label>
-          <span>Newest first</span>
+          <div className="mail-pager">
+            <label className="mail-page-size">Show
+              <select aria-label="Emails per page" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value) as MailPageSize); setPosition(0); }}>
+                {MAIL_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </label>
+            <div className="mail-order" role="group" aria-label="Message order">
+              <button type="button" aria-pressed={newestFirst} onClick={() => { setNewestFirst(true); setPosition(0); }}>Newest</button>
+              <button type="button" aria-pressed={!newestFirst} onClick={() => { setNewestFirst(false); setPosition(0); }}>Oldest</button>
+            </div>
+            <div className="mail-page-nav" role="group" aria-label="Older and newer mail">
+              <button type="button" disabled={newerDisabled || loading} onClick={() => stepPage(true)}>Newer</button>
+              <button type="button" disabled={olderDisabled || loading} onClick={() => stepPage(false)}>Older</button>
+            </div>
+          </div>
         </div>
         {selected.size > 0 && (
           <div className="mail-bulk-bar" role="toolbar" aria-label="Selected messages">

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildMimeMessage, composeDraftBody, composeDraftHtml, forwardedMessage, forwardSubject, identitySignatureHtml, identitySignatureText, isDraftEmail, listSenderAddresses, listedMailboxes, matchSenderAddresses, mergeSenderAddresses, patchEmails, recipientTokenAt, replaceRecipientToken, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, uniqueSenderAddresses, updateIdentitySignatures } from "./mail";
+import { buildMimeMessage, composeDraftBody, composeDraftHtml, forwardedMessage, forwardSubject, identitySignatureHtml, identitySignatureText, isDraftEmail, listSenderAddresses, listedMailboxes, mailPageLabel, matchSenderAddresses, mergeSenderAddresses, patchEmails, recipientTokenAt, replaceRecipientToken, replyQuote, replySubject, sendDraft, signatureBlock, textToHtmlSignature, uniqueSenderAddresses, updateIdentitySignatures } from "./mail";
 import type { JmapClient } from "./client";
 import type { Email } from "../types";
 
@@ -266,6 +266,14 @@ describe("folders and starred queries", () => {
     ]).map((box) => box.id)).toEqual(["projects"]);
   });
 
+  it("labels each page from the first message through the last one on that page", () => {
+    expect(mailPageLabel(0, 50, 120)).toBe("1-50 of 120");
+    expect(mailPageLabel(50, 50, 120)).toBe("51-100 of 120");
+    expect(mailPageLabel(100, 50, 120)).toBe("101-120 of 120");
+    expect(mailPageLabel(0, 100, 80)).toBe("1-80 of 80");
+    expect(mailPageLabel(0, 50, 0)).toBe("");
+  });
+
   it("queries starred mail with hasKeyword", async () => {
     const { getEmails } = await import("./mail");
     const request = vi.fn().mockResolvedValue({
@@ -278,7 +286,25 @@ describe("folders and starred queries", () => {
     expect(request).toHaveBeenCalledWith(
       ["urn:ietf:params:jmap:mail"],
       expect.arrayContaining([
-        ["Email/query", expect.objectContaining({ filter: { hasKeyword: "$flagged" } }), "query"],
+        ["Email/query", expect.objectContaining({ filter: { hasKeyword: "$flagged" }, position: 0, limit: 50, sort: [{ property: "receivedAt", isAscending: false }] }), "query"],
+      ]),
+      undefined,
+    );
+  });
+
+  it("can query an older page with the oldest mail first", async () => {
+    const { getEmails } = await import("./mail");
+    const request = vi.fn().mockResolvedValue({
+      methodResponses: [
+        ["Email/query", { ids: [], total: 0, queryState: "q" }, "query"],
+        ["Email/get", { list: [] }, "get"],
+      ],
+    });
+    await getEmails({ mailAccountId: "account-1", request } as unknown as JmapClient, { position: 100, limit: 100, newestFirst: false });
+    expect(request).toHaveBeenCalledWith(
+      ["urn:ietf:params:jmap:mail"],
+      expect.arrayContaining([
+        ["Email/query", expect.objectContaining({ position: 100, limit: 100, sort: [{ property: "receivedAt", isAscending: true }] }), "query"],
       ]),
       undefined,
     );
