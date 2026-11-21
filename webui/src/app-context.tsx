@@ -74,12 +74,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       const optionalTasks: Promise<unknown>[] = [];
       if (nextClient.has(CAPABILITIES.mail)) {
-        setMailboxes(await getMailboxes(nextClient));
-        if (nextClient.has(CAPABILITIES.submission)) optionalTasks.push(getIdentities(nextClient).then(setIdentities));
+        const nextMailboxes = await getMailboxes(nextClient);
+        setMailboxes((current) => sameSnapshot(current, nextMailboxes) ? current : nextMailboxes);
+        if (nextClient.has(CAPABILITIES.submission)) optionalTasks.push(getIdentities(nextClient).then((next) => {
+          setIdentities((current) => sameSnapshot(current, next) ? current : next);
+        }));
       }
       if (nextClient.has(CAPABILITIES.calendars)) {
-        optionalTasks.push(getCalendars(nextClient).then(setCalendars));
-        optionalTasks.push(getParticipantIdentities(nextClient).then(setParticipantIdentities));
+        optionalTasks.push(getCalendars(nextClient).then((next) => {
+          setCalendars((current) => sameSnapshot(current, next) ? current : next);
+        }));
+        optionalTasks.push(getParticipantIdentities(nextClient).then((next) => {
+          setParticipantIdentities((current) => sameSnapshot(current, next) ? current : next);
+        }));
       }
       await Promise.allSettled(optionalTasks);
       setLastSync(new Date());
@@ -227,6 +234,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }), [config, client, sessionReady, serverOrigin, username, mailboxes, calendars, identities, participantIdentities, loadingData, lastSync, syncVersion, online, toasts, oauthError, connect, connectOAuth, logout, rememberPassword, refresh, notify]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+}
+
+function sameSnapshot<T>(current: T, next: T): boolean {
+  return JSON.stringify(current) === JSON.stringify(next);
 }
 
 export function useApp(): AppContextValue {

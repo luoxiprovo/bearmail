@@ -114,4 +114,38 @@ describe("calendar event dialog", () => {
     expect(screen.getByRole("button", { name: "Accept" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Decline" })).toBeInTheDocument();
   });
+
+  it("keeps the calendar visible while a background refresh loads", async () => {
+    let resolveRefresh: (value: unknown) => void = () => undefined;
+    const pending = new Promise((resolve) => { resolveRefresh = resolve; });
+    const now = new Date();
+    const pad = (value: number) => String(value).padStart(2, "0");
+    const start = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T10:00:00`;
+    const events = (title: string) => ({
+      methodResponses: [["CalendarEvent/get", { accountId: "account", state: "events", list: [{ id: "event", title, start, duration: "PT1H", calendarIds: { calendar: true } }] }, "get"]],
+    });
+    const request = vi.fn().mockResolvedValueOnce(events("Planning")).mockReturnValueOnce(pending);
+    const app = (syncVersion: number) => ({
+      client: { calendarAccountId: "account", request, call: vi.fn(), has: () => false } as unknown as JmapClient,
+      calendars: [{ id: "calendar", name: "Personal" }],
+      identities: [{ id: "ada", email: "ada@example.test" }],
+      username: "ada@example.test",
+      participantIdentities: [{ id: "ada", name: "Ada", calendarAddress: "mailto:ada@example.test", isDefault: true }],
+      notify: vi.fn(),
+      syncVersion,
+    });
+    mockedUseApp.mockReturnValue(app(0) as unknown as ReturnType<typeof useApp>);
+    const view = render(<CalendarPage />);
+    expect(await screen.findByText("Planning")).toBeInTheDocument();
+
+    mockedUseApp.mockReturnValue(app(1) as unknown as ReturnType<typeof useApp>);
+    view.rerender(<CalendarPage />);
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Planning")).toBeInTheDocument();
+    expect(screen.queryByText(/Loading calendar/)).not.toBeInTheDocument();
+
+    resolveRefresh(events("Updated planning"));
+    expect(await screen.findByText("Updated planning")).toBeInTheDocument();
+    expect(screen.queryByText(/Loading calendar/)).not.toBeInTheDocument();
+  });
 });

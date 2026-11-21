@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { CalendarPlus, Check, ChevronLeft, ChevronRight, Clock3, LoaderCircle, MapPin, Plus, Trash2, UsersRound, X } from "lucide-react";
 import { useApp } from "../app-context";
 import { createCalendarEvent, destroyCalendarEvent, eventEnd, eventGuestAddresses, eventSchedulingFields, getCalendarEvents, importUnansweredInvitesFromMail, isEventOrganizer, isParticipantIdentityAddress, parseGuestAddresses, participationStatus, respondToInvitation, showsOnCalendar, toJmapLocal, updateCalendarEvent, type EventInput } from "../jmap/calendar";
@@ -15,20 +15,31 @@ export function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [editor, setEditor] = useState<{ event?: CalendarEvent; date?: Date } | null>(null);
   const range = useMemo(() => viewRange(anchor, view), [anchor, view]);
+  const rangeKey = `${range.start.getTime()}:${range.end.getTime()}`;
+  const loadId = useRef(0);
+  const loadedRange = useRef("");
 
   useEffect(() => { if (calendars.length && !visible.size) setVisible(new Set(calendars.filter((item) => item.isVisible !== false).map((item) => item.id))); }, [calendars, visible.size]);
   const load = useCallback(async () => {
     if (!client) return;
-    setLoading(true);
+    const request = ++loadId.current;
+    const quiet = loadedRange.current === rangeKey;
+    if (!quiet) setLoading(true);
     try {
       const calendarId = calendars.find((item) => item.isVisible !== false)?.id ?? calendars[0]?.id;
       const extraAddresses = [...identities.map((item) => item.email), username].filter(Boolean);
       if (calendarId) await importUnansweredInvitesFromMail(client, calendarId, participantIdentities, extraAddresses);
-      setEvents(await getCalendarEvents(client, range.start, range.end));
+      const next = await getCalendarEvents(client, range.start, range.end);
+      if (request !== loadId.current) return;
+      loadedRange.current = rangeKey;
+      setEvents((current) => sameSnapshot(current, next) ? current : next);
     }
-    catch (error) { notify(error instanceof Error ? error.message : "Calendar could not be loaded.", "error"); }
-    finally { setLoading(false); }
-  }, [calendars, client, identities, notify, participantIdentities, range.end.getTime(), range.start.getTime(), syncVersion, username]);
+    catch (error) {
+      if (request !== loadId.current || quiet) return;
+      notify(error instanceof Error ? error.message : "Calendar could not be loaded.", "error");
+    }
+    finally { if (request === loadId.current && !quiet) setLoading(false); }
+  }, [calendars, client, identities, notify, participantIdentities, range.end, range.start, rangeKey, syncVersion, username]);
   useEffect(() => { void load(); }, [load]);
 
   const filtered = events.filter((event) => Object.keys(event.calendarIds ?? {}).some((id) => visible.has(id)) && showsOnCalendar(event, participantIdentities)).map((event) => ({
@@ -58,6 +69,10 @@ export function CalendarPage() {
       {editor && <EventDialog event={editor.event} initialDate={editor.date} onClose={() => setEditor(null)} onChanged={async () => { setEditor(null); await load(); }} />}
     </div>
   );
+}
+
+function sameSnapshot(current: unknown, next: unknown): boolean {
+  return JSON.stringify(current) === JSON.stringify(next);
 }
 
 function MonthView({ anchor, events, identities, onSelect, onCreate }: { anchor: Date; events: CalendarEvent[]; identities: ReturnType<typeof useApp>["participantIdentities"]; onSelect(event: CalendarEvent): void; onCreate(date: Date): void }) {

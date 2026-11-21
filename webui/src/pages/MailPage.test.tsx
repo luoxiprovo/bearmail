@@ -222,6 +222,41 @@ describe("mail list", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it("keeps the current messages on screen while a background refresh loads", async () => {
+    let resolveRefresh: (value: unknown) => void = () => undefined;
+    const pending = new Promise((resolve) => { resolveRefresh = resolve; });
+    const page = (id: string, subject: string) => ({
+      methodResponses: [
+        ["Email/query", { ids: [id], total: 1, queryState: "q" }, "query"],
+        ["Email/get", { list: [
+          { id, mailboxIds: { inbox: true }, keywords: { $seen: true }, receivedAt: "2026-08-20T12:00:00Z", from: [{ name: "Bob" }], subject, preview: "Hello" },
+        ] }, "get"],
+      ],
+    });
+    const request = vi.fn().mockResolvedValueOnce(page("mail-1", "Unread note")).mockReturnValueOnce(pending);
+    const app = (syncVersion: number) => ({
+      client: { mailAccountId: "account", request, call: vi.fn() } as unknown as JmapClient,
+      mailboxes: [{ id: "inbox", name: "Inbox", role: "inbox" as const }],
+      notify: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined),
+      syncVersion,
+    });
+    mockedUseApp.mockReturnValue(app(0) as unknown as ReturnType<typeof useApp>);
+    const view = render(<Router><MailPage /></Router>);
+    expect(await screen.findByText("Unread note")).toBeInTheDocument();
+
+    mockedUseApp.mockReturnValue(app(1) as unknown as ReturnType<typeof useApp>);
+    view.rerender(<Router><MailPage /></Router>);
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Unread note")).toBeInTheDocument();
+    expect(screen.queryByText(/Loading messages/)).not.toBeInTheDocument();
+
+    resolveRefresh(page("mail-2", "Fresh note"));
+    expect(await screen.findByText("Fresh note")).toBeInTheDocument();
+    expect(screen.queryByText("Unread note")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Loading messages/)).not.toBeInTheDocument();
+  });
+
   it("shows the newest page when a refresh overlaps the first load", async () => {
     let resolveFirst: (value: unknown) => void = () => undefined;
     const first = new Promise((resolve) => { resolveFirst = resolve; });

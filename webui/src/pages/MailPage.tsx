@@ -27,6 +27,7 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
   const [loadError, setLoadError] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const loadId = useRef(0);
+  const loadedQuery = useRef("");
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [folderName, setFolderName] = useState("");
   const [savingFolder, setSavingFolder] = useState(false);
@@ -36,17 +37,22 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
     return () => window.clearTimeout(timer);
   }, [query]);
 
+  const queryKey = `${activeMailbox?.id ?? ""}\n${search}\n${starred}\n${position}\n${pageSize}\n${newestFirst}`;
   const load = useCallback(async () => {
     const request = ++loadId.current;
     if (!client || (!activeMailbox && !starred && !search)) {
+      loadedQuery.current = "";
       setEmails([]);
       setTotal(0);
       setLoadError("");
       setLoading(false);
       return;
     }
-    setLoading(true);
-    setLoadError("");
+    const quiet = loadedQuery.current === queryKey;
+    if (!quiet) {
+      setLoading(true);
+      setLoadError("");
+    }
     try {
       const page = await getEmails(client, {
         mailboxId: search || starred ? undefined : activeMailbox?.id,
@@ -61,15 +67,17 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
         setPosition(Math.floor((page.total - 1) / pageSize) * pageSize);
         return;
       }
-      setEmails(page.emails); setTotal(page.total);
+      loadedQuery.current = queryKey;
+      setEmails((current) => sameSnapshot(current, page.emails) ? current : page.emails);
+      setTotal((current) => current === page.total ? current : page.total);
       setSelected((current) => new Set([...current].filter((id) => page.emails.some((email) => email.id === id))));
     } catch (error) {
-      if (request !== loadId.current) return;
+      if (request !== loadId.current || quiet) return;
       const message = error instanceof Error ? error.message : "Mail could not be loaded.";
       setLoadError(message);
       notify(message, "error");
-    } finally { if (request === loadId.current) setLoading(false); }
-  }, [activeMailbox, client, newestFirst, notify, pageSize, position, search, starred, syncVersion]);
+    } finally { if (request === loadId.current && !quiet) setLoading(false); }
+  }, [activeMailbox, client, newestFirst, notify, pageSize, position, queryKey, search, starred, syncVersion]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -327,6 +335,10 @@ export function MailPage({ mailboxId, starred = false, autoFocusSearch = false }
       </section>
     </div>
   );
+}
+
+function sameSnapshot(current: unknown, next: unknown): boolean {
+  return JSON.stringify(current) === JSON.stringify(next);
 }
 
 function MailboxLink({ box, active, onClick }: { box: Mailbox; active: boolean; onClick(): void }) {
