@@ -18,6 +18,7 @@ export function CalendarPage() {
   const rangeKey = `${range.start.getTime()}:${range.end.getTime()}`;
   const loadId = useRef(0);
   const loadedRange = useRef("");
+  const accountEmail = accountEmailAddress(username, identities, participantIdentities);
 
   useEffect(() => { if (calendars.length && !visible.size) setVisible(new Set(calendars.filter((item) => item.isVisible !== false).map((item) => item.id))); }, [calendars, visible.size]);
   const load = useCallback(async () => {
@@ -59,7 +60,7 @@ export function CalendarPage() {
       <aside className="calendar-sidebar">
         <button className="primary-button new-event" onClick={() => setEditor({ date: new Date() })}><Plus size={18} /> New event</button>
         <MiniMonth anchor={anchor} selected={anchor} onSelect={setAnchor} />
-        <div className="calendar-list"><div className="panel-heading"><span>My calendars</span></div>{calendars.map((calendar) => <label key={calendar.id}><input type="checkbox" checked={visible.has(calendar.id)} onChange={() => setVisible((current) => { const next = new Set(current); next.has(calendar.id) ? next.delete(calendar.id) : next.add(calendar.id); return next; })} /><i style={{ background: calendar.color || "#287f77" }} /><span>{calendar.name}</span></label>)}</div>
+        <div className="calendar-list"><div className="panel-heading"><span>My calendars</span></div>{calendars.map((calendar) => { const label = calendarListLabel(calendar.name, accountEmail); return <label key={calendar.id}><input type="checkbox" checked={visible.has(calendar.id)} onChange={() => setVisible((current) => { const next = new Set(current); next.has(calendar.id) ? next.delete(calendar.id) : next.add(calendar.id); return next; })} /><i style={{ background: calendar.color || "#287f77" }} /><span title={label}>{label}</span></label>; })}</div>
         <div className="invite-legend"><p className="eyebrow">INVITATION STATUS</p><span><i className="legend-solid" /> Accepted</span><span><i className="legend-pending" /> Awaiting response</span></div>
       </aside>
       <section className="calendar-main">
@@ -69,6 +70,22 @@ export function CalendarPage() {
       {editor && <EventDialog event={editor.event} initialDate={editor.date} onClose={() => setEditor(null)} onChanged={async () => { setEditor(null); await load(); }} />}
     </div>
   );
+}
+
+function accountEmailAddress(username: string, identities: Array<{ email?: string }>, participantIdentities: Array<{ calendarAddress: string }>): string {
+  return identities.find((item) => item.email?.includes("@"))?.email
+    || (username.includes("@") ? username : "")
+    || participantIdentities.map((item) => item.calendarAddress.replace(/^mailto:/i, "")).find((address) => address.includes("@"))
+    || "";
+}
+
+export function calendarListLabel(name: string, email: string): string {
+  const match = name.trim().match(/^Stalwart Calendar(?:\s*\((.*)\))?$/i);
+  if (!match) return name;
+  const embedded = match[1]?.trim() ?? "";
+  if (email.includes("@")) return email;
+  if (embedded.includes("@")) return embedded;
+  return email || embedded || name;
 }
 
 function sameSnapshot(current: unknown, next: unknown): boolean {
@@ -94,6 +111,7 @@ function EventPill({ event, identities, onClick, expanded = false }: { event: Ca
 
 function EventDialog({ event, initialDate, onClose, onChanged }: { event?: CalendarEvent; initialDate?: Date; onClose(): void; onChanged(): Promise<void> }) {
   const { client, calendars, identities, participantIdentities, username, notify } = useApp();
+  const accountEmail = accountEmailAddress(username, identities, participantIdentities);
   const initialStart = event ? eventDate(event) : withHour(initialDate ?? new Date(), new Date().getHours() + 1);
   const initialEnd = event ? eventEnd(event) : new Date(initialStart.getTime() + 30 * 60_000);
   const [input, setInput] = useState<EventInput>({ title: event?.title ?? "", start: toInputValue(initialStart, event?.showWithoutTime), end: toInputValue(initialEnd, event?.showWithoutTime), allDay: event?.showWithoutTime ?? false, calendarId: Object.keys(event?.calendarIds ?? {})[0] ?? calendars[0]?.id ?? "", description: event?.description ?? "", location: Object.values(event?.locations ?? {})[0]?.name ?? "" });
@@ -183,7 +201,7 @@ function EventDialog({ event, initialDate, onClose, onChanged }: { event?: Calen
           <label>Ends<input type={input.allDay ? "date" : "datetime-local"} required value={input.end} onChange={(change) => update("end", change.target.value)} /></label>
         </div>
         <label className="checkbox-label"><input type="checkbox" checked={input.allDay} onChange={(change) => update("allDay", change.target.checked)} /> All-day event</label>
-        <label>Calendar<select value={input.calendarId} onChange={(change) => update("calendarId", change.target.value)}>{calendars.map((calendar) => <option key={calendar.id} value={calendar.id}>{calendar.name}</option>)}</select></label>
+        <label>Calendar<select value={input.calendarId} onChange={(change) => update("calendarId", change.target.value)}>{calendars.map((calendar) => <option key={calendar.id} value={calendar.id}>{calendarListLabel(calendar.name, accountEmail)}</option>)}</select></label>
         <label><MapPin size={16} /> Location<input value={input.location} onChange={(change) => update("location", change.target.value)} placeholder="Optional" /></label>
         {canManageGuests ? (
           <label className="guest-field">

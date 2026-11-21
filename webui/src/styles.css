@@ -317,6 +317,7 @@
   .calendar-list { border-top: 1px solid var(--line); }
   .calendar-list .panel-heading { padding-inline: 4px; }
   .calendar-list label { display: flex; min-height: 33px; align-items: center; gap: 8px; padding: 0 4px; color: var(--ink-soft); cursor: pointer; }
+  .calendar-list label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .calendar-list input { position: absolute; opacity: 0; }
   .calendar-list i { width: 10px; height: 10px; border-radius: 3px; box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px currentColor; }
   .calendar-list input:not(:checked) + i { background: transparent !important; opacity: .45; }

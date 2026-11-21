@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useApp } from "../app-context";
 import type { JmapClient } from "../jmap/client";
-import { CalendarPage } from "./CalendarPage";
+import { CalendarPage, calendarListLabel } from "./CalendarPage";
 
 vi.mock("../app-context", () => ({ useApp: vi.fn() }));
 
@@ -11,6 +11,9 @@ const mockedUseApp = vi.mocked(useApp);
 describe("calendar event dialog", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+  afterEach(() => {
+    cleanup();
   });
 
   it("validates guest email and sends a scheduled event", async () => {
@@ -113,6 +116,32 @@ describe("calendar event dialog", () => {
     expect(await screen.findByText("Awaiting your response")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Accept" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Decline" })).toBeInTheDocument();
+  });
+
+  it("shows the user's email instead of the default Stalwart calendar name", async () => {
+    const request = vi.fn().mockResolvedValue({
+      methodResponses: [["CalendarEvent/get", { accountId: "account", state: "events", list: [] }, "get"]],
+    });
+    mockedUseApp.mockReturnValue({
+      client: { calendarAccountId: "account", request, call: vi.fn(), has: () => false } as unknown as JmapClient,
+      calendars: [
+        { id: "default", name: "Stalwart Calendar (ada@example.test)" },
+        { id: "plain", name: "Stalwart Calendar" },
+        { id: "team", name: "Team" },
+      ],
+      identities: [{ id: "ada", email: "ada@example.test" }],
+      username: "ada",
+      participantIdentities: [],
+      notify: vi.fn(),
+      syncVersion: 0,
+    } as unknown as ReturnType<typeof useApp>);
+
+    render(<CalendarPage />);
+
+    expect(screen.getAllByText("ada@example.test").length).toBeGreaterThan(0);
+    expect(screen.getByText("Team")).toBeInTheDocument();
+    expect(screen.queryByText(/Stalwart Calendar/)).not.toBeInTheDocument();
+    expect(calendarListLabel("Stalwart Calendar (other@example.test)", "")).toBe("other@example.test");
   });
 
   it("keeps the calendar visible while a background refresh loads", async () => {
